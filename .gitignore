@@ -1,0 +1,28 @@
+# dependencies
+node_modules
+
+# next build
+.next
+out
+
+# env
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# logs
+*.log
+
+# db / dumps / backups
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+*.tar
+*.tar.gz
+*.zip
+
+# macOS
+.DS_Store

@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  color: rgb(3 7 18);
+}
+
+p {
+  color: rgb(55 65 81);
+}
+
+Detta gör att:
