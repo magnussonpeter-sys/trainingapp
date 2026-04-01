@@ -1,159 +1,102 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
-export default function LandingPage() {
+export default function LoginPage() {
   const router = useRouter();
 
-  const [identifier, setIdentifier] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(true);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [statusMessage, setStatusMessage] = useState("");
+  const [loading, setLoading] = useState(true);
 
+  // 🔍 Kolla om user redan är inloggad via NextAuth
   useEffect(() => {
     async function checkAuth() {
       try {
-        // Kolla om användaren redan har en giltig session.
-        const res = await fetch("/api/auth/me", {
-          cache: "no-store",
-          credentials: "include",
-        });
-
-        const data = await res.json();
-
-        if (data?.ok && data.user) {
-          router.replace("/home");
-          router.refresh();
+        const res = await fetch("/api/auth/me");
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.user) {
+            // ✅ Redan inloggad → skicka vidare
+            router.push("/home");
+            return;
+          }
         }
-      } catch {
-        // Tyst fail här – sidan ska fortfarande gå att använda.
+      } catch (err) {
+        console.error("Auth check failed", err);
+      } finally {
+        setLoading(false);
       }
     }
 
-    void checkAuth();
+    checkAuth();
   }, [router]);
 
-  async function handleLogin(event?: FormEvent<HTMLFormElement>) {
-    event?.preventDefault();
-
-    // Förhindra dubbelklick/dubbla requests.
-    if (loading) return;
-
-    setLoading(true);
+  // 🔐 Login via NextAuth
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
     setError("");
-    setStatusMessage("Försöker logga in...");
 
-    try {
-      const trimmedIdentifier = identifier.trim();
+    const result = await signIn("credentials", {
+      email,
+      password,
+      redirect: false, // vi styr redirect själva
+    });
 
-      if (!trimmedIdentifier || !password) {
-        throw new Error("Fyll i användarnamn/e-post och lösenord");
-      }
-
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include", // Viktigt för session/cookies.
-        body: JSON.stringify({
-          identifier: trimmedIdentifier,
-          password,
-          rememberMe,
-        }),
-      });
-
-      // Hantera både JSON-svar och oväntade felsvar.
-      const contentType = res.headers.get("content-type") ?? "";
-      const data = contentType.includes("application/json")
-        ? await res.json()
-        : null;
-
-      if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || `Kunde inte logga in (${res.status})`);
-      }
-
-      setStatusMessage("Inloggning lyckades, skickar vidare...");
-
-      // Viktigt: hård navigering fungerar ofta säkrare på iPhone/Safari
-      // direkt efter att en sessionscookie satts.
-      window.location.href = "/home";
-    } catch (err) {
-      setStatusMessage("");
-      setError(err instanceof Error ? err.message : "Kunde inte logga in");
-    } finally {
-      setLoading(false);
+    if (result?.error) {
+      setError("Fel e-post eller lösenord");
+      return;
     }
+
+    // 🔁 Viktigt: uppdatera session
+    router.push("/home");
+    router.refresh();
+  }
+
+  if (loading) {
+    return <div>Laddar...</div>;
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4">
-      <div className="mx-auto flex min-h-screen max-w-md items-center">
-        <div className="w-full rounded-2xl border bg-white p-6 shadow-sm">
-          <p className="text-sm text-gray-600">Välkommen</p>
-          <h1 className="mt-1 text-3xl font-bold text-gray-950">Träningsapp</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Logga in med e-post eller användarnamn för att fortsätta.
-          </p>
+    <main style={{ padding: 24, maxWidth: 400, margin: "0 auto" }}>
+      <h1>Logga in</h1>
 
-          <form className="mt-6 space-y-3" onSubmit={handleLogin}>
-            <input
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="E-post eller användarnamn"
-              autoComplete="username"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              className="w-full rounded-xl border px-3 py-3 text-base"
-            />
-
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Lösenord"
-              autoComplete="current-password"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              className="w-full rounded-xl border px-3 py-3 text-base"
-            />
-
-            <label className="flex items-center gap-3 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-              />
-              Håll mig inloggad
-            </label>
-
-            {statusMessage ? (
-              <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">
-                {statusMessage}
-              </div>
-            ) : null}
-
-            {error ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {error}
-              </div>
-            ) : null}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-2xl bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
-            >
-              {loading ? "Loggar in..." : "Logga in"}
-            </button>
-          </form>
+      <form onSubmit={handleLogin}>
+        <div style={{ marginBottom: 12 }}>
+          <input
+            type="email"
+            placeholder="E-post"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            style={{ width: "100%", padding: 8 }}
+          />
         </div>
-      </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <input
+            type="password"
+            placeholder="Lösenord"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            style={{ width: "100%", padding: 8 }}
+          />
+        </div>
+
+        <button type="submit" style={{ width: "100%", padding: 10 }}>
+          Logga in
+        </button>
+
+        {error && (
+          <p style={{ color: "red", marginTop: 10 }}>
+            {error}
+          </p>
+        )}
+      </form>
     </main>
   );
 }

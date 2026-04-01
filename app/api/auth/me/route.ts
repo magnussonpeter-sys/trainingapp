@@ -1,23 +1,13 @@
 import { NextResponse } from "next/server";
-import { getCurrentUserFromSession } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/server-auth";
 
+// Returnerar aktuell inloggad user
 export async function GET() {
-  try {
-    const user = await getCurrentUserFromSession();
+  const user = await getCurrentUser();
 
-    return NextResponse.json({
-      ok: true,
-      user: user ?? null,
-    });
-  } catch (error) {
-    console.error("Auth me failed:", error);
-
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+  if (!user) {
+    return NextResponse.json({ user: null }, { status: 401 });
   }
+
+  return NextResponse.json({ user });
 }
