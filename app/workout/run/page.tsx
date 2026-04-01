@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getActiveWorkout } from "../../../lib/workout-storage";
 import {
@@ -25,7 +25,8 @@ import {
   type ExtraRepsOption,
 } from "../../../lib/workout-log-storage";
 import { saveWorkoutLogToApi } from "../../../lib/workout-log-api";
-import type { Workout } from "../../../types/workout";
+import type { Workout, Exercise } from "../../../types/workout";
+import type { TimedEffortOption } from "../../../types/exercise-feedback";
 
 type AuthUser = {
   id: number;
@@ -41,6 +42,29 @@ type LoggedSet = {
 };
 
 const EXTRA_REP_OPTIONS: ExtraRepsOption[] = [0, 2, 4, 6];
+
+const TIMED_EFFORT_OPTIONS: Array<{
+  value: TimedEffortOption;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "light",
+    label: "Lätt",
+    description: "Du hade tydlig marginal kvar.",
+  },
+  {
+    value: "just_right",
+    label: "Lagom",
+    description: "Bra nivå för setet.",
+  },
+  {
+    value: "tough",
+    label: "Tungt",
+    description: "Det var riktigt jobbigt.",
+  },
+];
+
 const RATING_OPTIONS = [1, 2, 3, 4, 5] as const;
 
 function toNullableNumber(value: string): number | null {
@@ -96,10 +120,7 @@ function formatTimerClock(totalSeconds: number) {
   )}`;
 }
 
-function isTimedExercise(exercise: {
-  duration?: number;
-  reps?: number;
-}) {
+function isTimedExercise(exercise: { duration?: number; reps?: number }) {
   return (
     typeof exercise.duration === "number" &&
     exercise.duration > 0 &&
@@ -107,45 +128,75 @@ function isTimedExercise(exercise: {
   );
 }
 
-function playTimerSound() {
+function getTimedEffortLabel(value: TimedEffortOption | null | undefined) {
+  if (value === "light") return "Lätt";
+  if (value === "just_right") return "Lagom";
+  if (value === "tough") return "Tungt";
+  return null;
+}
+
+function playTone(params: {
+  frequency: number;
+  durationSeconds: number;
+  gain?: number;
+  type?: OscillatorType;
+}) {
   try {
     const AudioContextClass =
       window.AudioContext ||
-      // @ts-expect-error webkit fallback
+      // @ts-expect-error Safari fallback
       window.webkitAudioContext;
 
     if (!AudioContextClass) return;
 
     const audioContext = new AudioContextClass();
+    const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
 
-    gainNode.gain.value = 0.03;
+    oscillator.type = params.type ?? "sine";
+    oscillator.frequency.value = params.frequency;
+    gainNode.gain.value = params.gain ?? 0.09;
+
+    oscillator.connect(gainNode);
     gainNode.connect(audioContext.destination);
 
-    const oscillator1 = audioContext.createOscillator();
-    oscillator1.type = "sine";
-    oscillator1.frequency.value = 660;
-    oscillator1.connect(gainNode);
-
-    const oscillator2 = audioContext.createOscillator();
-    oscillator2.type = "sine";
-    oscillator2.frequency.value = 880;
-    oscillator2.connect(gainNode);
-
     const now = audioContext.currentTime;
-
-    oscillator1.start(now);
-    oscillator1.stop(now + 0.18);
-
-    oscillator2.start(now + 0.12);
-    oscillator2.stop(now + 0.32);
+    oscillator.start(now);
+    oscillator.stop(now + params.durationSeconds);
 
     window.setTimeout(() => {
       void audioContext.close();
-    }, 600);
+    }, Math.max(700, Math.round(params.durationSeconds * 1000) + 300));
   } catch (error) {
     console.error("Could not play timer sound", error);
   }
+}
+
+function playCountdownBeep() {
+  playTone({
+    frequency: 900,
+    durationSeconds: 0.12,
+    gain: 0.12,
+    type: "square",
+  });
+}
+
+function playFinishBeep() {
+  playTone({
+    frequency: 760,
+    durationSeconds: 0.55,
+    gain: 0.14,
+    type: "square",
+  });
+}
+
+function playRestFinishedBeep() {
+  playTone({
+    frequency: 640,
+    durationSeconds: 0.3,
+    gain: 0.12,
+    type: "triangle",
+  });
 }
 
 export default function WorkoutRunPage() {
@@ -154,14 +205,15 @@ export default function WorkoutRunPage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [workout, setWorkout] = useState<Workout | null>(null);
-
   const [sessionStartedAt] = useState(() => new Date().toISOString());
+
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [currentSet, setCurrentSet] = useState(1);
 
   const [lastWeightByExercise, setLastWeightByExercise] = useState<
     Record<string, string>
   >({});
+
   const [setLog, setSetLog] = useState<LoggedSet>({
     reps: "",
     durationSeconds: "",
@@ -172,19 +224,23 @@ export default function WorkoutRunPage() {
   const [completedExercises, setCompletedExercises] = useState<
     CompletedExercise[]
   >([]);
-  const [savedWorkoutLog, setSavedWorkoutLog] = useState<WorkoutLog | null>(null);
+  const [savedWorkoutLog, setSavedWorkoutLog] = useState<WorkoutLog | null>(
+    null
+  );
   const [workoutFinished, setWorkoutFinished] = useState(false);
 
   const [showExerciseFeedback, setShowExerciseFeedback] = useState(false);
   const [selectedExtraReps, setSelectedExtraReps] =
     useState<ExtraRepsOption | null>(null);
-  const [selectedRating, setSelectedRating] = useState<1 | 2 | 3 | 4 | 5 | null>(
-    null
-  );
+  const [selectedTimedEffort, setSelectedTimedEffort] =
+    useState<TimedEffortOption | null>(null);
+  const [selectedRating, setSelectedRating] = useState<
+    1 | 2 | 3 | 4 | 5 | null
+  >(null);
 
   const [showExerciseDescription, setShowExerciseDescription] = useState(false);
 
-  // Timer för tidsstyrda övningar: räknar uppåt och spelar ljud när måltiden nås.
+  // Timer för tidsstyrda övningar.
   const [exerciseTimerRunning, setExerciseTimerRunning] = useState(false);
   const [exerciseTimerElapsedSeconds, setExerciseTimerElapsedSeconds] =
     useState(0);
@@ -197,10 +253,20 @@ export default function WorkoutRunPage() {
   const [restDurationSeconds, setRestDurationSeconds] = useState(0);
   const [restRemainingSeconds, setRestRemainingSeconds] = useState(0);
 
+  // Hjälper oss att inte spela pip flera gånger för samma sekund.
+  const lastCountdownSecondRef = useRef<number | null>(null);
+
+  // Hindrar att stop-knappen startar vilotimern flera gånger för samma set.
+  const hasStartedRestAfterStopRef = useRef(false);
+
   useEffect(() => {
     async function load() {
       try {
-        const authRes = await fetch("/api/auth/me", { cache: "no-store" });
+        const authRes = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
         const authData = await authRes.json();
 
         if (!authRes.ok || !authData?.ok || !authData.user) {
@@ -222,12 +288,14 @@ export default function WorkoutRunPage() {
         setWorkout(activeWorkout);
 
         const initialWeights: Record<string, string> = {};
+
         activeWorkout.exercises.forEach((exercise) => {
           const savedWeight = getLastWeightForExercise(userId, exercise.id);
           if (savedWeight) {
             initialWeights[exercise.id] = savedWeight;
           }
         });
+
         setLastWeightByExercise(initialWeights);
 
         const firstExercise = activeWorkout.exercises[0];
@@ -246,6 +314,8 @@ export default function WorkoutRunPage() {
 
         setExerciseTimerElapsedSeconds(0);
         setExerciseTimerAlarmPlayed(false);
+        lastCountdownSecondRef.current = null;
+        hasStartedRestAfterStopRef.current = false;
       } catch {
         router.replace("/");
       }
@@ -255,9 +325,7 @@ export default function WorkoutRunPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!exerciseTimerRunning) {
-      return;
-    }
+    if (!exerciseTimerRunning) return;
 
     const timeout = window.setTimeout(() => {
       setExerciseTimerElapsedSeconds((prev) => prev + 1);
@@ -265,43 +333,6 @@ export default function WorkoutRunPage() {
 
     return () => window.clearTimeout(timeout);
   }, [exerciseTimerRunning, exerciseTimerElapsedSeconds]);
-
-  useEffect(() => {
-    if (!workout) return;
-
-    const currentExercise = workout.exercises[currentExerciseIndex];
-    if (!currentExercise || !isTimedExercise(currentExercise)) return;
-
-    const targetSeconds = currentExercise.duration ?? 0;
-    if (targetSeconds <= 0) return;
-
-    if (
-      exerciseTimerRunning &&
-      !exerciseTimerAlarmPlayed &&
-      exerciseTimerElapsedSeconds >= targetSeconds
-    ) {
-      playTimerSound();
-      setExerciseTimerAlarmPlayed(true);
-    }
-  }, [
-    workout,
-    currentExerciseIndex,
-    exerciseTimerRunning,
-    exerciseTimerElapsedSeconds,
-    exerciseTimerAlarmPlayed,
-  ]);
-
-  useEffect(() => {
-    if (!workout) return;
-
-    const currentExercise = workout.exercises[currentExerciseIndex];
-    if (!currentExercise || !isTimedExercise(currentExercise)) return;
-
-    setSetLog((prev) => ({
-      ...prev,
-      durationSeconds: String(exerciseTimerElapsedSeconds),
-    }));
-  }, [exerciseTimerElapsedSeconds, workout, currentExerciseIndex]);
 
   useEffect(() => {
     if (!showRestTimer || !restTimerRunning || restRemainingSeconds <= 0) {
@@ -321,55 +352,118 @@ export default function WorkoutRunPage() {
     }
 
     setRestTimerRunning(false);
-    playTimerSound();
+    playRestFinishedBeep();
   }, [showRestTimer, restTimerRunning, restRemainingSeconds]);
 
   const userId = authUser ? String(authUser.id) : null;
+  const exercises = workout?.exercises ?? [];
+  const safeExercise: Exercise = exercises[currentExerciseIndex] ?? {
+    id: "placeholder",
+    name: "Övning",
+    sets: 1,
+    reps: 10,
+    rest: 60,
+  };
 
-  if (!authChecked) {
-    return (
-      <main className="min-h-screen bg-gray-50 p-4">
-        <div className="mx-auto max-w-md rounded-2xl border bg-white p-4 shadow-sm">
-          <p className="text-sm text-gray-700">Kontrollerar inloggning...</p>
-        </div>
-      </main>
-    );
-  }
-
-  if (!workout || !userId) {
-    return (
-      <main className="min-h-screen bg-gray-50 p-4">
-        <div className="mx-auto max-w-md rounded-2xl border bg-white p-4 shadow-sm">
-          <h1 className="text-xl font-bold text-gray-900">Inget aktivt pass</h1>
-          <p className="mt-2 text-sm text-gray-700">
-            Det finns inget pass att köra just nu.
-          </p>
-          <button
-            onClick={() => router.push("/home")}
-            className="mt-4 w-full rounded-2xl bg-blue-600 px-4 py-3 font-semibold text-white"
-          >
-            Till startsidan
-          </button>
-        </div>
-      </main>
-    );
-  }
-
-  const exercises = workout.exercises;
-  const exercise = exercises[currentExerciseIndex];
+  const exercise = safeExercise;
   const timedExercise = isTimedExercise(exercise);
   const isLastExercise = currentExerciseIndex === exercises.length - 1;
   const isLastSet = currentSet === exercise.sets;
-  const isNewExerciseForRating = !hasExerciseBeenRated(userId, exercise.id);
+  const isNewExerciseForRating = userId
+    ? !hasExerciseBeenRated(userId, exercise.id)
+    : false;
+
+  const targetDurationSeconds =
+    timedExercise && typeof exercise.duration === "number" ? exercise.duration : 0;
+
+  const timedSecondsRemaining =
+    timedExercise && targetDurationSeconds > 0
+      ? Math.max(0, targetDurationSeconds - exerciseTimerElapsedSeconds)
+      : 0;
+
+  const timedSecondsOver =
+    timedExercise && targetDurationSeconds > 0
+      ? Math.max(0, exerciseTimerElapsedSeconds - targetDurationSeconds)
+      : 0;
+
+  useEffect(() => {
+    if (!timedExercise || !exerciseTimerRunning || targetDurationSeconds <= 0) {
+      return;
+    }
+
+    const remaining = targetDurationSeconds - exerciseTimerElapsedSeconds;
+
+    if (remaining <= 3 && remaining >= 1) {
+      if (lastCountdownSecondRef.current !== remaining) {
+        playCountdownBeep();
+        lastCountdownSecondRef.current = remaining;
+      }
+    }
+
+    if (
+      !exerciseTimerAlarmPlayed &&
+      exerciseTimerElapsedSeconds >= targetDurationSeconds
+    ) {
+      playFinishBeep();
+      setExerciseTimerAlarmPlayed(true);
+      lastCountdownSecondRef.current = null;
+    }
+  }, [
+    timedExercise,
+    exerciseTimerRunning,
+    targetDurationSeconds,
+    exerciseTimerElapsedSeconds,
+    exerciseTimerAlarmPlayed,
+  ]);
+
+  useEffect(() => {
+    if (!workout) return;
+    if (!timedExercise) return;
+
+    setSetLog((prev) => ({
+      ...prev,
+      durationSeconds: String(exerciseTimerElapsedSeconds),
+    }));
+  }, [exerciseTimerElapsedSeconds, workout, timedExercise]);
+
+  const currentExerciseSummary = useMemo(() => {
+    return completedExercises.find((item) => item.exerciseId === exercise.id) ?? null;
+  }, [completedExercises, exercise.id]);
+
+  const totalSetsCompleted = savedWorkoutLog
+    ? savedWorkoutLog.exercises.reduce((sum, item) => sum + item.sets.length, 0)
+    : completedExercises.reduce((sum, item) => sum + item.sets.length, 0);
+
+  const totalVolume = savedWorkoutLog
+    ? savedWorkoutLog.exercises.reduce((sum, item) => {
+        return (
+          sum +
+          item.sets.reduce((setSum, set) => {
+            if (set.actualWeight == null || set.actualReps == null) {
+              return setSum;
+            }
+
+            return setSum + set.actualWeight * set.actualReps;
+          }, 0)
+        );
+      }, 0)
+    : 0;
+
+  const disableFeedbackContinue = timedExercise
+    ? selectedTimedEffort === null ||
+      (isNewExerciseForRating && selectedRating === null)
+    : selectedExtraReps === null ||
+      (isNewExerciseForRating && selectedRating === null);
 
   const getPreferredRestSeconds = (exerciseId: string, defaultRest: number) => {
+    if (!userId) return defaultRest;
     return getLastRestForExercise(userId, exerciseId) ?? defaultRest;
   };
 
   const startRestTimer = (seconds: number, exerciseId?: string) => {
     const safeSeconds = Math.max(0, Math.round(seconds));
 
-    if (exerciseId) {
+    if (userId && exerciseId) {
       saveLastRestForExercise(userId, exerciseId, safeSeconds);
     }
 
@@ -394,6 +488,11 @@ export default function WorkoutRunPage() {
     setRestRemainingSeconds(0);
   };
 
+  const dismissRestTimerForActiveSet = () => {
+    // Dölj vilotimern så fort användaren börjar nästa set.
+    stopRestTimer();
+  };
+
   const adjustRestTimer = (deltaSeconds: number) => {
     const nextDuration = Math.max(5, restDurationSeconds + deltaSeconds);
     const nextRemaining = Math.max(5, restRemainingSeconds + deltaSeconds);
@@ -402,7 +501,9 @@ export default function WorkoutRunPage() {
     setRestDurationSeconds(nextDuration);
     setRestRemainingSeconds(nextRemaining);
 
-    saveLastRestForExercise(userId, exercise.id, nextDuration);
+    if (userId) {
+      saveLastRestForExercise(userId, exercise.id, nextDuration);
+    }
   };
 
   const toggleRestTimer = () => {
@@ -416,6 +517,16 @@ export default function WorkoutRunPage() {
   };
 
   const startExerciseTimer = () => {
+    dismissRestTimerForActiveSet();
+    hasStartedRestAfterStopRef.current = false;
+
+    if (exerciseTimerElapsedSeconds === 0) {
+      setSetLog((prev) => ({
+        ...prev,
+        durationSeconds: "0",
+      }));
+    }
+
     setExerciseTimerRunning(true);
   };
 
@@ -426,6 +537,33 @@ export default function WorkoutRunPage() {
       ...prev,
       durationSeconds: String(exerciseTimerElapsedSeconds),
     }));
+
+    // Starta vila direkt när användaren trycker stop på tidsstyrd övning,
+    // men bara om det inte är sista setet på övningen.
+    if (!timedExercise || isLastSet) {
+      return;
+    }
+
+    if (hasStartedRestAfterStopRef.current) {
+      return;
+    }
+
+    const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
+    startRestTimer(preferredRest, exercise.id);
+    hasStartedRestAfterStopRef.current = true;
+  };
+
+  const resetExerciseTimer = () => {
+    setExerciseTimerRunning(false);
+    setExerciseTimerElapsedSeconds(0);
+    setExerciseTimerAlarmPlayed(false);
+    lastCountdownSecondRef.current = null;
+    hasStartedRestAfterStopRef.current = false;
+
+    setSetLog((prev) => ({
+      ...prev,
+      durationSeconds: getDefaultDurationValue(exercise.duration),
+    }));
   };
 
   const upsertCompletedSet = (params: {
@@ -435,13 +573,18 @@ export default function WorkoutRunPage() {
     actualReps: number | null;
     actualDuration: number | null;
   }) => {
+    if (!userId) return;
+
     setCompletedExercises((prev) => {
       const existingIndex = prev.findIndex(
         (item) => item.exerciseId === params.exerciseId
       );
 
       if (existingIndex === -1) {
-        const plannedExercise = exercises.find((item) => item.id === params.exerciseId);
+        const plannedExercise = exercises.find(
+          (item) => item.id === params.exerciseId
+        );
+
         if (!plannedExercise) return prev;
 
         const newExerciseLog = createEmptyExerciseLog(
@@ -458,11 +601,11 @@ export default function WorkoutRunPage() {
           actualDuration: params.actualDuration,
           actualWeight: params.actualWeight,
           repsLeft: null,
+          timedEffort: null,
           completedAt: new Date().toISOString(),
         };
 
         newExerciseLog.sets.push(newSet);
-
         return [...prev, newExerciseLog];
       }
 
@@ -478,6 +621,7 @@ export default function WorkoutRunPage() {
           actualDuration: params.actualDuration,
           actualWeight: params.actualWeight,
           repsLeft: null,
+          timedEffort: null,
           completedAt: new Date().toISOString(),
         };
 
@@ -498,11 +642,12 @@ export default function WorkoutRunPage() {
     if (!isLastExercise) {
       const nextExerciseIndex = currentExerciseIndex + 1;
       const nextExercise = exercises[nextExerciseIndex];
-      const nextWeight = nextExercise
-        ? lastWeightByExercise[nextExercise.id] ||
-          getLastWeightForExercise(userId, nextExercise.id) ||
-          ""
-        : "";
+      const nextWeight =
+        nextExercise && userId
+          ? lastWeightByExercise[nextExercise.id] ||
+            getLastWeightForExercise(userId, nextExercise.id) ||
+            ""
+          : "";
 
       setCurrentExerciseIndex(nextExerciseIndex);
       setCurrentSet(1);
@@ -514,18 +659,26 @@ export default function WorkoutRunPage() {
         weight: nextWeight,
         completed: false,
       });
+
       setShowExerciseFeedback(false);
       setSelectedExtraReps(null);
+      setSelectedTimedEffort(null);
       setSelectedRating(null);
       setShowExerciseDescription(false);
+
       setExerciseTimerRunning(false);
       setExerciseTimerElapsedSeconds(0);
       setExerciseTimerAlarmPlayed(false);
+      lastCountdownSecondRef.current = null;
+      hasStartedRestAfterStopRef.current = false;
+
       stopRestTimer();
     }
   };
 
   const finishWorkout = async (finalExercises: CompletedExercise[]) => {
+    if (!userId || !workout) return;
+
     const workoutLog = createWorkoutLog({
       userId,
       workout,
@@ -547,7 +700,7 @@ export default function WorkoutRunPage() {
           source: "run-page",
         },
         metadata: {
-          storageVersion: 1,
+          storageVersion: 2,
         },
         events: [
           {
@@ -571,6 +724,10 @@ export default function WorkoutRunPage() {
   };
 
   const completeSet = () => {
+    if (!userId) return;
+
+    dismissRestTimerForActiveSet();
+
     const currentWeight = setLog.weight.trim();
 
     const actualRepsValue = timedExercise
@@ -623,26 +780,44 @@ export default function WorkoutRunPage() {
       setExerciseTimerRunning(false);
       setExerciseTimerElapsedSeconds(0);
       setExerciseTimerAlarmPlayed(false);
+      lastCountdownSecondRef.current = null;
+      hasStartedRestAfterStopRef.current = false;
 
-      const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
-      startRestTimer(preferredRest, exercise.id);
+      // För vanliga övningar startar vilan här när setet sparas.
+      // För tidsstyrda övningar startas den redan när användaren trycker Stop.
+      if (!timedExercise) {
+        const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
+        startRestTimer(preferredRest, exercise.id);
+      }
+
       return;
     }
 
     setExerciseTimerRunning(false);
     stopRestTimer();
     setShowExerciseFeedback(true);
+    hasStartedRestAfterStopRef.current = false;
   };
 
   const completeExerciseFeedback = async () => {
-    if (selectedExtraReps === null) return;
+    if (!userId) return;
+
+    if (timedExercise) {
+      if (selectedTimedEffort === null) return;
+    } else {
+      if (selectedExtraReps === null) return;
+    }
+
     if (isNewExerciseForRating && selectedRating === null) return;
 
     saveExerciseFeedbackEntry(userId, {
       exerciseId: exercise.id,
       exerciseName: exercise.name,
       completedAt: new Date().toISOString(),
-      extraReps: selectedExtraReps,
+      extraReps: timedExercise ? undefined : selectedExtraReps ?? undefined,
+      timedEffort: timedExercise
+        ? selectedTimedEffort ?? undefined
+        : undefined,
       rating: isNewExerciseForRating ? selectedRating ?? undefined : undefined,
     });
 
@@ -650,11 +825,13 @@ export default function WorkoutRunPage() {
       item.exerciseId === exercise.id
         ? {
             ...item,
-            extraReps: selectedExtraReps,
+            extraReps: timedExercise ? null : selectedExtraReps,
+            timedEffort: timedExercise ? selectedTimedEffort : null,
             rating: isNewExerciseForRating ? selectedRating : item.rating,
             sets: item.sets.map((set) => ({
               ...set,
-              repsLeft: selectedExtraReps,
+              repsLeft: timedExercise ? null : selectedExtraReps,
+              timedEffort: timedExercise ? selectedTimedEffort : null,
             })),
           }
         : item
@@ -669,21 +846,35 @@ export default function WorkoutRunPage() {
     goToNextExercise();
   };
 
-  const totalSetsCompleted = savedWorkoutLog
-    ? savedWorkoutLog.exercises.reduce((sum, item) => sum + item.sets.length, 0)
-    : completedExercises.reduce((sum, item) => sum + item.sets.length, 0);
+  if (!authChecked) {
+    return (
+      <main className="min-h-screen bg-gray-50 p-4">
+        <div className="mx-auto max-w-md rounded-2xl border bg-white p-4 shadow-sm">
+          <p className="text-sm text-gray-700">Kontrollerar inloggning...</p>
+        </div>
+      </main>
+    );
+  }
 
-  const totalVolume = savedWorkoutLog
-    ? savedWorkoutLog.exercises.reduce((sum, item) => {
-        return (
-          sum +
-          item.sets.reduce((setSum, set) => {
-            if (set.actualWeight == null || set.actualReps == null) return setSum;
-            return setSum + set.actualWeight * set.actualReps;
-          }, 0)
-        );
-      }, 0)
-    : 0;
+  if (!workout || !userId) {
+    return (
+      <main className="min-h-screen bg-gray-50 p-4">
+        <div className="mx-auto max-w-md rounded-2xl border bg-white p-4 shadow-sm">
+          <h1 className="text-xl font-bold text-gray-900">Inget aktivt pass</h1>
+          <p className="mt-2 text-sm text-gray-700">
+            Det finns inget pass att köra just nu.
+          </p>
+
+          <button
+            onClick={() => router.push("/home")}
+            className="mt-4 w-full rounded-2xl bg-blue-600 px-4 py-3 font-semibold text-white"
+          >
+            Till startsidan
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   if (workoutFinished && savedWorkoutLog) {
     return (
@@ -702,28 +893,28 @@ export default function WorkoutRunPage() {
             <div className="mt-4 grid grid-cols-2 gap-3">
               <div className="rounded-2xl bg-gray-50 p-4">
                 <div className="text-sm text-gray-600">Tid</div>
-                <div className="mt-1 text-lg font-bold text-gray-900">
+                <div className="mt-1 text-xl font-semibold text-gray-900">
                   {formatDuration(savedWorkoutLog.durationSeconds)}
                 </div>
               </div>
 
               <div className="rounded-2xl bg-gray-50 p-4">
                 <div className="text-sm text-gray-600">Övningar</div>
-                <div className="mt-1 text-lg font-bold text-gray-900">
+                <div className="mt-1 text-xl font-semibold text-gray-900">
                   {savedWorkoutLog.exercises.length}
                 </div>
               </div>
 
               <div className="rounded-2xl bg-gray-50 p-4">
                 <div className="text-sm text-gray-600">Set totalt</div>
-                <div className="mt-1 text-lg font-bold text-gray-900">
+                <div className="mt-1 text-xl font-semibold text-gray-900">
                   {totalSetsCompleted}
                 </div>
               </div>
 
               <div className="rounded-2xl bg-gray-50 p-4">
                 <div className="text-sm text-gray-600">Volym</div>
-                <div className="mt-1 text-lg font-bold text-gray-900">
+                <div className="mt-1 text-xl font-semibold text-gray-900">
                   {Math.round(totalVolume)} kg
                 </div>
               </div>
@@ -732,74 +923,81 @@ export default function WorkoutRunPage() {
             <p className="mt-4 text-sm text-gray-600">
               Avslutat {formatDateTime(savedWorkoutLog.completedAt)}
             </p>
-          </section>
 
-          <section className="mt-4 space-y-3">
-            {savedWorkoutLog.exercises.map((loggedExercise) => (
-              <div
-                key={loggedExercise.exerciseId}
-                className="rounded-2xl border bg-white p-4 shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-gray-900">
-                      {loggedExercise.exerciseName}
-                    </h3>
+            <div className="mt-5 space-y-4">
+              {savedWorkoutLog.exercises.map((loggedExercise) => (
+                <div
+                  key={loggedExercise.exerciseId}
+                  className="rounded-2xl border p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold text-gray-900">
+                        {loggedExercise.exerciseName}
+                      </h3>
 
-                    <div className="mt-1 flex flex-wrap gap-2 text-xs">
-                      {loggedExercise.extraReps !== null ? (
-                        <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">
-                          Extra reps:{" "}
-                          {loggedExercise.extraReps === 6
-                            ? "6+"
-                            : loggedExercise.extraReps}
-                        </span>
-                      ) : null}
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs">
+                        {loggedExercise.extraReps !== null ? (
+                          <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">
+                            Extra reps:{" "}
+                            {loggedExercise.extraReps === 6
+                              ? "6+"
+                              : loggedExercise.extraReps}
+                          </span>
+                        ) : null}
 
-                      {loggedExercise.rating !== null ? (
-                        <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">
-                          Betyg: {loggedExercise.rating}/5
-                        </span>
-                      ) : null}
+                        {loggedExercise.timedEffort !== null ? (
+                          <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">
+                            Kändes:{" "}
+                            {getTimedEffortLabel(loggedExercise.timedEffort)}
+                          </span>
+                        ) : null}
+
+                        {loggedExercise.rating !== null ? (
+                          <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">
+                            Betyg: {loggedExercise.rating}/5
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="text-sm text-gray-500">
+                      {loggedExercise.sets.length} set
                     </div>
                   </div>
 
-                  <div className="text-sm text-gray-500">
-                    {loggedExercise.sets.length} set
-                  </div>
-                </div>
+                  <div className="mt-3 space-y-2">
+                    {loggedExercise.sets.map((set) => {
+                      const isTimedSet =
+                        loggedExercise.plannedDuration !== null &&
+                        loggedExercise.plannedDuration > 0 &&
+                        loggedExercise.plannedReps == null;
 
-                <div className="mt-3 space-y-2">
-                  {loggedExercise.sets.map((set) => {
-                    const isTimedSet =
-                      loggedExercise.plannedDuration !== null &&
-                      loggedExercise.plannedDuration > 0 &&
-                      loggedExercise.plannedReps == null;
-
-                    return (
-                      <div
-                        key={`${loggedExercise.exerciseId}-${set.setNumber}`}
-                        className="rounded-xl bg-gray-50 px-3 py-2 text-sm text-gray-800"
-                      >
-                        <span className="font-medium">Set {set.setNumber}</span>
-                        {" • "}
-                        {isTimedSet
-                          ? set.actualDuration !== null
-                            ? `${set.actualDuration} sek`
-                            : "ingen tid angiven"
-                          : set.actualReps !== null
+                      return (
+                        <div
+                          key={`${loggedExercise.exerciseId}-${set.setNumber}`}
+                          className="rounded-xl bg-gray-50 px-3 py-2 text-sm text-gray-800"
+                        >
+                          <span className="font-medium">Set {set.setNumber}</span>
+                          {" • "}
+                          {isTimedSet
+                            ? set.actualDuration !== null
+                              ? `${set.actualDuration} sek`
+                              : "ingen tid angiven"
+                            : set.actualReps !== null
                             ? `${set.actualReps} reps`
                             : "inga reps angivna"}
-                        {" • "}
-                        {set.actualWeight !== null
-                          ? `${set.actualWeight} kg`
-                          : "ingen vikt"}
-                      </div>
-                    );
-                  })}
+                          {" • "}
+                          {set.actualWeight !== null
+                            ? `${set.actualWeight} kg`
+                            : "ingen vikt"}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </section>
         </div>
 
@@ -835,44 +1033,65 @@ export default function WorkoutRunPage() {
           </h2>
 
           <div className="mt-4 flex flex-wrap gap-2 text-sm">
-            <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-900">
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-700">
               Set {currentSet} / {exercise.sets}
             </span>
 
             {!timedExercise && exercise.reps ? (
-              <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-900">
+              <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-700">
                 Mål: {exercise.reps} reps
               </span>
             ) : null}
 
             {timedExercise && exercise.duration ? (
-              <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-900">
+              <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-700">
                 Mål: {exercise.duration} sek
               </span>
             ) : null}
 
-            <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-900">
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-700">
               Vila {getPreferredRestSeconds(exercise.id, exercise.rest)} sek
             </span>
           </div>
 
           {timedExercise ? (
-            <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4">
-              <p className="text-sm text-blue-800">Timer för övningen</p>
-              <div className="mt-1 text-3xl font-bold text-blue-950">
-                {formatTimerClock(exerciseTimerElapsedSeconds)}
-              </div>
-
-              <p className="mt-2 text-sm text-blue-900">
-                Ljud spelas vid {exercise.duration ?? 0} sek, men timern fortsätter
-                att räkna.
+            <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+              <p className="text-sm font-medium text-emerald-800">
+                Timer för övningen
               </p>
 
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-3 text-center">
+                <div className="text-5xl font-bold tracking-tight text-emerald-950">
+                  {formatTimerClock(exerciseTimerElapsedSeconds)}
+                </div>
+
+                {targetDurationSeconds > 0 ? (
+                  <div className="mt-3 space-y-1 text-sm">
+                    {timedSecondsRemaining > 0 ? (
+                      <p className="text-emerald-900">
+                        Kvar till mål: {formatTimerClock(timedSecondsRemaining)}
+                      </p>
+                    ) : (
+                      <p className="font-medium text-emerald-900">
+                        Mål nått
+                        {timedSecondsOver > 0
+                          ? ` · över tid ${formatTimerClock(timedSecondsOver)}`
+                          : ""}
+                      </p>
+                    )}
+
+                    <p className="text-emerald-800">
+                      Pip på 3, 2, 1 och längre pip när måltiden nås.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={startExerciseTimer}
-                  className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-900"
+                  className="rounded-2xl bg-green-600 px-4 py-5 text-lg font-bold text-white shadow-sm"
                 >
                   Start
                 </button>
@@ -880,11 +1099,19 @@ export default function WorkoutRunPage() {
                 <button
                   type="button"
                   onClick={stopExerciseTimer}
-                  className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-900"
+                  className="rounded-2xl bg-red-600 px-4 py-5 text-lg font-bold text-white shadow-sm"
                 >
                   Stop
                 </button>
               </div>
+
+              <button
+                type="button"
+                onClick={resetExerciseTimer}
+                className="mt-3 w-full rounded-2xl border border-emerald-300 bg-white px-4 py-3 text-sm font-medium text-emerald-950"
+              >
+                Nollställ timer
+              </button>
             </div>
           ) : null}
 
@@ -895,141 +1122,254 @@ export default function WorkoutRunPage() {
                 onClick={() => setShowExerciseDescription((prev) => !prev)}
                 className="text-sm font-medium text-blue-700 underline underline-offset-2"
               >
-                {showExerciseDescription
-                  ? "Dölj beskrivning"
-                  : "Visa beskrivning"}
+                {showExerciseDescription ? "Dölj beskrivning" : "Visa beskrivning"}
               </button>
 
               {showExerciseDescription ? (
-                <div className="mt-2 rounded-xl bg-blue-50 px-3 py-3 text-sm text-gray-800">
+                <p className="mt-2 rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
                   {exercise.description}
-                </div>
+                </p>
               ) : null}
             </div>
           ) : null}
         </section>
 
         {!showExerciseFeedback ? (
-          <section className="mt-4 rounded-2xl border bg-white p-5 shadow-sm">
-            <h3 className="text-base font-semibold text-gray-900">
-              Logga aktuellt set
-            </h3>
+          <>
+            <section className="mt-4 rounded-2xl border bg-white p-5 shadow-sm">
+              <h3 className="text-base font-semibold text-gray-900">
+                Logga aktuellt set
+              </h3>
 
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              {timedExercise ? (
+              <div className="mt-4 grid gap-4">
+                {timedExercise ? (
+                  <label className="text-sm">
+                    <span className="mb-1 block text-gray-700">
+                      Utförd tid i sekunder
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      value={setLog.durationSeconds}
+                      onChange={(e) => {
+                        dismissRestTimerForActiveSet();
+                        hasStartedRestAfterStopRef.current = false;
+
+                        setSetLog((prev) => ({
+                          ...prev,
+                          durationSeconds: e.target.value,
+                        }));
+                      }}
+                      placeholder={
+                        exercise.duration ? String(exercise.duration) : "Sekunder"
+                      }
+                      className="w-full rounded-xl border px-3 py-3 text-base text-gray-900 outline-none"
+                    />
+                  </label>
+                ) : (
+                  <label className="text-sm">
+                    <span className="mb-1 block text-gray-700">Utförda reps</span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      value={setLog.reps}
+                      onChange={(e) => {
+                        dismissRestTimerForActiveSet();
+                        setSetLog((prev) => ({ ...prev, reps: e.target.value }));
+                      }}
+                      placeholder={exercise.reps ? String(exercise.reps) : "Reps"}
+                      className="w-full rounded-xl border px-3 py-3 text-base text-gray-900 outline-none"
+                    />
+                  </label>
+                )}
+
                 <label className="text-sm">
-                  <span className="mb-1 block text-gray-700">
-                    Utförd tid i sekunder
-                  </span>
+                  <span className="mb-1 block text-gray-700">Vikt kg</span>
                   <input
                     type="number"
-                    inputMode="numeric"
+                    inputMode="decimal"
                     min="0"
-                    value={setLog.durationSeconds}
-                    onChange={(e) =>
-                      setSetLog((prev) => ({
-                        ...prev,
-                        durationSeconds: e.target.value,
-                      }))
-                    }
-                    placeholder={
-                      exercise.duration ? String(exercise.duration) : "Sekunder"
-                    }
+                    step="0.5"
+                    value={setLog.weight}
+                    onChange={(e) => {
+                      dismissRestTimerForActiveSet();
+                      setSetLog((prev) => ({ ...prev, weight: e.target.value }));
+                    }}
+                    placeholder="Valfritt"
                     className="w-full rounded-xl border px-3 py-3 text-base text-gray-900 outline-none"
                   />
                 </label>
-              ) : (
-                <label className="text-sm">
-                  <span className="mb-1 block text-gray-700">Utförda reps</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="0"
-                    value={setLog.reps}
-                    onChange={(e) =>
-                      setSetLog((prev) => ({ ...prev, reps: e.target.value }))
-                    }
-                    placeholder={exercise.reps ? String(exercise.reps) : "Reps"}
-                    className="w-full rounded-xl border px-3 py-3 text-base text-gray-900 outline-none"
-                  />
-                </label>
-              )}
+              </div>
 
-              <label className="text-sm">
-                <span className="mb-1 block text-gray-700">Vikt kg</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.5"
-                  value={setLog.weight}
-                  onChange={(e) =>
-                    setSetLog((prev) => ({ ...prev, weight: e.target.value }))
-                  }
-                  placeholder="Valfritt"
-                  className="w-full rounded-xl border px-3 py-3 text-base text-gray-900 outline-none"
-                />
-              </label>
-            </div>
+              <p className="mt-3 text-sm text-gray-600">
+                {timedExercise
+                  ? "För tidsstyrda övningar loggas tiden från timern. Du kan också justera värdet manuellt vid behov."
+                  : "Förifyllda reps motsvarar det planerade antalet. Ändra bara om du faktiskt gjorde fler eller färre."}
+              </p>
 
-            <p className="mt-3 text-sm text-gray-600">
-              {timedExercise
-                ? "För tidsstyrda övningar loggas tiden från timern. Du kan också justera värdet manuellt vid behov."
-                : "Förifyllda reps motsvarar det planerade antalet. Ändra bara om du faktiskt gjorde fler eller färre."}
-            </p>
-          </section>
+              {currentExerciseSummary ? (
+                <p className="mt-3 text-xs text-gray-500">
+                  Loggade set för övningen hittills: {currentExerciseSummary.sets.length}
+                </p>
+              ) : null}
+            </section>
+
+            {showRestTimer ? (
+              <section className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-emerald-950">
+                  Vila till nästa set
+                </h3>
+
+                <div className="mt-3 text-4xl font-bold tracking-tight text-emerald-950">
+                  {formatTimerClock(restRemainingSeconds)}
+                </div>
+
+                <p className="mt-2 text-sm text-emerald-900">
+                  Sparad vila för övningen: {restDurationSeconds} sek
+                </p>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={stopRestTimer}
+                    className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
+                  >
+                    Avbryt
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => adjustRestTimer(-15)}
+                    className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
+                  >
+                    −15 s
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => adjustRestTimer(15)}
+                    className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
+                  >
+                    +15 s
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={toggleRestTimer}
+                    className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
+                  >
+                    {restTimerRunning ? "Pausa" : "Fortsätt"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={resetRestTimerToPreferred}
+                    className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
+                  >
+                    Starta om
+                  </button>
+                </div>
+
+                <p className="mt-3 text-xs text-emerald-900">
+                  Timern stängs automatiskt när du börjar nästa set.
+                </p>
+              </section>
+            ) : null}
+          </>
         ) : (
           <section className="mt-4 rounded-2xl border bg-white p-5 shadow-sm">
             <h3 className="text-base font-semibold text-gray-900">
-              Hur tung var övningen?
+              Hur kändes övningen?
             </h3>
-            <p className="mt-2 text-sm text-gray-700">
-              Hur många extra repetitioner tror du att du hade klarat i slutet?
-            </p>
 
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              {EXTRA_REP_OPTIONS.map((option) => {
-                const active = selectedExtraReps === option;
+            {timedExercise ? (
+              <>
+                <p className="mt-2 text-sm text-gray-700">
+                  För tidsstyrda övningar: välj hur ansträngande setet kändes.
+                </p>
 
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setSelectedExtraReps(option)}
-                    className={`rounded-2xl border px-4 py-4 text-left transition ${
-                      active
-                        ? "border-blue-600 bg-blue-600 text-white"
-                        : "border-gray-200 bg-white text-gray-900"
-                    }`}
-                  >
-                    <div className="text-base font-semibold">
-                      {option === 6 ? "6+" : option} extra reps
-                    </div>
-                    <div
-                      className={`mt-1 text-sm ${
-                        active ? "text-blue-100" : "text-gray-600"
-                      }`}
-                    >
-                      {option === 0 && "Tungt"}
-                      {option === 2 && "Lagom"}
-                      {option === 4 && "Lite lätt"}
-                      {option === 6 && "För lätt"}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                <div className="mt-4 grid gap-3">
+                  {TIMED_EFFORT_OPTIONS.map((option) => {
+                    const active = selectedTimedEffort === option.value;
 
-            {isNewExerciseForRating && (
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setSelectedTimedEffort(option.value)}
+                        className={`rounded-2xl border px-4 py-4 text-left transition ${
+                          active
+                            ? "border-blue-600 bg-blue-600 text-white"
+                            : "border-gray-200 bg-white text-gray-900"
+                        }`}
+                      >
+                        <div className="font-semibold">{option.label}</div>
+                        <div
+                          className={`mt-1 text-sm ${
+                            active ? "text-blue-50" : "text-gray-600"
+                          }`}
+                        >
+                          {option.description}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mt-2 text-sm text-gray-700">
+                  Hur många extra repetitioner tror du att du hade klarat i slutet?
+                </p>
+
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  {EXTRA_REP_OPTIONS.map((option) => {
+                    const active = selectedExtraReps === option;
+
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setSelectedExtraReps(option)}
+                        className={`rounded-2xl border px-4 py-4 text-left transition ${
+                          active
+                            ? "border-blue-600 bg-blue-600 text-white"
+                            : "border-gray-200 bg-white text-gray-900"
+                        }`}
+                      >
+                        <div className="font-semibold">
+                          {option === 6 ? "6+" : option} extra reps
+                        </div>
+                        <div
+                          className={`mt-1 text-sm ${
+                            active ? "text-blue-50" : "text-gray-600"
+                          }`}
+                        >
+                          {option === 0 && "Tungt"}
+                          {option === 2 && "Lagom"}
+                          {option === 4 && "Lite lätt"}
+                          {option === 6 && "För lätt"}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {isNewExerciseForRating ? (
               <>
                 <h3 className="mt-6 text-base font-semibold text-gray-900">
                   Vad tyckte du om övningen?
                 </h3>
+
                 <p className="mt-2 text-sm text-gray-700">
                   Eftersom du inte gjort den tidigare får du gärna sätta ett betyg.
                 </p>
 
-                <div className="mt-4 flex gap-2">
+                <div className="mt-4 flex flex-wrap gap-3">
                   {RATING_OPTIONS.map((rating) => {
                     const active = selectedRating === rating;
 
@@ -1050,120 +1390,68 @@ export default function WorkoutRunPage() {
                   })}
                 </div>
 
-                <p className="mt-2 text-sm text-gray-600">
+                <p className="mt-2 text-xs text-gray-500">
                   1 = dålig, 5 = mycket bra
                 </p>
               </>
-            )}
+            ) : null}
           </section>
         )}
       </div>
 
       <div className="fixed inset-x-0 bottom-0 border-t bg-white/95 backdrop-blur">
-        <div className="mx-auto w-full max-w-md p-4">
-          {showRestTimer ? (
-            <div className="mb-3 rounded-2xl border bg-emerald-50 p-4 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm text-emerald-800">Vila till nästa set</p>
-                  <div className="mt-1 text-3xl font-bold text-emerald-950">
-                    {formatTimerClock(restRemainingSeconds)}
-                  </div>
-                  <p className="mt-1 text-xs text-emerald-900/80">
-                    Sparad vila för övningen: {restDurationSeconds} sek
-                  </p>
-                </div>
+        <div className="mx-auto flex w-full max-w-md gap-3 p-4">
+          {!showExerciseFeedback ? (
+            <>
+              <button
+                type="button"
+                onClick={() => router.push("/workout/preview")}
+                className="flex-1 rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900"
+              >
+                Tillbaka
+              </button>
 
-                <button
-                  type="button"
-                  onClick={stopRestTimer}
-                  className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
-                >
-                  Avbryt
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={completeSet}
+                className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
+              >
+                {timedExercise
+                  ? isLastSet
+                    ? "Avsluta övning"
+                    : "Spara set"
+                  : isLastSet
+                  ? "Avsluta övning"
+                  : "Nästa set"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExerciseFeedback(false);
+                  setSelectedExtraReps(null);
+                  setSelectedTimedEffort(null);
+                  setSelectedRating(null);
+                }}
+                className="flex-1 rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900"
+              >
+                Tillbaka
+              </button>
 
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => adjustRestTimer(-15)}
-                  className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
-                >
-                  −15 s
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => adjustRestTimer(15)}
-                  className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
-                >
-                  +15 s
-                </button>
-
-                <button
-                  type="button"
-                  onClick={toggleRestTimer}
-                  className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
-                >
-                  {restTimerRunning ? "Pausa" : "Fortsätt"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={resetRestTimerToPreferred}
-                  className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-900"
-                >
-                  Starta om
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="flex gap-3">
-            {!showExerciseFeedback ? (
-              <>
-                <button
-                  onClick={() => router.push("/workout/preview")}
-                  className="flex-1 rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900"
-                >
-                  Tillbaka
-                </button>
-
-                <button
-                  onClick={completeSet}
-                  className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
-                >
-                  {isLastSet ? "Avsluta övning" : "Nästa set"}
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={() => {
-                    setShowExerciseFeedback(false);
-                    setSelectedExtraReps(null);
-                    setSelectedRating(null);
-                  }}
-                  className="flex-1 rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900"
-                >
-                  Tillbaka
-                </button>
-
-                <button
-                  onClick={() => {
-                    void completeExerciseFeedback();
-                  }}
-                  disabled={
-                    selectedExtraReps === null ||
-                    (isNewExerciseForRating && selectedRating === null)
-                  }
-                  className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
-                >
-                  {isLastExercise ? "Avsluta pass" : "Nästa övning"}
-                </button>
-              </>
-            )}
-          </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void completeExerciseFeedback();
+                }}
+                disabled={disableFeedbackContinue}
+                className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
+              >
+                {isLastExercise ? "Avsluta pass" : "Nästa övning"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </main>

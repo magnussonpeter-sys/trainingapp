@@ -1,4 +1,7 @@
+// lib/workout-log-storage.ts
+
 import type { Exercise, Workout } from "../types/workout";
+import type { TimedEffortOption } from "../types/exercise-feedback";
 
 export type ExtraRepsOption = 0 | 2 | 4 | 6;
 
@@ -10,7 +13,13 @@ export type CompletedSet = {
   actualReps: number | null;
   actualDuration: number | null;
   actualWeight: number | null;
+
+  // För vanliga övningar.
   repsLeft: ExtraRepsOption | null;
+
+  // För tidsstyrda övningar.
+  timedEffort: TimedEffortOption | null;
+
   completedAt: string;
 };
 
@@ -22,15 +31,23 @@ export type CompletedExercise = {
   plannedDuration: number | null;
   isNewExercise: boolean;
   rating: number | null;
+
+  // För vanliga övningar.
   extraReps: ExtraRepsOption | null;
+
+  // För tidsstyrda övningar.
+  timedEffort: TimedEffortOption | null;
+
   sets: CompletedSet[];
 };
 
 export type WorkoutLog = {
   id: string;
   userId: string;
+
   // Workout-id kan saknas för vissa pass, därför tillåter vi null.
   workoutId: string | null;
+
   workoutName: string;
   startedAt: string;
   completedAt: string;
@@ -82,6 +99,7 @@ export function createEmptyExerciseLog(
     isNewExercise,
     rating: null,
     extraReps: null,
+    timedEffort: null,
     sets: [],
   };
 }
@@ -101,8 +119,10 @@ export function createWorkoutLog(params: {
         ? crypto.randomUUID()
         : `${Date.now()}`,
     userId: params.userId,
+
     // Workout.id är optional i Workout-typen, så vi fallbackar till null.
     workoutId: params.workout.id ?? null,
+
     workoutName: params.workout.name,
     startedAt: params.startedAt,
     completedAt,
