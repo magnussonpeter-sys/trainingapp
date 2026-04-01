@@ -1,61 +1,54 @@
 "use client";
 
-import { signIn } from "next-auth/react";
 import Link from "next/link";
-import { useState } from "react";
+import { FormEvent, useState } from "react";
+import { signIn } from "next-auth/react";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: FormEvent) {
     e.preventDefault();
+
+    if (submitting) return;
+
+    setSubmitting(true);
     setMessage("");
 
     const result = await signIn("credentials", {
-      email,
+      identifier: identifier.trim(),
       password,
       redirect: false,
     });
 
     if (result?.ok) {
       window.location.href = "/";
-    } else {
-      setMessage("Fel e-post eller lösenord");
+      return;
     }
+
+    setMessage("Fel användarnamn/e-post eller lösenord");
+    setSubmitting(false);
   }
 
   return (
-    <main
-      style={{
-        maxWidth: 520,
-        margin: "0 auto",
-        padding: 20,
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 16,
-          padding: 20,
-          boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
-        }}
-      >
-        <h1 style={{ marginTop: 0 }}>Logga in</h1>
+    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center p-6">
+      <div className="rounded-2xl border bg-white p-6 shadow-sm">
+        <h1 className="mb-2 text-3xl font-bold">Logga in</h1>
+        <p className="mb-6 text-sm text-gray-600">
+          Logga in med e-post eller användarnamn.
+        </p>
 
-        <form onSubmit={handleLogin} style={{ display: "grid", gap: 12 }}>
+        <form onSubmit={handleLogin} className="space-y-4">
           <input
-            type="email"
-            placeholder="E-post"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{
-              padding: 12,
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-            }}
+            type="text"
+            placeholder="E-post eller användarnamn"
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
+            autoComplete="username"
+            className="w-full rounded-xl border px-3 py-3 text-base"
           />
 
           <input
@@ -63,45 +56,24 @@ export default function LoginPage() {
             placeholder="Lösenord"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={{
-              padding: 12,
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-            }}
+            autoComplete="current-password"
+            className="w-full rounded-xl border px-3 py-3 text-base"
           />
 
           <button
             type="submit"
-            style={{
-              padding: 14,
-              borderRadius: 12,
-              border: "none",
-              background: "#2563eb",
-              color: "#fff",
-              fontWeight: 700,
-            }}
+            disabled={submitting}
+            className="w-full rounded-xl bg-black px-4 py-3 text-white disabled:opacity-60"
           >
-            Logga in
+            {submitting ? "Loggar in..." : "Logga in"}
           </button>
+
+          {message ? <p className="text-sm text-red-600">{message}</p> : null}
         </form>
 
-        {message && (
-          <div
-            style={{
-              marginTop: 12,
-              padding: 12,
-              borderRadius: 12,
-              background: "#eff6ff",
-              color: "#1e3a8a",
-            }}
-          >
-            {message}
-          </div>
-        )}
-
-        <p style={{ marginTop: 16 }}>
+        <p className="mt-6 text-sm text-gray-600">
           Har du inget konto?{" "}
-          <Link href="/register" style={{ color: "#2563eb" }}>
+          <Link href="/register" className="font-medium underline">
             Skapa konto
           </Link>
         </p>

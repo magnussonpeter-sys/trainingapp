@@ -1,9 +1,9 @@
+import NextAuth, { type NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import type { NextAuthOptions } from "next-auth";
 import bcrypt from "bcryptjs";
 import { pool } from "@/lib/db";
 
-// Enkel typ för appens auth-user.
+// Enkel typ för auth-user i appen
 type AppAuthUser = {
   id: string;
   email: string;
@@ -13,6 +13,10 @@ type AppAuthUser = {
 };
 
 export const authOptions: NextAuthOptions = {
+  session: {
+    strategy: "jwt", // Vi kör JWT-sessioner
+  },
+
   providers: [
     CredentialsProvider({
       name: "Credentials",
@@ -31,13 +35,13 @@ export const authOptions: NextAuthOptions = {
         const identifier = credentials?.identifier?.trim();
         const password = credentials?.password;
 
-        // Skydda mot tomma inloggningsfält.
+        // Skydda mot tomma fält
         if (!identifier || !password) {
           return null;
         }
 
-        // Tillåt login med e-post eller nuvarande name-fält.
-        // På sikt bör vi lägga till ett separat username-fält i DB.
+        // Tillåt login med e-post eller nuvarande name-fält
+        // På sikt bör detta ersättas av ett separat username-fält
         const result = await pool.query(
           `
           SELECT id, email, name, password_hash, role, status
@@ -55,19 +59,19 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        // Blockera inaktiverade användare.
+        // Blockera inaktiverade användare
         if ((user.status ?? "active") !== "active") {
           return null;
         }
 
-        // Kontrollera hashat lösenord.
+        // Kontrollera lösenord mot hash
         const isValid = await bcrypt.compare(password, user.password_hash);
 
         if (!isValid) {
           return null;
         }
 
-        // Uppdatera senaste inloggning.
+        // Uppdatera senaste inloggning
         await pool.query(
           `
           UPDATE app_users
@@ -88,19 +92,8 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
 
-  session: {
-    strategy: "jwt",
-  },
-
-  secret: process.env.AUTH_SECRET,
-
-  // Behåll login-sidan på startsidan.
-  pages: {
-    signIn: "/",
-  },
-
   callbacks: {
-    // Lägg in det vi behöver i JWT-token.
+    // Lägg extra data i JWT
     async jwt({ token, user }) {
       if (user) {
         const authUser = user as AppAuthUser;
@@ -114,7 +107,7 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
 
-    // Exponera samma data i session.user.
+    // Exponera samma data i session.user
     async session({ session, token }) {
       if (session.user) {
         (session.user as { id?: string }).id = String(token.id ?? "");
@@ -133,4 +126,14 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
   },
+
+  pages: {
+    signIn: "/", // Startsidan är login-sida
+  },
+
+  secret: process.env.NEXTAUTH_SECRET,
 };
+
+const handler = NextAuth(authOptions);
+
+export { handler as GET, handler as POST };

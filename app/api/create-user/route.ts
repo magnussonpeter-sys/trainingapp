@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pool } from "@/lib/db";
-import bcrypt from "bcrypt";
 import { randomUUID } from "crypto";
+import bcrypt from "bcryptjs";
+import { pool } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,8 +14,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Kolla om e-post redan används
     const existing = await pool.query(
-      "SELECT id FROM app_users WHERE email = $1",
+      "SELECT id FROM app_users WHERE LOWER(email) = LOWER($1)",
       [email]
     );
 
@@ -26,15 +27,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Hasha lösenordet säkert
     const hash = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
       `
-      INSERT INTO app_users (id, email, password_hash, name)
-      VALUES ($1, $2, $3, $4)
-      RETURNING id, email, name
+      INSERT INTO app_users (id, email, password_hash, name, role, status)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, email, name, role, status
       `,
-      [randomUUID(), email, hash, name || null]
+      [randomUUID(), email.trim(), hash, name?.trim() || null, "user", "active"]
     );
 
     return NextResponse.json({
@@ -43,6 +45,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     console.error("create-user failed:", e);
+
     return NextResponse.json(
       { ok: false, error: "Kunde inte skapa användare" },
       { status: 500 }
