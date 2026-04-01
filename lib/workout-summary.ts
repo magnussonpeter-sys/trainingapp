@@ -1,6 +1,9 @@
-import { pool } from "@/lib/db";
+// lib/workout-summary.ts
 
-type ExerciseSummary = {
+import { pool } from "@/lib/db";
+import { getExerciseById, type MovementPattern } from "@/lib/exercise-catalog";
+
+export type ExerciseSummaryForAI = {
   exerciseId: string;
   avgRating: number | null;
   avgExtraReps: number | null;
@@ -8,6 +11,41 @@ type ExerciseSummary = {
   lastReps: number | null;
   completedCount: number;
   recentCompletedCount: number;
+  recent7dCount: number;
+  recent14dCount: number;
+  lastCompletedAt: string | null;
+};
+
+type ExerciseInsight = {
+  exerciseId: string;
+  count: number;
+  avgRating: number | null;
+  avgExtraReps: number | null;
+  lastCompletedAt: string | null;
+};
+
+type MovementPatternLoad = Record<
+  MovementPattern,
+  {
+    completedExercises: number;
+    uniqueExercises: number;
+  }
+>;
+
+export type WorkoutSummaryForAI = {
+  recentWorkouts: number;
+  adherence: {
+    completed: number;
+    aborted: number;
+  };
+  exercises: ExerciseSummaryForAI[];
+  recentExerciseIds: string[];
+  avoidExerciseIds: string[];
+  preferredExerciseIds: string[];
+  topPositiveExercises: ExerciseInsight[];
+  topNegativeExercises: ExerciseInsight[];
+  movementPatternLoad7d: MovementPatternLoad;
+  movementPatternLoad14d: MovementPatternLoad;
 };
 
 function toNumberOrNull(value: unknown) {
@@ -19,7 +57,49 @@ function toNumberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export async function getWorkoutSummaryForAI(userId: string) {
+function createEmptyMovementPatternLoad(): MovementPatternLoad {
+  return {
+    horizontal_push: { completedExercises: 0, uniqueExercises: 0 },
+    horizontal_pull: { completedExercises: 0, uniqueExercises: 0 },
+    vertical_push: { completedExercises: 0, uniqueExercises: 0 },
+    vertical_pull: { completedExercises: 0, uniqueExercises: 0 },
+    squat: { completedExercises: 0, uniqueExercises: 0 },
+    hinge: { completedExercises: 0, uniqueExercises: 0 },
+    lunge: { completedExercises: 0, uniqueExercises: 0 },
+    core: { completedExercises: 0, uniqueExercises: 0 },
+    carry: { completedExercises: 0, uniqueExercises: 0 },
+  };
+}
+
+function addToMovementLoad(
+  load: MovementPatternLoad,
+  exerciseId: string,
+  count: number
+) {
+  const catalogExercise = getExerciseById(exerciseId);
+
+  if (!catalogExercise || count <= 0) {
+    return;
+  }
+
+  const bucket = load[catalogExercise.movementPattern];
+  bucket.completedExercises += count;
+  bucket.uniqueExercises += 1;
+}
+
+function mapExerciseInsight(exercise: ExerciseSummaryForAI): ExerciseInsight {
+  return {
+    exerciseId: exercise.exerciseId,
+    count: exercise.completedCount,
+    avgRating: exercise.avgRating,
+    avgExtraReps: exercise.avgExtraReps,
+    lastCompletedAt: exercise.lastCompletedAt,
+  };
+}
+
+export async function getWorkoutSummaryForAI(
+  userId: string
+): Promise<WorkoutSummaryForAI> {
   // ===== 1. Senaste pass =====
   const workoutsRes = await pool.query(
     `
@@ -47,9 +127,26 @@ export async function getWorkoutSummaryForAI(userId: string) {
     `
     select
       wle.exercise_id,
-      avg(wle.rating) as avg_rating,
-      avg(wle.extra_reps) as avg_extra_reps,
-      count(*) filter (where wl.status = 'completed') as completed_count
+      avg(wle.rating) filter (
+        where wl.status = 'completed' and wle.rating is not null
+      ) as avg_rating,
+      avg(wle.extra_reps) filter (
+        where wl.status = 'completed' and wle.extra_reps is not null
+      ) as avg_extra_reps,
+      count(*) filter (where wl.status = 'completed') as completed_count,
+      count(*) filter (
+        where wl.status = 'completed'
+          and wl.completed_at is not null
+          and wl.completed_at >= now() - interval '7 days'
+      ) as recent_7d_count,
+      count(*) filter (
+        where wl.status = 'completed'
+          and wl.completed_at is not null
+          and wl.completed_at >= now() - interval '14 days'
+      ) as recent_14d_count,
+      max(wl.completed_at) filter (
+        where wl.status = 'completed'
+      ) as last_completed_at
     from workout_log_exercises wle
     join workout_logs wl on wl.id = wle.workout_log_id
     where wl.user_id = $1
@@ -103,7 +200,12 @@ export async function getWorkoutSummaryForAI(userId: string) {
           `,
           [recentCompletedWorkoutIds]
         )
-      : { rows: [] as Array<{ exercise_id: string; recent_completed_count: string }> };
+      : {
+          rows: [] as Array<{
+            exercise_id: string;
+            recent_completed_count: string;
+          }>,
+        };
 
   const recentUsageMap = new Map(
     recentExerciseUsageRes.rows.map((row) => [
@@ -113,7 +215,7 @@ export async function getWorkoutSummaryForAI(userId: string) {
   );
 
   // ===== 5. Kombinera till AI-underlag =====
-  const exercises: ExerciseSummary[] = exerciseStatsRes.rows.map((row) => {
+  const exercises: ExerciseSummaryForAI[] = exerciseStatsRes.rows.map((row) => {
     const last = lastPerformanceMap.get(row.exercise_id);
     const recentCompletedCount = recentUsageMap.get(row.exercise_id) ?? 0;
 
@@ -125,31 +227,52 @@ export async function getWorkoutSummaryForAI(userId: string) {
       lastReps: last?.lastReps ?? null,
       completedCount: Number(row.completed_count ?? 0),
       recentCompletedCount,
+      recent7dCount: Number(row.recent_7d_count ?? 0),
+      recent14dCount: Number(row.recent_14d_count ?? 0),
+      lastCompletedAt:
+        typeof row.last_completed_at === "string"
+          ? row.last_completed_at
+          : row.last_completed_at instanceof Date
+          ? row.last_completed_at.toISOString()
+          : null,
     };
   });
 
-  // ===== 6. Styrsignaler till AI =====
-  // avoidExerciseIds:
-  // - nyligen ofta använda
-  // - eller tydligt lågt omdöme / dålig tolerans
+  // ===== 6. Rörelsemönster senaste 7 respektive 14 dagar =====
+  const movementPatternLoad7d = createEmptyMovementPatternLoad();
+  const movementPatternLoad14d = createEmptyMovementPatternLoad();
+
+  for (const exercise of exercises) {
+    addToMovementLoad(
+      movementPatternLoad7d,
+      exercise.exerciseId,
+      exercise.recent7dCount
+    );
+    addToMovementLoad(
+      movementPatternLoad14d,
+      exercise.exerciseId,
+      exercise.recent14dCount
+    );
+  }
+
+  // ===== 7. Styrsignaler till AI =====
   const avoidExerciseIds = exercises
     .filter((exercise) => {
       const lowRating =
-        exercise.avgRating !== null && exercise.avgRating > 0 && exercise.avgRating <= 2.5;
+        exercise.avgRating !== null &&
+        exercise.avgRating > 0 &&
+        exercise.avgRating <= 2.5;
 
       const poorTolerance =
         exercise.avgExtraReps !== null && exercise.avgExtraReps < 0.5;
 
-      const overusedRecently = exercise.recentCompletedCount >= 2;
+      const overusedRecently =
+        exercise.recent7dCount >= 2 || exercise.recent14dCount >= 3;
 
       return lowRating || poorTolerance || overusedRecently;
     })
     .map((exercise) => exercise.exerciseId);
 
-  // preferredExerciseIds:
-  // - bra betyg
-  // - bra marginal
-  // - inte överanvända allra senast
   const preferredExerciseIds = exercises
     .filter((exercise) => {
       const goodRating =
@@ -158,7 +281,7 @@ export async function getWorkoutSummaryForAI(userId: string) {
       const goodTolerance =
         exercise.avgExtraReps !== null && exercise.avgExtraReps >= 2;
 
-      const notOverusedRecently = exercise.recentCompletedCount < 2;
+      const notOverusedRecently = exercise.recent7dCount < 2;
 
       return (goodRating || goodTolerance) && notOverusedRecently;
     })
@@ -178,8 +301,6 @@ export async function getWorkoutSummaryForAI(userId: string) {
     .map((exercise) => exercise.exerciseId)
     .slice(0, 12);
 
-  // recentExerciseIds:
-  // separat lista för variation från senaste passen
   const recentExerciseIds = Array.from(
     new Set(
       exercises
@@ -188,6 +309,44 @@ export async function getWorkoutSummaryForAI(userId: string) {
         .map((exercise) => exercise.exerciseId)
     )
   ).slice(0, 12);
+
+  const topPositiveExercises = exercises
+    .slice()
+    .sort((a, b) => {
+      const aScore =
+        (a.avgRating ?? 0) * 2.2 +
+        (a.avgExtraReps ?? 0) * 0.8 -
+        a.recent7dCount * 0.5;
+      const bScore =
+        (b.avgRating ?? 0) * 2.2 +
+        (b.avgExtraReps ?? 0) * 0.8 -
+        b.recent7dCount * 0.5;
+
+      return bScore - aScore;
+    })
+    .slice(0, 8)
+    .map(mapExerciseInsight);
+
+  const topNegativeExercises = exercises
+    .filter(
+      (exercise) =>
+        (exercise.avgRating ?? 5) <= 3 || (exercise.avgExtraReps ?? 4) <= 1
+    )
+    .slice()
+    .sort((a, b) => {
+      const aScore =
+        (3 - (a.avgRating ?? 3)) * 2 +
+        (1 - Math.min(a.avgExtraReps ?? 1, 1)) +
+        a.recent7dCount * 0.5;
+      const bScore =
+        (3 - (b.avgRating ?? 3)) * 2 +
+        (1 - Math.min(b.avgExtraReps ?? 1, 1)) +
+        b.recent7dCount * 0.5;
+
+      return bScore - aScore;
+    })
+    .slice(0, 8)
+    .map(mapExerciseInsight);
 
   return {
     recentWorkouts: workouts.length,
@@ -199,5 +358,9 @@ export async function getWorkoutSummaryForAI(userId: string) {
     recentExerciseIds,
     avoidExerciseIds,
     preferredExerciseIds,
+    topPositiveExercises,
+    topNegativeExercises,
+    movementPatternLoad7d,
+    movementPatternLoad14d,
   };
 }

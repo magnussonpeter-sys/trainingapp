@@ -1,10 +1,16 @@
+// lib/workout-generator.ts
+
 import type { Workout } from "@/types/workout";
 
 export type GenerateWorkoutDebug = {
   aiInput?: unknown;
+  request?: unknown;
+  history?: unknown;
+  candidateSelection?: unknown;
   prompt?: string;
   rawAiText?: string;
   parsedAiResponse?: unknown;
+  validation?: unknown;
   normalizedWorkout?: unknown;
 };
 
@@ -29,7 +35,7 @@ export async function generateWorkout(params: {
   }
 
   return {
-    // Typa workout → då vet TS att aiComment finns
+    // Typa workout så att resten av appen får rätt fält direkt.
     workout: data.workout as Workout,
     debug: (data.debug ?? null) as GenerateWorkoutDebug | null,
   };

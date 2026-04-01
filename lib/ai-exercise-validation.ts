@@ -1,3 +1,5 @@
+// lib/ai-exercise-validation.ts
+
 import {
   EXERCISE_CATALOG,
   type EquipmentId,
@@ -30,6 +32,51 @@ type NormalizedExercise = {
   movementPattern: MovementPattern;
   primaryMuscles: string[];
   variantGroup: string;
+};
+
+type BalanceIssueCode =
+  | "movement_pattern_limit"
+  | "primary_muscle_limit"
+  | "variant_group_limit";
+
+export type ValidationReasonCode =
+  | "accepted_exact_match"
+  | "invalid_or_missing_id"
+  | "duplicate_exercise_id"
+  | "balance_adjustment"
+  | "filled_missing_slots"
+  | "empty_ai_response";
+
+export type ValidationDebugEntry = {
+  requestedId: string | null;
+  requestedName: string | null;
+  requestedMovementPattern: string | null;
+  selectedId: string;
+  selectedName: string;
+  reasonCode: ValidationReasonCode;
+  reason: string;
+};
+
+export type ValidateAiExercisesResult = {
+  exercises: Array<{
+    id: string;
+    name: string;
+    description: string;
+    sets: number;
+    reps?: number;
+    duration?: number;
+    rest: number;
+  }>;
+  debug: {
+    availableCatalogCount: number;
+    requestedExerciseCount: number;
+    targetExerciseCount: number;
+    acceptedDirectly: ValidationDebugEntry[];
+    replacements: ValidationDebugEntry[];
+    fills: ValidationDebugEntry[];
+    warnings: string[];
+    finalExerciseIds: string[];
+  };
 };
 
 const VALID_MOVEMENT_PATTERNS: MovementPattern[] = [
@@ -99,13 +146,13 @@ function countByVariantGroup(exercises: NormalizedExercise[]) {
   return counts;
 }
 
-function wouldBreakBalance(
+function getBalanceIssue(
   candidate: Pick<
     NormalizedExercise,
     "movementPattern" | "primaryMuscles" | "variantGroup"
   >,
   acceptedExercises: NormalizedExercise[]
-) {
+): { code: BalanceIssueCode; message: string } | null {
   const movementCounts = countByMovementPattern(acceptedExercises);
   const muscleCounts = countByPrimaryMuscle(acceptedExercises);
   const variantCounts = countByVariantGroup(acceptedExercises);
@@ -114,24 +161,33 @@ function wouldBreakBalance(
     movementCounts.get(candidate.movementPattern) ?? 0;
 
   if (currentMovementCount >= MAX_PER_MOVEMENT_PATTERN) {
-    return true;
+    return {
+      code: "movement_pattern_limit",
+      message: `rörelsemönstret ${candidate.movementPattern} var redan fullt`,
+    };
   }
 
   const currentVariantCount = variantCounts.get(candidate.variantGroup) ?? 0;
 
   if (currentVariantCount >= MAX_PER_VARIANT_GROUP) {
-    return true;
+    return {
+      code: "variant_group_limit",
+      message: `varianten ${candidate.variantGroup} fanns redan i passet`,
+    };
   }
 
   for (const muscle of candidate.primaryMuscles) {
     const currentMuscleCount = muscleCounts.get(muscle) ?? 0;
 
     if (currentMuscleCount >= MAX_PER_PRIMARY_MUSCLE) {
-      return true;
+      return {
+        code: "primary_muscle_limit",
+        message: `primärmuskeln ${muscle} var redan överrepresenterad`,
+      };
     }
   }
 
-  return false;
+  return null;
 }
 
 function findCatalogExerciseById(
@@ -173,7 +229,7 @@ function findFallbackExercise(params: {
 
   const balancedSamePattern = samePattern.filter(
     (exercise) =>
-      !wouldBreakBalance(
+      !getBalanceIssue(
         {
           movementPattern: exercise.movementPattern,
           primaryMuscles: exercise.primaryMuscles,
@@ -193,7 +249,7 @@ function findFallbackExercise(params: {
 
   const balancedAny = notAlreadyUsed.filter(
     (exercise) =>
-      !wouldBreakBalance(
+      !getBalanceIssue(
         {
           movementPattern: exercise.movementPattern,
           primaryMuscles: exercise.primaryMuscles,
@@ -260,7 +316,8 @@ function createNormalizedExercise(
 function pickStarterExercises(
   availableCatalog: ExerciseCatalogItem[],
   acceptedExercises: NormalizedExercise[],
-  count: number
+  count: number,
+  fills: ValidationDebugEntry[]
 ) {
   const preferredPatterns: MovementPattern[] = [
     "squat",
@@ -280,7 +337,7 @@ function pickStarterExercises(
       (exercise) =>
         exercise.movementPattern === pattern &&
         !hasExerciseId(exercise.id, acceptedExercises) &&
-        !wouldBreakBalance(
+        !getBalanceIssue(
           {
             movementPattern: exercise.movementPattern,
             primaryMuscles: exercise.primaryMuscles,
@@ -290,9 +347,21 @@ function pickStarterExercises(
         )
     );
 
-    if (candidate) {
-      acceptedExercises.push(createNormalizedExercise(candidate));
+    if (!candidate) {
+      continue;
     }
+
+    acceptedExercises.push(createNormalizedExercise(candidate));
+
+    fills.push({
+      requestedId: null,
+      requestedName: null,
+      requestedMovementPattern: pattern,
+      selectedId: candidate.id,
+      selectedName: candidate.name,
+      reasonCode: "filled_missing_slots",
+      reason: "AI lämnade tom plats och valideringen fyllde på med balanserad standardövning",
+    });
   }
 }
 
@@ -300,7 +369,7 @@ export function validateAndNormalizeAiExercises(params: {
   aiExercises: AiExerciseCandidate[];
   availableEquipment: string[];
   targetExerciseCount?: number;
-}) {
+}): ValidateAiExercisesResult {
   const normalizedEquipment = new Set<EquipmentId>(
     normalizeEquipmentList(params.availableEquipment)
   );
@@ -309,8 +378,24 @@ export function validateAndNormalizeAiExercises(params: {
     exercise.requiredEquipment.every((item) => normalizedEquipment.has(item))
   );
 
+  const warnings: string[] = [];
+
   if (availableCatalog.length === 0) {
-    return [];
+    return {
+      exercises: [],
+      debug: {
+        availableCatalogCount: 0,
+        requestedExerciseCount: Array.isArray(params.aiExercises)
+          ? params.aiExercises.length
+          : 0,
+        targetExerciseCount: 0,
+        acceptedDirectly: [],
+        replacements: [],
+        fills: [],
+        warnings: ["Ingen tillgänglig katalog återstod efter utrustningsfiltrering."],
+        finalExerciseIds: [],
+      },
+    };
   }
 
   const targetExerciseCount = clampPositiveInt(
@@ -321,43 +406,119 @@ export function validateAndNormalizeAiExercises(params: {
   );
 
   const normalizedExercises: NormalizedExercise[] = [];
+  const acceptedDirectly: ValidationDebugEntry[] = [];
+  const replacements: ValidationDebugEntry[] = [];
+  const fills: ValidationDebugEntry[] = [];
+
+  if (!Array.isArray(params.aiExercises) || params.aiExercises.length === 0) {
+    warnings.push("AI returnerade inga övningar. Valideringen fyllde hela passet.");
+  }
 
   for (const aiExercise of params.aiExercises) {
     if (normalizedExercises.length >= targetExerciseCount) {
       break;
     }
 
-    if (typeof aiExercise.id === "string") {
-      const exactMatch = findCatalogExerciseById(aiExercise.id, availableCatalog);
+    const requestedId =
+      typeof aiExercise.id === "string" && aiExercise.id.trim()
+        ? aiExercise.id.trim()
+        : null;
 
-      if (
-        exactMatch &&
-        !hasExerciseId(exactMatch.id, normalizedExercises) &&
-        !wouldBreakBalance(
+    const requestedName =
+      typeof aiExercise.name === "string" && aiExercise.name.trim()
+        ? aiExercise.name.trim()
+        : null;
+
+    const requestedMovementPattern =
+      typeof aiExercise.movementPattern === "string" &&
+      aiExercise.movementPattern.trim()
+        ? aiExercise.movementPattern.trim()
+        : null;
+
+    if (requestedId) {
+      const exactMatch = findCatalogExerciseById(requestedId, availableCatalog);
+
+      if (exactMatch) {
+        const duplicate = hasExerciseId(exactMatch.id, normalizedExercises);
+        const balanceIssue = getBalanceIssue(
           {
             movementPattern: exactMatch.movementPattern,
             primaryMuscles: exactMatch.primaryMuscles,
             variantGroup: exactMatch.variantGroup,
           },
           normalizedExercises
-        )
-      ) {
-        normalizedExercises.push(createNormalizedExercise(exactMatch, aiExercise));
+        );
+
+        if (!duplicate && !balanceIssue) {
+          normalizedExercises.push(
+            createNormalizedExercise(exactMatch, aiExercise)
+          );
+
+          acceptedDirectly.push({
+            requestedId,
+            requestedName,
+            requestedMovementPattern,
+            selectedId: exactMatch.id,
+            selectedName: exactMatch.name,
+            reasonCode: "accepted_exact_match",
+            reason: "AI-valet accepterades direkt.",
+          });
+
+          continue;
+        }
+
+        const fallback = findFallbackExercise({
+          requestedMovementPattern: requestedMovementPattern ?? undefined,
+          availableCatalog,
+          acceptedExercises: normalizedExercises,
+        });
+
+        if (fallback) {
+          normalizedExercises.push(createNormalizedExercise(fallback, aiExercise));
+
+          replacements.push({
+            requestedId,
+            requestedName,
+            requestedMovementPattern,
+            selectedId: fallback.id,
+            selectedName: fallback.name,
+            reasonCode: duplicate
+              ? "duplicate_exercise_id"
+              : "balance_adjustment",
+            reason: duplicate
+              ? "AI försökte använda samma övning flera gånger."
+              : `AI-valet ersattes eftersom ${balanceIssue?.message ?? "balansen i passet blev svag"}.`,
+          });
+        }
+
         continue;
       }
     }
 
     const fallback = findFallbackExercise({
-      requestedMovementPattern:
-        typeof aiExercise.movementPattern === "string"
-          ? aiExercise.movementPattern
-          : undefined,
+      requestedMovementPattern: requestedMovementPattern ?? undefined,
       availableCatalog,
       acceptedExercises: normalizedExercises,
     });
 
     if (fallback) {
       normalizedExercises.push(createNormalizedExercise(fallback, aiExercise));
+
+      replacements.push({
+        requestedId,
+        requestedName,
+        requestedMovementPattern,
+        selectedId: fallback.id,
+        selectedName: fallback.name,
+        reasonCode:
+          requestedId || requestedName
+            ? "invalid_or_missing_id"
+            : "empty_ai_response",
+        reason:
+          requestedId || requestedName
+            ? "AI-valet saknade giltigt id i katalogen och ersattes."
+            : "AI lämnade tomt eller ofullständigt val och ersattes.",
+      });
     }
   }
 
@@ -365,7 +526,8 @@ export function validateAndNormalizeAiExercises(params: {
     pickStarterExercises(
       availableCatalog,
       normalizedExercises,
-      Math.min(targetExerciseCount, 6)
+      Math.min(targetExerciseCount, 6),
+      fills
     );
   }
 
@@ -380,7 +542,7 @@ export function validateAndNormalizeAiExercises(params: {
       }
 
       if (
-        wouldBreakBalance(
+        getBalanceIssue(
           {
             movementPattern: exercise.movementPattern,
             primaryMuscles: exercise.primaryMuscles,
@@ -393,6 +555,15 @@ export function validateAndNormalizeAiExercises(params: {
       }
 
       normalizedExercises.push(createNormalizedExercise(exercise));
+      fills.push({
+        requestedId: null,
+        requestedName: null,
+        requestedMovementPattern: exercise.movementPattern,
+        selectedId: exercise.id,
+        selectedName: exercise.name,
+        reasonCode: "filled_missing_slots",
+        reason: "Valideringen fyllde på med balanserad reservövning.",
+      });
     }
   }
 
@@ -407,15 +578,50 @@ export function validateAndNormalizeAiExercises(params: {
       }
 
       normalizedExercises.push(createNormalizedExercise(exercise));
+      fills.push({
+        requestedId: null,
+        requestedName: null,
+        requestedMovementPattern: exercise.movementPattern,
+        selectedId: exercise.id,
+        selectedName: exercise.name,
+        reasonCode: "filled_missing_slots",
+        reason: "Valideringen fyllde sista platserna med tillgänglig reservövning.",
+      });
     }
   }
 
-  return normalizedExercises.map(
-    ({
-      movementPattern: _movementPattern,
-      primaryMuscles: _primaryMuscles,
-      variantGroup: _variantGroup,
-      ...exercise
-    }) => exercise
-  );
+  if (replacements.length > 0) {
+    warnings.push(
+      `Valideringen ersatte ${replacements.length} AI-val för att förbättra balans eller rätta ogiltiga id:n.`
+    );
+  }
+
+  if (fills.length > 0) {
+    warnings.push(
+      `Valideringen fyllde ${fills.length} platser eftersom AI inte gav tillräckligt många användbara övningar.`
+    );
+  }
+
+  return {
+    exercises: normalizedExercises.map(
+      ({
+        movementPattern: _movementPattern,
+        primaryMuscles: _primaryMuscles,
+        variantGroup: _variantGroup,
+        ...exercise
+      }) => exercise
+    ),
+    debug: {
+      availableCatalogCount: availableCatalog.length,
+      requestedExerciseCount: Array.isArray(params.aiExercises)
+        ? params.aiExercises.length
+        : 0,
+      targetExerciseCount,
+      acceptedDirectly,
+      replacements,
+      fills,
+      warnings,
+      finalExerciseIds: normalizedExercises.map((exercise) => exercise.id),
+    },
+  };
 }
