@@ -3,8 +3,8 @@
 import type { WorkoutLog } from "@/lib/workout-log-storage";
 
 /**
- * Samma grundmål som redan används i settings.
- * Vi håller denna union enkel nu, men den är lätt att bygga ut senare.
+ * Grundmål som redan används i appen.
+ * Lätt att bygga ut senare med mer specifika mål.
  */
 export type GoalType =
   | "strength"
@@ -12,55 +12,34 @@ export type GoalType =
   | "health"
   | "body_composition";
 
-/**
- * Statusnivå för översiktskortet på /home.
- */
 export type GoalStatus = "on_track" | "steady" | "needs_attention";
-
-/**
- * Prioritet för fokusområden.
- */
 export type FocusPriority = "high" | "medium" | "low";
-
-/**
- * När ett råd främst gäller.
- */
 export type RecommendationTimeframe =
   | "next_workout"
   | "next_7_days"
   | "next_14_days";
 
-/**
- * Några grundläggande metrics som vi kan visa direkt i UI.
- * Alla värden är tänkta att vara stabila och enkla att debugga.
- */
 export type TrainingMetrics = {
   weeklyFrequency: number;
-  consistencyScore: number; // 0-1
-  progressionScore: number; // 0-1
-  volumeScore: number; // 0-1
-  recoveryScore: number; // 0-1
-  exerciseVarietyScore: number; // 0-1
+  consistencyScore: number;
+  progressionScore: number;
+  volumeScore: number;
+  recoveryScore: number;
+  exerciseVarietyScore: number;
   averageWorkoutMinutes: number;
   completedWorkouts28d: number;
   uniqueExercises28d: number;
   totalSets28d: number;
 };
 
-/**
- * Övergripande bedömning.
- */
 export type GoalEvaluation = {
   status: GoalStatus;
-  overallScore: number; // 0-1
+  overallScore: number;
   summary: string;
   strengths: string[];
   gaps: string[];
 };
 
-/**
- * Fokusområde som kan visas i UI.
- */
 export type FocusArea = {
   id: string;
   title: string;
@@ -69,9 +48,6 @@ export type FocusArea = {
   metric: string;
 };
 
-/**
- * Konkreta råd som är lätta att visa och lätta att bygga vidare med AI senare.
- */
 export type GoalRecommendation = {
   id: string;
   title: string;
@@ -79,9 +55,6 @@ export type GoalRecommendation = {
   timeframe: RecommendationTimeframe;
 };
 
-/**
- * Slutobjekt som /home kan använda.
- */
 export type GoalAnalysis = {
   goal: GoalType;
   metrics: TrainingMetrics;
@@ -102,14 +75,14 @@ export type GoalAnalysis = {
 };
 
 /**
- * Hjälp: clamp mellan min/max.
+ * Hjälpfunktion för att hålla värden inom ett intervall.
  */
 function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
 }
 
 /**
- * Hjälp: avrunda snyggt för UI/debug.
+ * Avrundning för UI/debug.
  */
 function round(value: number, decimals = 2) {
   const factor = 10 ** decimals;
@@ -117,14 +90,14 @@ function round(value: number, decimals = 2) {
 }
 
 /**
- * Dagar mellan två datum.
+ * Antal dagar mellan två datum.
  */
 function diffDays(a: Date, b: Date) {
   return Math.abs(a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24);
 }
 
 /**
- * Bara completed-pass ska räknas i analysen.
+ * Bara completed-pass ska räknas.
  */
 function getCompletedLogs(logs: WorkoutLog[]) {
   return logs
@@ -136,8 +109,7 @@ function getCompletedLogs(logs: WorkoutLog[]) {
 }
 
 /**
- * Enkel proxy för träningsvolym:
- * antal genomförda set under senaste 28 dagarna.
+ * Enkel proxy för träningsvolym: antal set.
  */
 function countSets(logs: WorkoutLog[]) {
   let totalSets = 0;
@@ -152,8 +124,7 @@ function countSets(logs: WorkoutLog[]) {
 }
 
 /**
- * Unika övningar senaste perioden.
- * Detta gör att vi senare kan väga in variationsgrad bättre.
+ * Räknar unika övningar senaste perioden.
  */
 function countUniqueExercises(logs: WorkoutLog[]) {
   const ids = new Set<string>();
@@ -168,7 +139,7 @@ function countUniqueExercises(logs: WorkoutLog[]) {
 }
 
 /**
- * Genomsnittligt antal dagar mellan pass.
+ * Snittdagar mellan pass.
  */
 function getAverageGapDays(logs: WorkoutLog[]) {
   if (logs.length < 2) {
@@ -206,8 +177,7 @@ function getAverageWorkoutMinutes(logs: WorkoutLog[]) {
 }
 
 /**
- * Målvikter.
- * Här finns första fröet till en mer framtidssäker målprofil.
+ * Målvikter för totalbedömningen.
  */
 function getGoalWeights(goal: GoalType) {
   switch (goal) {
@@ -254,24 +224,17 @@ function getGoalWeights(goal: GoalType) {
 }
 
 /**
- * Första, enkel bedömning av progression.
- *
- * I denna version använder vi:
- * - om användaren tränar regelbundet
- * - om den senaste perioden inte har tappat för mycket jämfört med de 28 dagarna innan
- *
- * Senare kan detta ersättas/kompletteras med:
- * - progression per katalogövning
- * - vikt/reps/duration-trender
- * - e1RM-liknande signaler
+ * Enkel trendmodell mellan två 28-dagarsperioder.
  */
-function calculateProgressionScore(recent28dCount: number, previous28dCount: number) {
+function calculateProgressionScore(
+  recent28dCount: number,
+  previous28dCount: number
+) {
   if (recent28dCount === 0) {
     return 0;
   }
 
   if (previous28dCount === 0) {
-    // Har man börjat träna nyligen ska det ses som positivt, men inte max.
     return 0.65;
   }
 
@@ -285,29 +248,26 @@ function calculateProgressionScore(recent28dCount: number, previous28dCount: num
 }
 
 /**
- * Variation:
- * Vi vill inte att hälsa och hypertrofi ska bli alltför smala,
- * men vi vill heller inte uppmuntra slumpmässig variation.
+ * Enkel variationssignal.
  */
-function calculateExerciseVarietyScore(uniqueExercises28d: number, goal: GoalType) {
+function calculateExerciseVarietyScore(
+  uniqueExercises28d: number,
+  goal: GoalType
+) {
   switch (goal) {
     case "strength":
-      // Lägre ideal variation än övriga mål.
       return clamp(uniqueExercises28d / 8);
-
     case "hypertrophy":
       return clamp(uniqueExercises28d / 10);
-
     case "health":
       return clamp(uniqueExercises28d / 10);
-
     case "body_composition":
       return clamp(uniqueExercises28d / 9);
   }
 }
 
 /**
- * Generera några tydliga styrkor för UI.
+ * Styrkor för UI.
  */
 function buildStrengths(metrics: TrainingMetrics): string[] {
   const strengths: string[] = [];
@@ -340,7 +300,7 @@ function buildStrengths(metrics: TrainingMetrics): string[] {
 }
 
 /**
- * Generera några tydliga luckor för UI.
+ * Luckor för UI.
  */
 function buildGaps(metrics: TrainingMetrics): string[] {
   const gaps: string[] = [];
@@ -373,7 +333,7 @@ function buildGaps(metrics: TrainingMetrics): string[] {
 }
 
 /**
- * Kort sammanfattning för kortet på /home.
+ * Kort sammanfattning.
  */
 function buildSummary(status: GoalStatus, goal: GoalType) {
   const goalTextMap: Record<GoalType, string> = {
@@ -388,19 +348,14 @@ function buildSummary(status: GoalStatus, goal: GoalType) {
   switch (status) {
     case "on_track":
       return `Du ligger bra till i din träning mot målet ${goalText}. Fortsätt bygga vidare med jämn belastning och små steg framåt.`;
-
     case "needs_attention":
       return `Just nu är träningen lite för ojämn eller låg i förhållande till målet ${goalText}. Fokus bör vara att skapa mer regelbundenhet först.`;
-
     case "steady":
     default:
       return `Du har en stabil grund mot målet ${goalText}, men det finns tydlig potential att förbättra kontinuitet och progression.`;
   }
 }
 
-/**
- * Hjälp för prioritet.
- */
 function getPriorityFromScore(value: number): FocusPriority {
   if (value < 0.45) return "high";
   if (value < 0.65) return "medium";
@@ -408,8 +363,7 @@ function getPriorityFromScore(value: number): FocusPriority {
 }
 
 /**
- * Fokusområden som appen kan visa även utan AI.
- * Dessa ska vara enkla att förstå och enkla att vidareutveckla senare.
+ * Fokusområden som kan visas utan AI.
  */
 function buildFocusAreas(goal: GoalType, metrics: TrainingMetrics): FocusArea[] {
   const areas: FocusArea[] = [];
@@ -418,7 +372,8 @@ function buildFocusAreas(goal: GoalType, metrics: TrainingMetrics): FocusArea[] 
     areas.push({
       id: "frequency",
       title: "Öka träningsfrekvensen",
-      reason: "Du får just nu in för få pass per vecka för att skapa tydlig utveckling.",
+      reason:
+        "Du får just nu in för få pass per vecka för att skapa tydlig utveckling.",
       priority: getPriorityFromScore(metrics.weeklyFrequency / 2),
       metric: "weeklyFrequency",
     });
@@ -428,7 +383,8 @@ function buildFocusAreas(goal: GoalType, metrics: TrainingMetrics): FocusArea[] 
     areas.push({
       id: "consistency",
       title: "Jämnare träningsrytm",
-      reason: "Passen är ojämnt fördelade, vilket gör progressionen mindre stabil.",
+      reason:
+        "Passen är ojämnt fördelade, vilket gör progressionen mindre stabil.",
       priority: getPriorityFromScore(metrics.consistencyScore),
       metric: "consistencyScore",
     });
@@ -438,7 +394,8 @@ function buildFocusAreas(goal: GoalType, metrics: TrainingMetrics): FocusArea[] 
     areas.push({
       id: "progression",
       title: "Tydligare framåtrörelse",
-      reason: "Den senaste perioden visar ännu inte en tydlig positiv trend.",
+      reason:
+        "Den senaste perioden visar ännu inte en tydlig positiv trend.",
       priority: getPriorityFromScore(metrics.progressionScore),
       metric: "progressionScore",
     });
@@ -449,52 +406,54 @@ function buildFocusAreas(goal: GoalType, metrics: TrainingMetrics): FocusArea[] 
       areas.push({
         id: "volume",
         title: "Mer total träningsmängd",
-        reason: "För ditt mål behövs oftast lite högre träningsvolym över veckan.",
+        reason:
+          "För ditt mål behövs oftast lite högre träningsvolym över veckan.",
         priority: getPriorityFromScore(metrics.volumeScore),
         metric: "volumeScore",
       });
     }
   }
 
-  if (goal === "strength") {
-    if (metrics.recoveryScore < 0.6) {
-      areas.push({
-        id: "recovery",
-        title: "Bättre återhämtning mellan tunga pass",
-        reason: "För styrkemål behöver belastningen spridas så att kvaliteten i passen hålls hög.",
-        priority: getPriorityFromScore(metrics.recoveryScore),
-        metric: "recoveryScore",
-      });
-    }
+  if (goal === "strength" && metrics.recoveryScore < 0.6) {
+    areas.push({
+      id: "recovery",
+      title: "Bättre återhämtning mellan tunga pass",
+      reason:
+        "För styrkemål behöver belastningen spridas så att kvaliteten i passen hålls hög.",
+      priority: getPriorityFromScore(metrics.recoveryScore),
+      metric: "recoveryScore",
+    });
   }
 
-  if (goal === "health") {
-    if (metrics.exerciseVarietyScore < 0.55) {
-      areas.push({
-        id: "variety",
-        title: "Bredda övningsvalet",
-        reason: "Lite större variation kan förbättra funktion, motivation och helkroppstäckning.",
-        priority: getPriorityFromScore(metrics.exerciseVarietyScore),
-        metric: "exerciseVarietyScore",
-      });
-    }
+  if (goal === "health" && metrics.exerciseVarietyScore < 0.55) {
+    areas.push({
+      id: "variety",
+      title: "Bredda övningsvalet",
+      reason:
+        "Lite större variation kan förbättra funktion, motivation och helkroppstäckning.",
+      priority: getPriorityFromScore(metrics.exerciseVarietyScore),
+      metric: "exerciseVarietyScore",
+    });
   }
 
-  // Sortera så hög prioritet kommer först.
   const priorityRank: Record<FocusPriority, number> = {
     high: 0,
     medium: 1,
     low: 2,
   };
 
-  return areas.sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority]).slice(0, 4);
+  return areas
+    .sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority])
+    .slice(0, 4);
 }
 
 /**
  * Konkreta råd.
- * Dessa gör att kortet känns användbart redan nu, innan AI-lagret läggs ovanpå.
  */
-function buildRecommendations(goal: GoalType, metrics: TrainingMetrics): GoalRecommendation[] {
+function buildRecommendations(
+  goal: GoalType,
+  metrics: TrainingMetrics
+): GoalRecommendation[] {
   const recommendations: GoalRecommendation[] = [];
 
   if (metrics.weeklyFrequency < 2) {
@@ -599,10 +558,6 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
   const weeklyFrequency = round(recent28d.length / 4, 2);
   const averageGapDays = getAverageGapDays(recent28d);
 
-  /**
-   * Konsistens:
-   * Ideal ungefär 2–4 dagar mellan pass.
-   */
   let consistencyScore = 0;
 
   if (averageGapDays !== null) {
@@ -612,18 +567,9 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
     consistencyScore = 0.3;
   }
 
-  /**
-   * Volym:
-   * Enkel normalisering utifrån antal set senaste 28 dagar.
-   * 90 set eller mer ger full score i denna första modell.
-   */
   const totalSets28d = countSets(recent28d);
   const volumeScore = clamp(totalSets28d / 90);
 
-  /**
-   * Recovery:
-   * Vi vill här ge plus för rimliga vilointervall.
-   */
   let recoveryScore = 0.5;
 
   if (averageGapDays !== null) {
@@ -638,17 +584,16 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
     recoveryScore = 0.45;
   }
 
-  /**
-   * Progression:
-   * Just nu en enkel trendmodell mellan två 28-dagarsperioder.
-   */
   const progressionScore = calculateProgressionScore(
     recent28d.length,
     previous28d.length
   );
 
   const uniqueExercises28d = countUniqueExercises(recent28d);
-  const exerciseVarietyScore = calculateExerciseVarietyScore(uniqueExercises28d, goal);
+  const exerciseVarietyScore = calculateExerciseVarietyScore(
+    uniqueExercises28d,
+    goal
+  );
   const averageWorkoutMinutes = getAverageWorkoutMinutes(recent28d);
 
   const metrics: TrainingMetrics = {
@@ -685,11 +630,6 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
     status = "needs_attention";
   }
 
-  const strengths = buildStrengths(metrics);
-  const gaps = buildGaps(metrics);
-  const focusAreas = buildFocusAreas(goal, metrics);
-  const recommendations = buildRecommendations(goal, metrics);
-
   return {
     goal,
     metrics,
@@ -697,11 +637,11 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
       status,
       overallScore,
       summary: buildSummary(status, goal),
-      strengths,
-      gaps,
+      strengths: buildStrengths(metrics),
+      gaps: buildGaps(metrics),
     },
-    focusAreas,
-    recommendations,
+    focusAreas: buildFocusAreas(goal, metrics),
+    recommendations: buildRecommendations(goal, metrics),
     debug: {
       totalLogs: logs.length,
       completedLogs: completedLogs.length,
