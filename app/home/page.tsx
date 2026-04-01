@@ -194,7 +194,7 @@ export default function HomePage() {
   const [isLoadingGyms, setIsLoadingGyms] = useState(false);
   const [gymError, setGymError] = useState<string | null>(null);
 
-  // Analys + mål.
+  // Nytt: mål + analys på home.
   const [userGoal, setUserGoal] = useState<GoalType | null>(null);
   const [analysis, setAnalysis] = useState<GoalAnalysis | null>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
@@ -234,7 +234,9 @@ export default function HomePage() {
 
         // Läs tidigare sparade AI-inställningar för användaren.
         try {
-          const rawSettings = localStorage.getItem(getAiSettingsStorageKey(userId));
+          const rawSettings = localStorage.getItem(
+            getAiSettingsStorageKey(userId)
+          );
 
           if (rawSettings) {
             const parsed = JSON.parse(rawSettings) as {
@@ -283,9 +285,11 @@ export default function HomePage() {
             typeof settingsData === "object" &&
             "settings" in settingsData
           ) {
-            const settings = (settingsData as { settings?: UserSettings | null }).settings;
-            const goal = settings?.training_goal ?? null;
-            setUserGoal(goal);
+            const settings = (
+              settingsData as { settings?: UserSettings | null }
+            ).settings;
+
+            setUserGoal(settings?.training_goal ?? null);
           } else {
             setUserGoal(null);
           }
@@ -334,7 +338,9 @@ export default function HomePage() {
             return prev;
           }
 
-          const gymExists = normalizedGyms.some((gym) => String(gym.id) === prev);
+          const gymExists = normalizedGyms.some(
+            (gym) => String(gym.id) === prev
+          );
 
           return gymExists ? prev : BODYWEIGHT_GYM_ID;
         });
@@ -401,6 +407,7 @@ export default function HomePage() {
     setAnalysisError(null);
 
     try {
+      // Fallback till health om mål ännu inte är valt.
       const goal = userGoal ?? "health";
       const logs = getWorkoutLogs(String(authUser.id));
       const nextAnalysis = analyzeTraining(logs, goal);
@@ -435,10 +442,11 @@ export default function HomePage() {
   const canGenerateAiWorkout = authChecked && !!authUser && !isLoadingGyms;
 
   /**
-   * För progressbar i analyskortet.
+   * Progressbar för analyskortet.
    */
   const analysisProgressWidth = useMemo(() => {
     if (!analysis) return "0%";
+
     return `${Math.max(4, Math.round(analysis.evaluation.overallScore * 100))}%`;
   }, [analysis]);
 
@@ -852,7 +860,7 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* Enkel debug-toggling redan nu */}
+              {/* Debug-toggle */}
               <div className="mt-5">
                 <button
                   type="button"
