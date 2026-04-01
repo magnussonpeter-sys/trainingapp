@@ -1,3 +1,5 @@
+// app/workout/preview/page.tsx
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -10,6 +12,10 @@ import {
   generateWorkout,
   type GenerateWorkoutDebug,
 } from "@/lib/workout-generator";
+import {
+  getAvailableExercises,
+  type ExerciseCatalogItem,
+} from "@/lib/exercise-catalog";
 import type { Exercise, Workout } from "@/types/workout";
 
 type Goal = "strength" | "hypertrophy" | "health" | "body_composition";
@@ -42,63 +48,14 @@ type UserSettingsResponse = {
   error?: string;
 };
 
-type DebugScoreBreakdown = {
-  goal?: number;
-  feedback?: number;
-  adherence?: number;
-  novelty?: number;
-  recovery?: number;
-  preferenceAdjustment?: number;
-  repetitionPenalty?: number;
-  riskPenalty?: number;
-};
-
-type DebugCandidateHistory = {
-  completedCount?: number;
-  recent7dCount?: number;
-  recent14dCount?: number;
-  avgRating?: number | null;
-  avgExtraReps?: number | null;
-  lastCompletedAt?: string | null;
-  lastWeight?: number | null;
-  lastReps?: number | null;
-};
-
-type DebugScoredCandidate = {
-  id: string;
-  name: string;
-  movementPattern?: string;
-  score?: number;
-  riskLevel?: string;
-  reasonSummary?: string[];
-  requiredEquipment?: string[];
-  primaryMuscles?: string[];
-  scoreBreakdown?: DebugScoreBreakdown;
-  history?: DebugCandidateHistory;
-};
-
 type DebugValidationEntry = {
-  requestedId?: string | null;
-  requestedName?: string | null;
-  requestedMovementPattern?: string | null;
-  selectedId?: string;
   selectedName?: string;
-  reasonCode?: string;
   reason?: string;
 };
 
-type DebugCandidateSelection = {
-  totalAvailableCount?: number;
-  promptCandidateIds?: string[];
-  scoredCandidates?: DebugScoredCandidate[];
-};
-
 type DebugValidation = {
-  acceptedDirectly?: DebugValidationEntry[];
-  replacements?: DebugValidationEntry[];
-  fills?: DebugValidationEntry[];
   warnings?: string[];
-  finalExerciseIds?: string[];
+  replacements?: DebugValidationEntry[];
 };
 
 const BODYWEIGHT_GYM_MODE = "bodyweight";
@@ -140,6 +97,7 @@ function extractEquipmentStrings(input: unknown): string[] {
 
     if (typeof item === "object" && item !== null) {
       const equipmentItem = item as GymEquipmentItem;
+
       const candidates = [
         equipmentItem.equipment_type,
         equipmentItem.equipmentType,
@@ -215,83 +173,49 @@ function formatJson(value: unknown) {
   }
 }
 
-function formatNumber(value: unknown, decimals = 1) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "–";
-  }
-
-  return value.toFixed(decimals);
+function normalizeSearch(value: string) {
+  return value.trim().toLowerCase();
 }
 
-function formatDateTime(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) {
-    return "–";
-  }
+function createExerciseFromCatalog(item: ExerciseCatalogItem): Exercise {
+  const isTimed =
+    typeof item.defaultDuration === "number" &&
+    item.defaultDuration > 0 &&
+    typeof item.defaultReps !== "number";
 
-  const date = new Date(value);
-
-  if (!Number.isFinite(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("sv-SE");
+  return {
+    id: item.id,
+    name: item.name,
+    sets: item.defaultSets,
+    reps: isTimed ? undefined : item.defaultReps ?? 10,
+    duration: isTimed ? item.defaultDuration : undefined,
+    rest: item.defaultRest,
+    description: item.description,
+  };
 }
 
-function getScoreBadgeClass(score: number | undefined) {
-  if (typeof score !== "number") {
-    return "bg-gray-100 text-gray-700";
-  }
-
-  if (score >= 4) {
-    return "bg-green-100 text-green-800";
-  }
-
-  if (score >= 2) {
-    return "bg-blue-100 text-blue-800";
-  }
-
-  if (score >= 0) {
-    return "bg-yellow-100 text-yellow-800";
-  }
-
-  return "bg-red-100 text-red-800";
-}
-
-function getReasonCodeLabel(code: string | undefined) {
-  switch (code) {
-    case "accepted_exact_match":
-      return "Accepterad";
-    case "invalid_or_missing_id":
-      return "Ogiltigt id";
-    case "duplicate_exercise_id":
-      return "Duplicerad övning";
-    case "balance_adjustment":
-      return "Balansjustering";
-    case "filled_missing_slots":
-      return "Påfylld reservövning";
-    case "empty_ai_response":
-      return "Tomt AI-val";
-    default:
-      return code ?? "Okänd";
-  }
-}
-
-function InfoCard(props: {
-  title: string;
-  value: string;
-  subtext?: string;
+function createCustomExercise(params: {
+  name: string;
+  sets: string;
+  reps: string;
+  duration: string;
+  rest: string;
+  description: string;
 }) {
-  return (
-    <div className="rounded-2xl border bg-white p-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-        {props.title}
-      </p>
-      <p className="mt-2 text-xl font-semibold text-gray-950">{props.value}</p>
-      {props.subtext ? (
-        <p className="mt-1 text-sm text-gray-500">{props.subtext}</p>
-      ) : null}
-    </div>
-  );
+  const parsedSets = Math.max(1, Number(params.sets) || 3);
+  const parsedReps = Math.max(0, Number(params.reps) || 0);
+  const parsedDuration = Math.max(0, Number(params.duration) || 0);
+  const parsedRest = Math.max(0, Number(params.rest) || 45);
+
+  return {
+    id: `custom_${createExerciseId()}`,
+    name: params.name.trim(),
+    sets: parsedSets,
+    reps: parsedDuration > 0 ? undefined : parsedReps || 10,
+    duration: parsedDuration > 0 ? parsedDuration : undefined,
+    rest: parsedRest,
+    description: params.description.trim() || undefined,
+  } satisfies Exercise;
 }
 
 export default function WorkoutPreviewPage() {
@@ -303,23 +227,28 @@ export default function WorkoutPreviewPage() {
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  const [newExerciseName, setNewExerciseName] = useState("");
-  const [newSets, setNewSets] = useState("3");
-  const [newReps, setNewReps] = useState("10");
-  const [newRest, setNewRest] = useState("45");
-  const [newDescription, setNewDescription] = useState("");
-
   const [aiDebug, setAiDebug] = useState<GenerateWorkoutDebug | null>(null);
   const [requestEquipment, setRequestEquipment] = useState<string[]>([]);
   const [requestPayload, setRequestPayload] = useState<Record<string, unknown> | null>(
     null
   );
 
-  // Små toggles så debuggen blir användbar även på iPhone.
-  const [showRawInput, setShowRawInput] = useState(false);
+  // För katalogval i stället för fritext som huvudspår.
+  const [showAddPanel, setShowAddPanel] = useState(false);
+  const [addMode, setAddMode] = useState<"catalog" | "custom">("catalog");
+  const [catalogSearch, setCatalogSearch] = useState("");
+
+  // Fritext finns kvar som undantag.
+  const [newExerciseName, setNewExerciseName] = useState("");
+  const [newSets, setNewSets] = useState("3");
+  const [newReps, setNewReps] = useState("10");
+  const [newDuration, setNewDuration] = useState("");
+  const [newRest, setNewRest] = useState("45");
+  const [newDescription, setNewDescription] = useState("");
+
+  // Små debug-toggles.
   const [showPrompt, setShowPrompt] = useState(false);
   const [showRawResponse, setShowRawResponse] = useState(false);
-  const [showParsedResponse, setShowParsedResponse] = useState(false);
   const [showNormalizedWorkout, setShowNormalizedWorkout] = useState(false);
 
   useEffect(() => {
@@ -328,7 +257,6 @@ export default function WorkoutPreviewPage() {
         setAiError(null);
         setAiDebug(null);
 
-        // Läs query-parametrar tidigt så vi kan använda dem som fallback.
         const params = new URLSearchParams(window.location.search);
         const durationFromUrl = Number(params.get("duration"));
         const gymIdFromUrl = params.get("gymId") ?? "";
@@ -340,7 +268,6 @@ export default function WorkoutPreviewPage() {
             ? durationFromUrl
             : 30;
 
-        // Viktigt för Safari/iPhone: auth-request ska skicka med credentials.
         const authRes = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
@@ -364,7 +291,6 @@ export default function WorkoutPreviewPage() {
             ? ((authData as { user?: AuthUser }).user ?? null)
             : null;
 
-        // Använd auth-användaren om den finns, annars fallback till userId från query.
         const resolvedUserId =
           authUserFromApi?.id != null
             ? String(authUserFromApi.id)
@@ -381,7 +307,6 @@ export default function WorkoutPreviewPage() {
         if (authUserFromApi) {
           setAuthUser(authUserFromApi);
         } else {
-          // Minimal fallback-användare för Safari om auth-checken krånglar.
           setAuthUser({
             id: Number(resolvedUserId),
             email: null,
@@ -452,7 +377,6 @@ export default function WorkoutPreviewPage() {
 
         setRequestEquipment(equipment);
 
-        // Spara payload lokalt för debug även om generateWorkout kastar tidigt.
         const payload = {
           userId: resolvedUserId,
           goal,
@@ -485,13 +409,10 @@ export default function WorkoutPreviewPage() {
           name: aiWorkout.name || "AI-genererat pass",
           duration,
           gym: getWorkoutGymLabel(gymName, equipment),
-
-          // Kort kommentar från AI visas ovanför övningslistan i preview.
           aiComment:
             typeof aiWorkout.aiComment === "string" && aiWorkout.aiComment.trim()
               ? aiWorkout.aiComment.trim()
               : undefined,
-
           exercises: Array.isArray(aiWorkout.exercises)
             ? aiWorkout.exercises.map((exercise: Partial<Exercise>, index: number) => {
                 const hasDuration =
@@ -511,8 +432,6 @@ export default function WorkoutPreviewPage() {
                     typeof exercise.sets === "number" && exercise.sets > 0
                       ? exercise.sets
                       : 3,
-
-                  // Tidsstyrda övningar ska inte få default-reps.
                   reps: hasDuration ? undefined : hasReps ? exercise.reps : 10,
                   duration: hasDuration ? exercise.duration : undefined,
                   rest:
@@ -545,6 +464,41 @@ export default function WorkoutPreviewPage() {
     void loadAndGenerate();
   }, [router]);
 
+  const availableCatalogExercises = useMemo(() => {
+    if (requestEquipment.length === 0) {
+      return getAvailableExercises(["bodyweight"]);
+    }
+
+    return getAvailableExercises(requestEquipment);
+  }, [requestEquipment]);
+
+  const filteredCatalogExercises = useMemo(() => {
+    const search = normalizeSearch(catalogSearch);
+
+    if (!search) {
+      return availableCatalogExercises.slice(0, 80);
+    }
+
+    return availableCatalogExercises.filter((exercise) => {
+      const haystack = [
+        exercise.name,
+        exercise.description,
+        exercise.movementPattern,
+        ...(exercise.primaryMuscles ?? []),
+        ...(exercise.requiredEquipment ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(search);
+    }).slice(0, 80);
+  }, [availableCatalogExercises, catalogSearch]);
+
+  const validation =
+    aiDebug && typeof aiDebug.validation === "object" && aiDebug.validation !== null
+      ? (aiDebug.validation as DebugValidation)
+      : null;
+
   function saveUpdatedWorkout(updatedWorkout: Workout) {
     setWorkout(updatedWorkout);
 
@@ -566,23 +520,51 @@ export default function WorkoutPreviewPage() {
     saveUpdatedWorkout(updatedWorkout);
   }
 
-  function addExercise() {
-    if (!workout || !newExerciseName.trim()) {
+  function addCatalogExercise(item: ExerciseCatalogItem) {
+    if (!workout) {
       return;
     }
 
-    const exercise: Exercise = {
-      id: createExerciseId(),
-      name: newExerciseName.trim(),
-      sets: Number(newSets) || 3,
-      reps: Number(newReps) || 10,
-      rest: Number(newRest) || 45,
-      description: newDescription.trim() || undefined,
-    };
+    const alreadyExists = workout.exercises.some((exercise) => exercise.id === item.id);
+
+    if (alreadyExists) {
+      setAiError("Övningen finns redan i passet.");
+      return;
+    }
 
     const updatedWorkout: Workout = {
       ...workout,
-      exercises: [...workout.exercises, exercise],
+      exercises: [...workout.exercises, createExerciseFromCatalog(item)],
+    };
+
+    saveUpdatedWorkout(updatedWorkout);
+    setAiError(null);
+    setShowAddPanel(false);
+    setCatalogSearch("");
+  }
+
+  function addCustomExercise() {
+    if (!workout) {
+      return;
+    }
+
+    if (!newExerciseName.trim()) {
+      setAiError("Ange namn på övningen.");
+      return;
+    }
+
+    const customExercise = createCustomExercise({
+      name: newExerciseName,
+      sets: newSets,
+      reps: newReps,
+      duration: newDuration,
+      rest: newRest,
+      description: newDescription,
+    });
+
+    const updatedWorkout: Workout = {
+      ...workout,
+      exercises: [...workout.exercises, customExercise],
     };
 
     saveUpdatedWorkout(updatedWorkout);
@@ -590,8 +572,11 @@ export default function WorkoutPreviewPage() {
     setNewExerciseName("");
     setNewSets("3");
     setNewReps("10");
+    setNewDuration("");
     setNewRest("45");
     setNewDescription("");
+    setAiError(null);
+    setShowAddPanel(false);
   }
 
   function startWorkout() {
@@ -603,643 +588,374 @@ export default function WorkoutPreviewPage() {
     router.push("/workout/run");
   }
 
-  const debugAiInput =
-    aiDebug && typeof aiDebug.aiInput === "object" && aiDebug.aiInput !== null
-      ? (aiDebug.aiInput as Record<string, unknown>)
-      : null;
-
-  const debugNormalizedEquipment = Array.isArray(
-    debugAiInput?.normalizedEquipment
-  )
-    ? (debugAiInput?.normalizedEquipment as unknown[])
-    : [];
-
-  const debugAvailableCatalog = Array.isArray(debugAiInput?.availableCatalog)
-    ? (debugAiInput?.availableCatalog as unknown[])
-    : [];
-
-  const debugCandidateSelection =
-    aiDebug &&
-    typeof aiDebug.candidateSelection === "object" &&
-    aiDebug.candidateSelection !== null
-      ? (aiDebug.candidateSelection as DebugCandidateSelection)
-      : null;
-
-  const debugValidation =
-    aiDebug && typeof aiDebug.validation === "object" && aiDebug.validation !== null
-      ? (aiDebug.validation as DebugValidation)
-      : null;
-
-  const scoredCandidates = useMemo(() => {
-    if (!Array.isArray(debugCandidateSelection?.scoredCandidates)) {
-      return [];
-    }
-
-    return debugCandidateSelection.scoredCandidates.slice(0, 12);
-  }, [debugCandidateSelection]);
-
-  const validationWarnings = Array.isArray(debugValidation?.warnings)
-    ? debugValidation.warnings
-    : [];
-
-  const acceptedDirectly = Array.isArray(debugValidation?.acceptedDirectly)
-    ? debugValidation.acceptedDirectly
-    : [];
-
-  const replacements = Array.isArray(debugValidation?.replacements)
-    ? debugValidation.replacements
-    : [];
-
-  const fills = Array.isArray(debugValidation?.fills) ? debugValidation.fills : [];
-
-  const promptCandidateCount = Array.isArray(debugCandidateSelection?.promptCandidateIds)
-    ? debugCandidateSelection?.promptCandidateIds?.length ?? 0
-    : 0;
+  if (!authChecked) {
+    return (
+      <main className="min-h-screen bg-gray-50 p-4">
+        <div className="mx-auto max-w-md rounded-2xl border bg-white p-4 shadow-sm">
+          Laddar...
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-gray-50 pb-28">
       <div className="mx-auto w-full max-w-md px-4 py-6">
-        {!authChecked ? (
-          <div className="rounded-2xl border bg-white p-5 text-sm text-gray-600">
-            Laddar...
-          </div>
-        ) : (
-          <>
-            <section className="mb-4 rounded-3xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-gray-500">Förhandsvisning</p>
-              <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-950">
-                Föreslaget AI-pass
-              </h1>
+        <section className="rounded-3xl border bg-white p-5 shadow-sm">
+          <p className="text-sm text-gray-500">Förhandsvisning</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-950">
+            Föreslaget AI-pass
+          </h1>
 
-              {isGeneratingAi ? (
-                <p className="mt-3 rounded-2xl bg-blue-50 px-3 py-2 text-sm text-blue-700">
-                  Genererar AI-pass...
+          {isGeneratingAi ? (
+            <p className="mt-3 rounded-2xl bg-blue-50 px-3 py-2 text-sm text-blue-700">
+              Genererar AI-pass...
+            </p>
+          ) : null}
+
+          {aiError ? (
+            <p className="mt-3 rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700">
+              {aiError}
+            </p>
+          ) : null}
+
+          <p className="mt-3 text-sm text-gray-600">
+            När du lägger till övningar används biblioteket som huvudspår för bättre
+            AI-historik. Egen fritext finns kvar som reserv.
+          </p>
+        </section>
+
+        {validation?.warnings && validation.warnings.length > 0 ? (
+          <section className="mt-4 rounded-3xl border bg-yellow-50 p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-yellow-900">AI-varningar</h2>
+            <div className="mt-3 space-y-2">
+              {validation.warnings.map((warning, index) => (
+                <p key={`${warning}-${index}`} className="text-sm text-yellow-800">
+                  {warning}
                 </p>
-              ) : null}
+              ))}
+            </div>
+          </section>
+        ) : null}
 
-              {aiError ? (
-                <p className="mt-3 rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {aiError}
-                </p>
-              ) : null}
-            </section>
+        {workout?.aiComment ? (
+          <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-gray-950">
+              Dagens kommentar från AI
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-gray-700">
+              {workout.aiComment}
+            </p>
+          </section>
+        ) : null}
 
-            <section className="mb-4">
-              <div className="grid grid-cols-2 gap-3">
-                <InfoCard
-                  title="Katalogövningar"
-                  value={String(debugAvailableCatalog.length)}
-                  subtext="Övningar efter utrustningsfilter"
-                />
-                <InfoCard
-                  title="Promptkandidater"
-                  value={String(promptCandidateCount)}
-                  subtext="Övningar som skickades till AI"
-                />
-                <InfoCard
-                  title="Ersättningar"
-                  value={String(replacements.length)}
-                  subtext="AI-val som byttes ut"
-                />
-                <InfoCard
-                  title="Warnings"
-                  value={String(validationWarnings.length)}
-                  subtext="Valideringsvarningar"
-                />
-              </div>
-            </section>
-
-            <section className="mb-4 rounded-3xl border bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-950">Debugöversikt</h2>
-                  <p className="text-sm text-gray-500">
-                    Snabb koll på input, scoring och validering.
-                  </p>
-                </div>
+        {workout ? (
+          <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-gray-500">Pass</p>
+                <h2 className="text-xl font-semibold text-gray-950">{workout.name}</h2>
               </div>
 
-              <div className="mt-4 space-y-3 text-sm">
-                <div className="rounded-2xl bg-gray-50 p-3">
-                  <p className="font-medium text-gray-900">Payload från preview</p>
-                  <p className="mt-1 text-gray-600">
-                    UserId: {String(requestPayload?.userId ?? "–")} · Mål:{" "}
-                    {String(requestPayload?.goal ?? "–")} · Längd:{" "}
-                    {String(requestPayload?.durationMinutes ?? "–")} min
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-gray-50 p-3">
-                  <p className="font-medium text-gray-900">Utrustning</p>
-                  <p className="mt-1 text-gray-600">
-                    {requestEquipment.length > 0
-                      ? requestEquipment.join(", ")
-                      : "Ingen utrustning skickad"}
-                  </p>
-                  <p className="mt-2 text-xs text-gray-500">
-                    Normaliserad:{" "}
-                    {debugNormalizedEquipment.length > 0
-                      ? debugNormalizedEquipment.join(", ")
-                      : "–"}
-                  </p>
-                </div>
-
-                {validationWarnings.length > 0 ? (
-                  <div className="rounded-2xl bg-yellow-50 p-3">
-                    <p className="font-medium text-yellow-900">Warnings</p>
-                    <div className="mt-2 space-y-2">
-                      {validationWarnings.map((warning, index) => (
-                        <p key={`${warning}-${index}`} className="text-yellow-800">
-                          {warning}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+              <div className="text-right text-sm text-gray-500">
+                <p>{workout.duration} min</p>
+                <p>{workout.exercises.length} övningar</p>
               </div>
-            </section>
+            </div>
 
-            <section className="mb-4 rounded-3xl border bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-950">
-                    Topprankade kandidater
-                  </h2>
-                  <p className="text-sm text-gray-500">
-                    De kandidater som hade bäst score innan AI byggde passet.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {scoredCandidates.length === 0 ? (
-                  <p className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-500">
-                    Ingen scoring att visa ännu.
-                  </p>
-                ) : (
-                  scoredCandidates.map((candidate, index) => (
-                    <div
-                      key={`${candidate.id}-${index}`}
-                      className="rounded-2xl border p-4"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                            Kandidat {index + 1}
-                          </p>
-                          <h3 className="text-base font-semibold text-gray-950">
-                            {candidate.name}
-                          </h3>
-                          <p className="mt-1 text-sm text-gray-500">
-                            {candidate.movementPattern ?? "okänt rörelsemönster"}
-                            {candidate.riskLevel
-                              ? ` · risk ${candidate.riskLevel}`
-                              : ""}
-                          </p>
-                        </div>
-
-                        <span
-                          className={`rounded-full px-3 py-1 text-sm font-semibold ${getScoreBadgeClass(
-                            candidate.score
-                          )}`}
-                        >
-                          {formatNumber(candidate.score)}
-                        </span>
-                      </div>
-
-                      {Array.isArray(candidate.reasonSummary) &&
-                      candidate.reasonSummary.length > 0 ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {candidate.reasonSummary.map((reason, reasonIndex) => (
-                            <span
-                              key={`${reason}-${reasonIndex}`}
-                              className="rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700"
-                            >
-                              {reason}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-
-                      <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Goal
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {formatNumber(candidate.scoreBreakdown?.goal)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Feedback
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {formatNumber(candidate.scoreBreakdown?.feedback)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Novelty
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {formatNumber(candidate.scoreBreakdown?.novelty)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Recovery
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {formatNumber(candidate.scoreBreakdown?.recovery)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Repetition penalty
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {formatNumber(candidate.scoreBreakdown?.repetitionPenalty)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Risk penalty
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {formatNumber(candidate.scoreBreakdown?.riskPenalty)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Avg rating
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {formatNumber(candidate.history?.avgRating)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Avg extra reps
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {formatNumber(candidate.history?.avgExtraReps)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Senaste 7 dagar
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {String(candidate.history?.recent7dCount ?? "–")}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Senaste 14 dagar
-                          </p>
-                          <p className="mt-1 font-medium text-gray-900">
-                            {String(candidate.history?.recent14dCount ?? "–")}
-                          </p>
-                        </div>
-                      </div>
-
-                      <p className="mt-3 text-xs text-gray-500">
-                        Senast körd: {formatDateTime(candidate.history?.lastCompletedAt)}
-                      </p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-
-            <section className="mb-4 rounded-3xl border bg-white p-5 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-950">
-                Validering av AI-svar
-              </h2>
-              <p className="text-sm text-gray-500">
-                Här ser du vilka AI-val som accepterades, byttes ut eller fylldes på.
-              </p>
-
-              <div className="mt-4 space-y-4">
-                <div>
-                  <p className="mb-2 text-sm font-semibold text-gray-900">
-                    Accepterade direkt ({acceptedDirectly.length})
-                  </p>
-
-                  {acceptedDirectly.length === 0 ? (
-                    <p className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-500">
-                      Inga direkta acceptar att visa.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {acceptedDirectly.map((entry, index) => (
-                        <div
-                          key={`accepted-${index}-${entry.selectedId ?? entry.selectedName}`}
-                          className="rounded-2xl border bg-green-50 p-3"
-                        >
-                          <p className="font-medium text-green-900">
-                            {entry.selectedName ?? "Okänd övning"}
-                          </p>
-                          <p className="mt-1 text-sm text-green-800">
-                            {getReasonCodeLabel(entry.reasonCode)} ·{" "}
-                            {entry.reason ?? "AI-valet accepterades direkt."}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <p className="mb-2 text-sm font-semibold text-gray-900">
-                    Ersättningar ({replacements.length})
-                  </p>
-
-                  {replacements.length === 0 ? (
-                    <p className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-500">
-                      Inga ersättningar behövdes.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {replacements.map((entry, index) => (
-                        <div
-                          key={`replacement-${index}-${entry.selectedId ?? entry.selectedName}`}
-                          className="rounded-2xl border bg-yellow-50 p-3"
-                        >
-                          <p className="font-medium text-yellow-900">
-                            {entry.requestedName || entry.requestedId || "Okänt AI-val"} →{" "}
-                            {entry.selectedName ?? "Reservövning"}
-                          </p>
-                          <p className="mt-1 text-sm text-yellow-800">
-                            {getReasonCodeLabel(entry.reasonCode)} ·{" "}
-                            {entry.reason ?? "AI-valet ersattes vid validering."}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <p className="mb-2 text-sm font-semibold text-gray-900">
-                    Påfyllda reservövningar ({fills.length})
-                  </p>
-
-                  {fills.length === 0 ? (
-                    <p className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-500">
-                      Inga reservövningar behövde fyllas på.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {fills.map((entry, index) => (
-                        <div
-                          key={`fill-${index}-${entry.selectedId ?? entry.selectedName}`}
-                          className="rounded-2xl border bg-blue-50 p-3"
-                        >
-                          <p className="font-medium text-blue-900">
-                            {entry.selectedName ?? "Reservövning"}
-                          </p>
-                          <p className="mt-1 text-sm text-blue-800">
-                            {getReasonCodeLabel(entry.reasonCode)} ·{" "}
-                            {entry.reason ?? "Valideringen fyllde på passet."}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <section className="mb-4 rounded-3xl border bg-white p-5 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-950">Rå debug</h2>
-              <p className="text-sm text-gray-500">
-                För djupfelsökning när något beter sig konstigt.
-              </p>
-
-              <div className="mt-4 space-y-3">
-                <button
-                  type="button"
-                  onClick={() => setShowRawInput((value) => !value)}
-                  className="w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium"
-                >
-                  {showRawInput ? "Dölj" : "Visa"} hela aiInput
-                </button>
-
-                {showRawInput ? (
-                  <pre className="overflow-x-auto rounded-2xl bg-gray-950 p-4 text-xs text-gray-100">
-                    {formatJson(aiDebug?.aiInput ?? null)}
-                  </pre>
-                ) : null}
-
-                <button
-                  type="button"
-                  onClick={() => setShowPrompt((value) => !value)}
-                  className="w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium"
-                >
-                  {showPrompt ? "Dölj" : "Visa"} prompt till OpenAI
-                </button>
-
-                {showPrompt ? (
-                  <pre className="overflow-x-auto rounded-2xl bg-gray-950 p-4 text-xs text-gray-100 whitespace-pre-wrap">
-                    {typeof aiDebug?.prompt === "string" ? aiDebug.prompt : ""}
-                  </pre>
-                ) : null}
-
-                <button
-                  type="button"
-                  onClick={() => setShowRawResponse((value) => !value)}
-                  className="w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium"
-                >
-                  {showRawResponse ? "Dölj" : "Visa"} råtext från OpenAI
-                </button>
-
-                {showRawResponse ? (
-                  <pre className="overflow-x-auto rounded-2xl bg-gray-950 p-4 text-xs text-gray-100 whitespace-pre-wrap">
-                    {typeof aiDebug?.rawAiText === "string" ? aiDebug.rawAiText : ""}
-                  </pre>
-                ) : null}
-
-                <button
-                  type="button"
-                  onClick={() => setShowParsedResponse((value) => !value)}
-                  className="w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium"
-                >
-                  {showParsedResponse ? "Dölj" : "Visa"} parsat AI-svar
-                </button>
-
-                {showParsedResponse ? (
-                  <pre className="overflow-x-auto rounded-2xl bg-gray-950 p-4 text-xs text-gray-100">
-                    {formatJson(aiDebug?.parsedAiResponse ?? null)}
-                  </pre>
-                ) : null}
-
-                <button
-                  type="button"
-                  onClick={() => setShowNormalizedWorkout((value) => !value)}
-                  className="w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium"
-                >
-                  {showNormalizedWorkout ? "Dölj" : "Visa"} normaliserat workout-resultat
-                </button>
-
-                {showNormalizedWorkout ? (
-                  <pre className="overflow-x-auto rounded-2xl bg-gray-950 p-4 text-xs text-gray-100">
-                    {formatJson(aiDebug?.normalizedWorkout ?? null)}
-                  </pre>
-                ) : null}
-              </div>
-            </section>
-
-            {!isGeneratingAi && !aiError && workout ? (
-              <>
-                {workout.aiComment ? (
-                  <section className="mb-4 rounded-3xl border bg-white p-5 shadow-sm">
-                    <h2 className="text-lg font-semibold text-gray-950">
-                      Dagens kommentar från AI
-                    </h2>
-                    <p className="mt-2 text-sm leading-6 text-gray-700">
-                      {workout.aiComment}
-                    </p>
-                  </section>
-                ) : null}
-
-                <section className="mb-4 rounded-3xl border bg-white p-5 shadow-sm">
-                  <div className="flex items-center justify-between gap-3">
+            <div className="mt-4 space-y-3">
+              {workout.exercises.map((exercise, index) => (
+                <div key={`${exercise.id}-${index}`} className="rounded-2xl border p-4">
+                  <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm text-gray-500">Pass</p>
-                      <h2 className="text-xl font-semibold text-gray-950">
-                        {workout.name}
-                      </h2>
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                        Övning {index + 1}
+                      </p>
+                      <h3 className="text-lg font-semibold text-gray-950">
+                        {exercise.name}
+                      </h3>
                     </div>
 
-                    <div className="text-right text-sm text-gray-500">
-                      <p>{workout.duration} min</p>
-                      <p>{workout.exercises.length} övningar</p>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeExercise(exercise.id)}
+                      className="rounded-xl border px-3 py-2 text-sm font-medium text-red-600"
+                    >
+                      Ta bort
+                    </button>
                   </div>
 
-                  <div className="mt-4 space-y-3">
-                    {workout.exercises.map((exercise, index) => (
-                      <div
+                  <p className="mt-2 text-sm text-gray-700">
+                    {exercise.sets} set ·{" "}
+                    {typeof exercise.duration === "number" && exercise.duration > 0
+                      ? `${exercise.duration} sek`
+                      : `${exercise.reps} reps`}{" "}
+                    · Vila {exercise.rest} sek
+                  </p>
+
+                  {exercise.description ? (
+                    <p className="mt-2 text-sm text-gray-500">
+                      {exercise.description}
+                    </p>
+                  ) : null}
+
+                  {exercise.id.startsWith("custom_") ? (
+                    <p className="mt-2 text-xs text-amber-700">
+                      Egen övning · mindre användbar för AI än katalogövningar.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs text-emerald-700">
+                      Katalogövning · bättre för AI-historik.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowAddPanel((prev) => !prev);
+                setAiError(null);
+              }}
+              className="mt-4 w-full rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900"
+            >
+              {showAddPanel ? "Stäng lägg till övning" : "Lägg till övning"}
+            </button>
+          </section>
+        ) : null}
+
+        {showAddPanel && workout ? (
+          <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setAddMode("catalog")}
+                className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold ${
+                  addMode === "catalog"
+                    ? "bg-gray-900 text-white"
+                    : "border text-gray-900"
+                }`}
+              >
+                Bibliotek
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAddMode("custom")}
+                className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold ${
+                  addMode === "custom"
+                    ? "bg-gray-900 text-white"
+                    : "border text-gray-900"
+                }`}
+              >
+                Egen övning
+              </button>
+            </div>
+
+            {addMode === "catalog" ? (
+              <div className="mt-4">
+                <input
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  placeholder="Sök övning som passar vald utrustning"
+                  className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                />
+
+                <p className="mt-2 text-xs text-gray-500">
+                  Biblioteket är filtrerat utifrån vald utrustning i passet.
+                </p>
+
+                <div className="mt-3 max-h-[420px] space-y-3 overflow-y-auto pr-1">
+                  {filteredCatalogExercises.map((exercise) => {
+                    const isTimed =
+                      typeof exercise.defaultDuration === "number" &&
+                      exercise.defaultDuration > 0 &&
+                      typeof exercise.defaultReps !== "number";
+
+                    return (
+                      <button
                         key={exercise.id}
-                        className="rounded-2xl border p-4 shadow-sm"
+                        type="button"
+                        onClick={() => addCatalogExercise(exercise)}
+                        className="w-full rounded-2xl border p-4 text-left transition hover:bg-gray-50"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                              Övning {index + 1}
-                            </p>
-                            <h3 className="text-lg font-semibold text-gray-950">
+                            <h3 className="text-base font-semibold text-gray-950">
                               {exercise.name}
                             </h3>
+                            <p className="mt-1 text-sm text-gray-600">
+                              {exercise.defaultSets} set ·{" "}
+                              {isTimed
+                                ? `${exercise.defaultDuration} sek`
+                                : `${exercise.defaultReps ?? 10} reps`}{" "}
+                              · Vila {exercise.defaultRest} sek
+                            </p>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => removeExercise(exercise.id)}
-                            className="rounded-xl border px-3 py-2 text-sm font-medium text-red-600"
-                          >
-                            Ta bort
-                          </button>
+                          <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">
+                            {exercise.movementPattern}
+                          </span>
                         </div>
 
-                        <p className="mt-2 text-sm text-gray-700">
-                          {exercise.sets} set ·{" "}
-                          {typeof exercise.duration === "number" &&
-                          exercise.duration > 0
-                            ? `${exercise.duration} sek`
-                            : `${exercise.reps} reps`}{" "}
-                          · Vila {exercise.rest} sek
+                        <p className="mt-2 text-sm text-gray-500">
+                          {exercise.description}
                         </p>
+                      </button>
+                    );
+                  })}
 
-                        {exercise.description ? (
-                          <p className="mt-2 text-sm text-gray-500">
-                            {exercise.description}
-                          </p>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              </>
-            ) : null}
-
-            {workout ? (
-              <section className="mb-4 rounded-3xl border bg-white p-5 shadow-sm">
-                <h2 className="text-lg font-semibold text-gray-950">
-                  Lägg till övning
-                </h2>
-
-                <div className="mt-4 space-y-3">
-                  <input
-                    value={newExerciseName}
-                    onChange={(e) => setNewExerciseName(e.target.value)}
-                    placeholder="Namn på övning"
-                    className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-                  />
-
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="mb-1 block text-sm text-gray-600">
-                        Set
-                      </label>
-                      <input
-                        value={newSets}
-                        onChange={(e) => setNewSets(e.target.value)}
-                        className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-                        inputMode="numeric"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-sm text-gray-600">
-                        Reps
-                      </label>
-                      <input
-                        value={newReps}
-                        onChange={(e) => setNewReps(e.target.value)}
-                        className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-                        inputMode="numeric"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-sm text-gray-600">
-                        Vila
-                      </label>
-                      <input
-                        value={newRest}
-                        onChange={(e) => setNewRest(e.target.value)}
-                        className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-                        inputMode="numeric"
-                      />
-                    </div>
-                  </div>
-
-                  <textarea
-                    value={newDescription}
-                    onChange={(e) => setNewDescription(e.target.value)}
-                    placeholder="Kort beskrivning"
-                    rows={3}
-                    className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={addExercise}
-                    className="w-full rounded-2xl bg-gray-900 px-4 py-3 text-base font-semibold text-white"
-                  >
-                    Lägg till övning
-                  </button>
+                  {filteredCatalogExercises.length === 0 ? (
+                    <p className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-500">
+                      Ingen övning matchade sökningen.
+                    </p>
+                  ) : null}
                 </div>
-              </section>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <input
+                  value={newExerciseName}
+                  onChange={(e) => setNewExerciseName(e.target.value)}
+                  placeholder="Namn på egen övning"
+                  className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                />
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-sm text-gray-600">Set</label>
+                    <input
+                      value={newSets}
+                      onChange={(e) => setNewSets(e.target.value)}
+                      inputMode="numeric"
+                      className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm text-gray-600">Vila</label>
+                    <input
+                      value={newRest}
+                      onChange={(e) => setNewRest(e.target.value)}
+                      inputMode="numeric"
+                      className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm text-gray-600">Reps</label>
+                    <input
+                      value={newReps}
+                      onChange={(e) => setNewReps(e.target.value)}
+                      inputMode="numeric"
+                      className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm text-gray-600">
+                      Tid (sek)
+                    </label>
+                    <input
+                      value={newDuration}
+                      onChange={(e) => setNewDuration(e.target.value)}
+                      inputMode="numeric"
+                      placeholder="Lämna tomt för reps"
+                      className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                    />
+                  </div>
+                </div>
+
+                <textarea
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="Kort beskrivning"
+                  rows={3}
+                  className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                />
+
+                <button
+                  type="button"
+                  onClick={addCustomExercise}
+                  className="w-full rounded-2xl bg-gray-900 px-4 py-3 text-base font-semibold text-white"
+                >
+                  Lägg till egen övning
+                </button>
+              </div>
+            )}
+          </section>
+        ) : null}
+
+        <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold text-gray-950">Rå debug</h2>
+
+          {requestPayload ? (
+            <pre className="mt-3 overflow-x-auto rounded-2xl bg-gray-950 p-4 text-xs text-gray-100">
+              {formatJson(requestPayload)}
+            </pre>
+          ) : null}
+
+          <div className="mt-4 space-y-3">
+            <button
+              type="button"
+              onClick={() => setShowPrompt((prev) => !prev)}
+              className="w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium"
+            >
+              {showPrompt ? "Dölj" : "Visa"} prompt
+            </button>
+
+            {showPrompt ? (
+              <pre className="overflow-x-auto rounded-2xl bg-gray-950 p-4 text-xs text-gray-100 whitespace-pre-wrap">
+                {typeof aiDebug?.prompt === "string" ? aiDebug.prompt : ""}
+              </pre>
             ) : null}
-          </>
-        )}
+
+            <button
+              type="button"
+              onClick={() => setShowRawResponse((prev) => !prev)}
+              className="w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium"
+            >
+              {showRawResponse ? "Dölj" : "Visa"} rått AI-svar
+            </button>
+
+            {showRawResponse ? (
+              <pre className="overflow-x-auto rounded-2xl bg-gray-950 p-4 text-xs text-gray-100 whitespace-pre-wrap">
+                {typeof aiDebug?.rawAiText === "string" ? aiDebug.rawAiText : ""}
+              </pre>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => setShowNormalizedWorkout((prev) => !prev)}
+              className="w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium"
+            >
+              {showNormalizedWorkout ? "Dölj" : "Visa"} normaliserat resultat
+            </button>
+
+            {showNormalizedWorkout ? (
+              <pre className="overflow-x-auto rounded-2xl bg-gray-950 p-4 text-xs text-gray-100">
+                {formatJson(aiDebug?.normalizedWorkout ?? null)}
+              </pre>
+            ) : null}
+          </div>
+
+          {validation?.replacements && validation.replacements.length > 0 ? (
+            <div className="mt-4 rounded-2xl bg-yellow-50 p-4">
+              <h3 className="text-sm font-semibold text-yellow-900">
+                Ersättningar i validering
+              </h3>
+
+              <div className="mt-2 space-y-2">
+                {validation.replacements.map((item, index) => (
+                  <p key={`${item.selectedName}-${index}`} className="text-sm text-yellow-800">
+                    {item.selectedName ?? "Övning"} · {item.reason ?? "Ersatt"}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </section>
       </div>
 
       <div className="fixed inset-x-0 bottom-0 border-t bg-white/95 backdrop-blur">
