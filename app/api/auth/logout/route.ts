@@ -1,39 +1,64 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { pool } from "@/lib/db";
-import { AUTH_COOKIE_NAME } from "@/lib/auth";
 
+// Loggar ut användaren genom att rensa NextAuth-cookies.
+// Vi kör JWT-sessioner, så ingen databassession behöver tas bort.
 export async function POST() {
   try {
-    const cookieStore = await cookies();
-    const sessionToken = cookieStore.get(AUTH_COOKIE_NAME)?.value;
+    const response = NextResponse.json({ ok: true });
 
-    if (sessionToken) {
-      await pool.query(
-        `DELETE FROM sessions WHERE session_token = $1`,
-        [sessionToken]
-      );
-    }
-
-    const res = NextResponse.json({ ok: true });
-
-    res.cookies.set(AUTH_COOKIE_NAME, "", {
+    // Cookie i lokal utveckling.
+    response.cookies.set("next-auth.session-token", "", {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: false,
       path: "/",
-      maxAge: 0,
+      expires: new Date(0),
     });
 
-    return res;
+    // Secure-variant som används vid https/produktion.
+    response.cookies.set("__Secure-next-auth.session-token", "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: true,
+      path: "/",
+      expires: new Date(0),
+    });
+
+    // Hjälpcookies som NextAuth kan sätta.
+    response.cookies.set("next-auth.callback-url", "", {
+      sameSite: "lax",
+      secure: false,
+      path: "/",
+      expires: new Date(0),
+    });
+
+    response.cookies.set("__Secure-next-auth.callback-url", "", {
+      sameSite: "lax",
+      secure: true,
+      path: "/",
+      expires: new Date(0),
+    });
+
+    response.cookies.set("next-auth.csrf-token", "", {
+      sameSite: "lax",
+      secure: false,
+      path: "/",
+      expires: new Date(0),
+    });
+
+    response.cookies.set("__Host-next-auth.csrf-token", "", {
+      sameSite: "lax",
+      secure: true,
+      path: "/",
+      expires: new Date(0),
+    });
+
+    return response;
   } catch (error) {
     console.error("Logout failed:", error);
 
     return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
+      { ok: false, error: "Kunde inte logga ut" },
       { status: 500 }
     );
   }
