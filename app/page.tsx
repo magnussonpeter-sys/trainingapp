@@ -2,11 +2,8 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
 
 export default function LandingPage() {
-  const router = useRouter();
-
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [loadingPage, setLoadingPage] = useState(true);
@@ -15,9 +12,10 @@ export default function LandingPage() {
   const [statusMessage, setStatusMessage] = useState("");
 
   useEffect(() => {
+    let isMounted = true;
+
     async function checkAuth() {
       try {
-        // Kolla om användaren redan har en giltig session
         const res = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
@@ -25,20 +23,28 @@ export default function LandingPage() {
 
         const data = await res.json();
 
+        if (!isMounted) return;
+
         if (res.ok && data?.user) {
-          router.replace("/home");
-          router.refresh();
+          // Hård navigation minskar risken för router/HMR-race i dev.
+          window.location.replace("/home");
           return;
         }
       } catch (err) {
         console.error("Auth check failed:", err);
       } finally {
-        setLoadingPage(false);
+        if (isMounted) {
+          setLoadingPage(false);
+        }
       }
     }
 
     void checkAuth();
-  }, [router]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
@@ -59,7 +65,6 @@ export default function LandingPage() {
     }
 
     try {
-      // Login via NextAuth credentials provider
       const result = await signIn("credentials", {
         identifier: trimmedIdentifier,
         password,
@@ -73,7 +78,6 @@ export default function LandingPage() {
         return;
       }
 
-      // Verifiera att sessionen verkligen finns innan redirect
       const meRes = await fetch("/api/auth/me", {
         cache: "no-store",
         credentials: "include",
@@ -83,8 +87,7 @@ export default function LandingPage() {
 
       if (meRes.ok && meData?.user) {
         setStatusMessage("Inloggning lyckades, skickar vidare...");
-        router.replace("/home");
-        router.refresh();
+        window.location.replace("/home");
         return;
       }
 
