@@ -11,10 +11,6 @@ import {
 } from "@/lib/ai-exercise-validation";
 import { pool } from "@/lib/db";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 type AiWorkoutResponse = {
   name?: string;
   aiComment?: string; // Kort kommentar från AI om tidigare träning och dagens mål.
@@ -208,6 +204,25 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    // Läs API-nyckeln inne i requesten så att dev-servern inte råkar hålla kvar
+    // en gammal klient med gammalt env-värde.
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+
+    if (!apiKey) {
+      return NextResponse.json(
+        { ok: false, error: "OPENAI_API_KEY saknas på serversidan." },
+        { status: 500 }
+      );
+    }
+
+    // Tillfällig debug. Visar bara prefix, inte hela nyckeln.
+    console.log("OPENAI key prefix:", apiKey.slice(0, 12));
+
+    // Skapa klienten här istället för på modulnivå.
+    const client = new OpenAI({
+      apiKey,
+    });
 
     const safeUserId = String(userId);
     const safeDurationMinutes = sanitizeDurationMinutes(durationMinutes);

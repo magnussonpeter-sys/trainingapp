@@ -172,38 +172,89 @@ export default function WorkoutPreviewPage() {
 
   const [aiDebug, setAiDebug] = useState<GenerateWorkoutDebug | null>(null);
   const [requestEquipment, setRequestEquipment] = useState<string[]>([]);
+  const [requestPayload, setRequestPayload] = useState<Record<string, unknown> | null>(
+    null
+  );
 
   useEffect(() => {
     async function loadAndGenerate() {
       try {
-        const authRes = await fetch("/api/auth/me", { cache: "no-store" });
-        const authData = await authRes.json();
+        setAiError(null);
+        setAiDebug(null);
 
-        if (!authRes.ok || !authData?.ok || !authData.user) {
-          router.replace("/");
-          return;
-        }
-
-        const user = authData.user as AuthUser;
-        setAuthUser(user);
-        setAuthChecked(true);
-
+        // Läs query-parametrar tidigt så vi kan använda dem som fallback.
         const params = new URLSearchParams(window.location.search);
         const durationFromUrl = Number(params.get("duration"));
         const gymIdFromUrl = params.get("gymId") ?? "";
         const gymModeFromUrl = params.get("gymMode") ?? "";
+        const userIdFromUrl = params.get("userId") ?? "";
 
         const duration =
           Number.isFinite(durationFromUrl) && durationFromUrl > 0
             ? durationFromUrl
             : 30;
 
+        // Viktigt för Safari/iPhone: auth-request ska skicka med credentials.
+        const authRes = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
+        let authData: unknown = null;
+        try {
+          authData = await authRes.json();
+        } catch {
+          authData = null;
+        }
+
+        const authUserFromApi =
+          authRes.ok &&
+          typeof authData === "object" &&
+          authData !== null &&
+          "ok" in authData &&
+          (authData as { ok?: unknown }).ok &&
+          "user" in authData
+            ? ((authData as { user?: AuthUser }).user ?? null)
+            : null;
+
+        // Använd auth-användaren om den finns, annars fallback till userId från query.
+        const resolvedUserId =
+          authUserFromApi?.id != null
+            ? String(authUserFromApi.id)
+            : userIdFromUrl.trim()
+            ? userIdFromUrl.trim()
+            : "";
+
+        if (!resolvedUserId) {
+          setAiError("Kunde inte identifiera användaren. Gå tillbaka och försök igen.");
+          setAuthChecked(true);
+          return;
+        }
+
+        if (authUserFromApi) {
+          setAuthUser(authUserFromApi);
+        } else {
+          // Minimal fallback-användare så att sidan kan fortsätta även om Safari bråkar
+          // med auth-kontrollen men userId redan skickats från /home.
+          setAuthUser({
+            id: Number(resolvedUserId),
+            email: null,
+            username: null,
+          });
+        }
+
+        setAuthChecked(true);
+
         let goal: Goal = "strength";
 
         try {
+          // User settings hämtas med credentials för bättre Safari-stöd.
           const settingsRes = await fetch(
-            `/api/user-settings?userId=${encodeURIComponent(String(user.id))}`,
-            { cache: "no-store" }
+            `/api/user-settings?userId=${encodeURIComponent(resolvedUserId)}`,
+            {
+              cache: "no-store",
+              credentials: "include",
+            }
           );
 
           const settingsData =
@@ -229,10 +280,11 @@ export default function WorkoutPreviewPage() {
         } else if (gymIdFromUrl) {
           const gymRes = await fetch(
             `/api/gyms/${encodeURIComponent(gymIdFromUrl)}?userId=${encodeURIComponent(
-              String(user.id)
+              resolvedUserId
             )}`,
             {
               cache: "no-store",
+              credentials: "include",
             }
           );
 
@@ -260,11 +312,28 @@ export default function WorkoutPreviewPage() {
 
         setRequestEquipment(equipment);
 
+        // Spara payload lokalt för debug även om generateWorkout skulle kasta fel
+        // innan debug-data hunnit komma tillbaka från API.
+        const payload = {
+          userId: resolvedUserId,
+          goal,
+          durationMinutes: duration,
+          equipment,
+          gymIdFromUrl,
+          gymModeFromUrl,
+          userIdFromUrl,
+          authUserId: authUserFromApi?.id ?? null,
+        };
+
+        setRequestPayload(payload);
+
+        console.log("Preview generate payload:", payload);
+
         setIsGeneratingAi(true);
         setAiError(null);
 
         const result = await generateWorkout({
-          userId: String(user.id),
+          userId: resolvedUserId,
           goal,
           durationMinutes: duration,
           equipment,
@@ -328,13 +397,17 @@ export default function WorkoutPreviewPage() {
             : [],
         };
 
-        saveGeneratedWorkout(String(user.id), normalizedWorkout);
+        saveGeneratedWorkout(resolvedUserId, normalizedWorkout);
         setWorkout(normalizedWorkout);
       } catch (error) {
-        console.error(error);
-        setAiError("Kunde inte generera AI-pass.");
+        console.error("Kunde inte generera AI-pass i preview:", error);
+
+        setAiError(
+          error instanceof Error ? error.message : "Kunde inte generera AI-pass."
+        );
       } finally {
         setIsGeneratingAi(false);
+        setAuthChecked(true);
       }
     }
 
@@ -449,6 +522,13 @@ export default function WorkoutPreviewPage() {
                 <h2 className="text-sm font-semibold text-amber-900">Debug AI</h2>
 
                 <div className="mt-3 space-y-3 text-xs text-amber-950">
+                  <div>
+                    <p className="font-medium">Payload som preview försöker skicka</p>
+                    <pre className="mt-1 overflow-x-auto rounded-xl bg-white p-3 text-[11px]">
+{formatJson(requestPayload)}
+                    </pre>
+                  </div>
+
                   <div>
                     <p className="font-medium">Utrustning som preview skickar</p>
                     <pre className="mt-1 overflow-x-auto rounded-xl bg-white p-3 text-[11px]">

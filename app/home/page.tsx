@@ -78,11 +78,19 @@ export default function HomePage() {
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
-        const authRes = await fetch("/api/auth/me", { cache: "no-store" });
+        setPageError(null);
+
+        // Viktigt för Safari/iPhone: skicka alltid med credentials vid auth-kontroll.
+        const authRes = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
         const authData = await authRes.json();
 
         if (!authRes.ok || !authData?.ok || !authData.user) {
@@ -106,7 +114,10 @@ export default function HomePage() {
               gymId?: unknown;
             };
 
-            if (typeof parsed.duration === "number" && Number.isFinite(parsed.duration)) {
+            if (
+              typeof parsed.duration === "number" &&
+              Number.isFinite(parsed.duration)
+            ) {
               const nextDuration = clampDuration(parsed.duration);
               setSelectedDuration(nextDuration);
               setDurationInput(String(nextDuration));
@@ -123,8 +134,10 @@ export default function HomePage() {
         setIsLoadingGyms(true);
         setGymError(null);
 
+        // Skicka även med credentials här för konsekvent beteende i Safari.
         const gymsRes = await fetch(`/api/gyms?userId=${user.id}`, {
           cache: "no-store",
+          credentials: "include",
         });
 
         let gymsData: unknown = null;
@@ -162,9 +175,11 @@ export default function HomePage() {
         });
       } catch (error) {
         console.error("Kunde inte ladda home-sidan:", error);
+        setPageError("Kunde inte ladda användardata.");
         router.replace("/");
       } finally {
         setIsLoadingGyms(false);
+        setAuthChecked(true);
       }
     }
 
@@ -217,6 +232,8 @@ export default function HomePage() {
     return gyms.find((gym) => String(gym.id) === selectedGymId) ?? null;
   }, [gyms, selectedGymId]);
 
+  const canGenerateAiWorkout = authChecked && !!authUser && !isLoadingGyms;
+
   function handleQuickDurationSelect(duration: number) {
     const nextDuration = clampDuration(duration);
     setSelectedDuration(nextDuration);
@@ -243,9 +260,20 @@ export default function HomePage() {
   }
 
   function handleGenerateAiWorkout() {
+    // Extra skydd så att Safari inte hinner navigera vidare innan auth är klar.
+    if (!authUser?.id) {
+      setPageError("Användaren är inte färdigladdad ännu. Försök igen.");
+      return;
+    }
+
+    setPageError(null);
+
     const params = new URLSearchParams();
 
     params.set("duration", String(selectedDuration));
+
+    // Skicka med userId uttryckligen så preview-sidan har ett robust fallback.
+    params.set("userId", String(authUser.id));
 
     // Vid kroppsvikt skickar vi ingen vanlig gymId, utan markerar kroppsviktsläge.
     if (selectedGymId === BODYWEIGHT_GYM_ID) {
@@ -263,6 +291,7 @@ export default function HomePage() {
 
       await fetch("/api/auth/logout", {
         method: "POST",
+        credentials: "include",
       });
 
       router.replace("/");
@@ -450,15 +479,22 @@ export default function HomePage() {
               </div>
             </div>
           </section>
+
+          {pageError ? (
+            <section className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {pageError}
+            </section>
+          ) : null}
         </div>
 
         <div className="mt-6 space-y-3 bg-gray-50 pt-4">
           <button
             type="button"
             onClick={handleGenerateAiWorkout}
-            className="flex w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 py-4 text-base font-semibold text-white shadow-sm hover:bg-indigo-700"
+            disabled={!canGenerateAiWorkout}
+            className="flex w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 py-4 text-base font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
           >
-            Generera AI-pass
+            {canGenerateAiWorkout ? "Generera AI-pass" : "Laddar användardata..."}
           </button>
 
           <Link

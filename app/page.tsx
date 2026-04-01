@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LandingPage() {
@@ -11,45 +11,78 @@ export default function LandingPage() {
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
 
   useEffect(() => {
     async function checkAuth() {
-      const res = await fetch("/api/auth/me", { cache: "no-store" });
-      const data = await res.json();
+      try {
+        // Kolla om användaren redan har en giltig session.
+        const res = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "include",
+        });
 
-      if (data?.ok && data.user) {
-        router.replace("/home");
+        const data = await res.json();
+
+        if (data?.ok && data.user) {
+          router.replace("/home");
+          router.refresh();
+        }
+      } catch {
+        // Tyst fail här – sidan ska fortfarande gå att använda.
       }
     }
 
     void checkAuth();
   }, [router]);
 
-  async function handleLogin() {
+  async function handleLogin(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+
+    // Förhindra dubbelklick/dubbla requests.
+    if (loading) return;
+
     setLoading(true);
     setError("");
+    setStatusMessage("Försöker logga in...");
 
     try {
+      const trimmedIdentifier = identifier.trim();
+
+      if (!trimmedIdentifier || !password) {
+        throw new Error("Fyll i användarnamn/e-post och lösenord");
+      }
+
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        credentials: "include", // Viktigt för session/cookies.
         body: JSON.stringify({
-          identifier,
+          identifier: trimmedIdentifier,
           password,
           rememberMe,
         }),
       });
 
-      const data = await res.json();
+      // Hantera både JSON-svar och oväntade felsvar.
+      const contentType = res.headers.get("content-type") ?? "";
+      const data = contentType.includes("application/json")
+        ? await res.json()
+        : null;
 
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Kunde inte logga in");
+        throw new Error(data?.error || `Kunde inte logga in (${res.status})`);
       }
 
-      router.replace("/home");
+      setStatusMessage("Inloggning lyckades, skickar vidare...");
+
+      // Viktigt: hård navigering fungerar ofta säkrare på iPhone/Safari
+      // direkt efter att en sessionscookie satts.
+      window.location.href = "/home";
     } catch (err) {
+      setStatusMessage("");
       setError(err instanceof Error ? err.message : "Kunde inte logga in");
     } finally {
       setLoading(false);
@@ -66,11 +99,15 @@ export default function LandingPage() {
             Logga in med e-post eller användarnamn för att fortsätta.
           </p>
 
-          <div className="mt-6 space-y-3">
+          <form className="mt-6 space-y-3" onSubmit={handleLogin}>
             <input
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               placeholder="E-post eller användarnamn"
+              autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               className="w-full rounded-xl border px-3 py-3 text-base"
             />
 
@@ -79,6 +116,10 @@ export default function LandingPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Lösenord"
+              autoComplete="current-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               className="w-full rounded-xl border px-3 py-3 text-base"
             />
 
@@ -91,6 +132,12 @@ export default function LandingPage() {
               Håll mig inloggad
             </label>
 
+            {statusMessage ? (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">
+                {statusMessage}
+              </div>
+            ) : null}
+
             {error ? (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 {error}
@@ -98,14 +145,13 @@ export default function LandingPage() {
             ) : null}
 
             <button
-              type="button"
-              onClick={handleLogin}
+              type="submit"
               disabled={loading}
               className="w-full rounded-2xl bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
             >
               {loading ? "Loggar in..." : "Logga in"}
             </button>
-          </div>
+          </form>
         </div>
       </div>
     </main>
