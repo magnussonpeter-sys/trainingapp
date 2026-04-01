@@ -27,6 +27,12 @@ type UserSettings = {
   training_goal?: GoalType | null;
 };
 
+type GoalReview = {
+  headline: string;
+  nextFocus: string;
+  comment: string;
+};
+
 const QUICK_DURATION_OPTIONS = [15, 20, 30, 45] as const;
 const BODYWEIGHT_GYM_ID = "bodyweight";
 const MIN_DURATION = 5;
@@ -200,6 +206,11 @@ export default function HomePage() {
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [showAnalysisDebug, setShowAnalysisDebug] = useState(false);
+
+  // Nytt: AI-coach ovanpå den strukturerade analysen.
+  const [goalReview, setGoalReview] = useState<GoalReview | null>(null);
+  const [isLoadingGoalReview, setIsLoadingGoalReview] = useState(false);
+  const [goalReviewError, setGoalReviewError] = useState<string | null>(null);
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -423,6 +434,64 @@ export default function HomePage() {
   }, [authUser, userGoal]);
 
   /**
+   * Hämta AI-coach-kommentar ovanpå den strukturerade analysen.
+   */
+  useEffect(() => {
+    async function loadGoalReview() {
+      if (!analysis) {
+        setGoalReview(null);
+        return;
+      }
+
+      try {
+        setIsLoadingGoalReview(true);
+        setGoalReviewError(null);
+
+        const goal = userGoal ?? "health";
+
+        const response = await fetch("/api/goal-review", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            goal,
+            analysis,
+          }),
+        });
+
+        const data = (await response.json()) as
+          | {
+              ok?: boolean;
+              headline?: string;
+              nextFocus?: string;
+              comment?: string;
+              error?: string;
+            }
+          | null;
+
+        if (!response.ok || !data?.ok) {
+          throw new Error(data?.error ?? "Kunde inte hämta AI-utvärdering.");
+        }
+
+        setGoalReview({
+          headline: data.headline ?? "Din AI-coach säger",
+          nextFocus: data.nextFocus ?? "Fortsätt bygga vidare steg för steg",
+          comment: data.comment ?? "Ingen AI-kommentar tillgänglig just nu.",
+        });
+      } catch (error) {
+        console.error("Kunde inte hämta AI-coach-kommentar:", error);
+        setGoalReview(null);
+        setGoalReviewError("Kunde inte hämta AI-coach-kommentar.");
+      } finally {
+        setIsLoadingGoalReview(false);
+      }
+    }
+
+    void loadGoalReview();
+  }, [analysis, userGoal]);
+
+  /**
    * Visar valt gym i UI.
    */
   const selectedGym = useMemo(() => {
@@ -593,8 +662,7 @@ export default function HomePage() {
                 Träning i förhållande till mål
               </h2>
               <p className="mt-2 text-sm text-gray-600">
-                En första strukturerad analys av frekvens, rytm, volym, variation
-                och återhämtning.
+                Strukturerad analys först, AI-coach ovanpå.
               </p>
             </div>
 
@@ -628,6 +696,44 @@ export default function HomePage() {
 
           {analysis ? (
             <>
+              {/* AI-coach */}
+              <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
+                      AI-coach
+                    </p>
+                    <h3 className="mt-1 text-lg font-bold text-indigo-950">
+                      {goalReview?.headline ?? "Din coach analyserar läget"}
+                    </h3>
+                  </div>
+
+                  {isLoadingGoalReview ? (
+                    <span className="text-sm font-medium text-indigo-700">
+                      Tänker...
+                    </span>
+                  ) : null}
+                </div>
+
+                <p className="mt-3 text-sm font-semibold text-indigo-900">
+                  Viktigast just nu:{" "}
+                  <span className="font-normal">
+                    {goalReview?.nextFocus ??
+                      analysis.focusAreas[0]?.title ??
+                      "Fortsätt med jämn träning och tydlig riktning."}
+                  </span>
+                </p>
+
+                <p className="mt-3 text-sm leading-6 text-indigo-950">
+                  {goalReview?.comment ??
+                    "När AI-kommentaren är klar visas en kort coachbedömning här."}
+                </p>
+
+                {goalReviewError ? (
+                  <p className="mt-3 text-sm text-red-700">{goalReviewError}</p>
+                ) : null}
+              </div>
+
               <div className="mt-4 flex flex-wrap items-center gap-3">
                 <div
                   className={`inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${statusClasses.badge}`}
@@ -872,7 +978,14 @@ export default function HomePage() {
 
                 {showAnalysisDebug ? (
                   <pre className="mt-3 overflow-x-auto rounded-2xl border border-gray-200 bg-gray-950 p-4 text-xs leading-6 text-gray-100">
-                    {JSON.stringify(analysis, null, 2)}
+                    {JSON.stringify(
+                      {
+                        analysis,
+                        goalReview,
+                      },
+                      null,
+                      2
+                    )}
                   </pre>
                 ) : null}
               </div>
@@ -882,8 +995,12 @@ export default function HomePage() {
 
         {/* AI-pass-inställningar */}
         <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-sm font-medium text-gray-500">Inställningar för AI-pass</p>
-          <h2 className="mt-1 text-xl font-bold text-gray-950">Nästa träningspass</h2>
+          <p className="text-sm font-medium text-gray-500">
+            Inställningar för AI-pass
+          </p>
+          <h2 className="mt-1 text-xl font-bold text-gray-950">
+            Nästa träningspass
+          </h2>
 
           <div className="mt-5">
             <div className="flex items-center justify-between gap-4">
@@ -935,7 +1052,9 @@ export default function HomePage() {
 
           <div className="mt-6">
             <div className="flex items-center justify-between gap-4">
-              <label className="text-sm font-semibold text-gray-900">Valt gym</label>
+              <label className="text-sm font-semibold text-gray-900">
+                Valt gym
+              </label>
               <Link
                 href="/gyms"
                 className="text-sm font-semibold text-indigo-600 hover:text-indigo-700"
@@ -956,7 +1075,9 @@ export default function HomePage() {
                   className="mt-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-base outline-none"
                 >
                   {/* Kroppsvikt finns alltid som alternativ */}
-                  <option value={BODYWEIGHT_GYM_ID}>Kroppsvikt / utan gym</option>
+                  <option value={BODYWEIGHT_GYM_ID}>
+                    Kroppsvikt / utan gym
+                  </option>
 
                   {gyms.map((gym) => (
                     <option key={String(gym.id)} value={String(gym.id)}>
@@ -996,7 +1117,9 @@ export default function HomePage() {
               disabled={!canGenerateAiWorkout}
               className="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {canGenerateAiWorkout ? "Generera AI-pass" : "Laddar användardata..."}
+              {canGenerateAiWorkout
+                ? "Generera AI-pass"
+                : "Laddar användardata..."}
             </button>
 
             <Link
