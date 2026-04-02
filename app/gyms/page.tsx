@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type EquipmentType =
@@ -22,27 +23,13 @@ type AuthUser = {
   id: number;
   email: string | null;
   username: string | null;
+  name?: string | null;
+  role?: "user" | "admin";
 };
 
 type GymEquipment = {
   id: string;
-  type: EquipmentType;
-  name: string;
-  notes?: string;
-  weightsKg?: number[];
-  bandLevel?: BandLevel;
-  quantity?: number;
-};
-
-type Gym = {
-  id: string;
-  name: string;
-  equipment: GymEquipment[];
-};
-
-type ApiGymEquipment = {
-  id: string | number;
-  gym_id: string | number;
+  gym_id: string;
   equipment_type: EquipmentType;
   label: string;
   notes?: string | null;
@@ -51,13 +38,24 @@ type ApiGymEquipment = {
   quantity?: number | null;
 };
 
-type ApiGym = {
-  id: string | number;
+type Gym = {
+  id: string;
+  user_id: string;
   name: string;
-  equipment?: ApiGymEquipment[] | null;
+  description?: string | null;
+  equipment: GymEquipment[];
 };
 
-const EQUIPMENT_TYPE_OPTIONS: { value: EquipmentType; label: string }[] = [
+type EquipmentDraft = {
+  equipmentType: EquipmentType;
+  label: string;
+  quantity: string;
+  notes: string;
+  weightsInput: string;
+  bandLevel: BandLevel;
+};
+
+const EQUIPMENT_TYPE_OPTIONS: Array<{ value: EquipmentType; label: string }> = [
   { value: "dumbbell", label: "Hantlar" },
   { value: "barbell", label: "Skivstång" },
   { value: "bench", label: "Bänk" },
@@ -68,81 +66,77 @@ const EQUIPMENT_TYPE_OPTIONS: { value: EquipmentType; label: string }[] = [
   { value: "bands", label: "Gummiband" },
   { value: "rings", label: "Romerska ringar" },
   { value: "bodyweight", label: "Kroppsvikt" },
-  { value: "other", label: "Annat" },
+  { value: "other", label: "Övrigt" },
 ];
 
-const BAND_LEVEL_OPTIONS: { value: BandLevel; label: string }[] = [
-  { value: "light", label: "Lätt" },
-  { value: "medium", label: "Medium" },
-  { value: "heavy", label: "Tung" },
-];
+const DEFAULT_LABELS: Record<EquipmentType, string> = {
+  dumbbell: "Hantlar",
+  barbell: "Skivstång",
+  bench: "Bänk",
+  rack: "Rack",
+  kettlebell: "Kettlebells",
+  machine: "Maskin",
+  cable: "Kabelmaskin",
+  bands: "Gummiband",
+  rings: "Romerska ringar",
+  bodyweight: "Kroppsvikt",
+  other: "Namn på utrustning",
+};
+
+function createDefaultEquipmentDraft(
+  equipmentType: EquipmentType = "dumbbell"
+): EquipmentDraft {
+  return {
+    equipmentType,
+    label: DEFAULT_LABELS[equipmentType],
+    quantity: "",
+    notes: "",
+    weightsInput: "",
+    bandLevel: "medium",
+  };
+}
+
+function isWeightBasedType(type: EquipmentType) {
+  return type === "dumbbell" || type === "barbell" || type === "kettlebell";
+}
+
+function formatWeights(weights?: number[] | null) {
+  if (!weights || weights.length === 0) return "Alla vikter / ej specificerat";
+  return `${weights.join(", ")} kg`;
+}
+
+function formatEquipmentMeta(item: GymEquipment) {
+  const parts: string[] = [];
+
+  if (isWeightBasedType(item.equipment_type)) {
+    parts.push(formatWeights(item.weights_kg));
+  }
+
+  if (item.equipment_type === "bands" && item.band_level) {
+    const bandLabel =
+      item.band_level === "light"
+        ? "Lätt"
+        : item.band_level === "medium"
+        ? "Medium"
+        : "Tung";
+    parts.push(`Motstånd: ${bandLabel}`);
+  }
+
+  if (item.quantity && item.quantity > 0) {
+    parts.push(`Antal: ${item.quantity}`);
+  }
+
+  if (item.notes?.trim()) {
+    parts.push(item.notes.trim());
+  }
+
+  return parts.join(" • ");
+}
 
 function getEquipmentTypeLabel(type: EquipmentType) {
   return (
     EQUIPMENT_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type
   );
-}
-
-function getBandLevelLabel(level?: BandLevel) {
-  return (
-    BAND_LEVEL_OPTIONS.find((option) => option.value === level)?.label ?? ""
-  );
-}
-
-function formatEquipmentType(type: EquipmentType) {
-  return getEquipmentTypeLabel(type);
-}
-
-function formatWeights(weights?: number[]) {
-  if (!weights || weights.length === 0) return "";
-  return weights.map((weight) => Number(weight).toString()).join(", ") + " kg";
-}
-
-function getWeightStep(type: EquipmentType) {
-  switch (type) {
-    case "dumbbell":
-      return 0.5;
-    case "kettlebell":
-    case "barbell":
-      return 1;
-    default:
-      return 0.5;
-  }
-}
-
-function isWeightBasedType(type: EquipmentType) {
-  return type === "dumbbell" || type === "kettlebell" || type === "barbell";
-}
-
-function defaultNameForType(type: EquipmentType) {
-  return getEquipmentTypeLabel(type);
-}
-
-function normalizeWeight(value: number, step: number) {
-  const decimals = step === 0.5 ? 1 : 0;
-  return Number(value.toFixed(decimals));
-}
-
-function mapApiEquipment(item: ApiGymEquipment): GymEquipment {
-  return {
-    id: String(item.id),
-    type: item.equipment_type,
-    name: item.label,
-    notes: item.notes ?? undefined,
-    weightsKg: item.weights_kg ?? undefined,
-    bandLevel: item.band_level ?? undefined,
-    quantity: item.quantity ?? undefined,
-  };
-}
-
-function mapApiGym(item: ApiGym): Gym {
-  return {
-    id: String(item.id),
-    name: item.name,
-    equipment: Array.isArray(item.equipment)
-      ? item.equipment.map(mapApiEquipment)
-      : [],
-  };
 }
 
 export default function GymsPage() {
@@ -153,161 +147,291 @@ export default function GymsPage() {
 
   const [gyms, setGyms] = useState<Gym[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [pageError, setPageError] = useState("");
+
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [newGymName, setNewGymName] = useState("");
+  const [newGymDescription, setNewGymDescription] = useState("");
   const [isSavingGym, setIsSavingGym] = useState(false);
 
   const [expandedGymId, setExpandedGymId] = useState<string | null>(null);
 
+  // State för redigering av gymnamn/beskrivning.
   const [editingGymId, setEditingGymId] = useState<string | null>(null);
   const [editingGymName, setEditingGymName] = useState("");
-  const [isSavingGymName, setIsSavingGymName] = useState(false);
-  const editingGymInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingGymDescription, setEditingGymDescription] = useState("");
+  const [isUpdatingGym, setIsUpdatingGym] = useState(false);
 
-  const [equipmentTypeByGym, setEquipmentTypeByGym] = useState<
-    Record<string, EquipmentType>
+  // State för utrustningsformulär per gym.
+  const [equipmentDrafts, setEquipmentDrafts] = useState<
+    Record<string, EquipmentDraft>
   >({});
-  const [equipmentNameByGym, setEquipmentNameByGym] = useState<
-    Record<string, string>
-  >({});
-  const [equipmentNotesByGym, setEquipmentNotesByGym] = useState<
-    Record<string, string>
-  >({});
-  const [equipmentWeightsByGym, setEquipmentWeightsByGym] = useState<
-    Record<string, number[]>
-  >({});
-  const [equipmentWeightInputByGym, setEquipmentWeightInputByGym] = useState<
-    Record<string, string>
-  >({});
-  const [equipmentBandLevelByGym, setEquipmentBandLevelByGym] = useState<
-    Record<string, BandLevel | "">
-  >({});
-  const [isSavingEquipmentByGym, setIsSavingEquipmentByGym] = useState<
-    Record<string, boolean>
-  >({});
-  const [isDeletingEquipmentId, setIsDeletingEquipmentId] = useState<
-    string | null
-  >(null);
-  const [isDeletingGymId, setIsDeletingGymId] = useState<string | null>(null);
+  const [savingEquipmentGymId, setSavingEquipmentGymId] = useState<string | null>(
+    null
+  );
+  const [deletingGymId, setDeletingGymId] = useState<string | null>(null);
+  const [deletingEquipmentId, setDeletingEquipmentId] = useState<string | null>(
+    null
+  );
 
-  useEffect(() => {
-    async function checkAuth() {
-      try {
-        const res = await fetch("/api/auth/me", { cache: "no-store" });
-        const data = await res.json();
+  const userId = authUser?.id ? String(authUser.id) : "";
 
-        if (!res.ok || !data?.ok || !data.user) {
-          router.replace("/");
-          return;
-        }
+  const sortedGyms = useMemo(() => {
+    // Sortera alfabetiskt för lite lugnare UI.
+    return [...gyms].sort((a, b) => a.name.localeCompare(b.name, "sv"));
+  }, [gyms]);
 
-        setAuthUser(data.user);
-        setAuthChecked(true);
-      } catch {
-        router.replace("/");
-      }
-    }
+  const getDraftForGym = useCallback(
+    (gymId: string) => {
+      return equipmentDrafts[gymId] ?? createDefaultEquipmentDraft();
+    },
+    [equipmentDrafts]
+  );
 
-    void checkAuth();
-  }, [router]);
+  const updateDraftForGym = useCallback(
+    (gymId: string, updates: Partial<EquipmentDraft>) => {
+      setEquipmentDrafts((prev) => {
+        const current = prev[gymId] ?? createDefaultEquipmentDraft();
+        return {
+          ...prev,
+          [gymId]: {
+            ...current,
+            ...updates,
+          },
+        };
+      });
+    },
+    []
+  );
 
-  useEffect(() => {
-    if (!editingGymId) return;
-    editingGymInputRef.current?.focus();
-    editingGymInputRef.current?.select();
-  }, [editingGymId]);
+  const resetDraftForGym = useCallback((gymId: string) => {
+    setEquipmentDrafts((prev) => ({
+      ...prev,
+      [gymId]: createDefaultEquipmentDraft(),
+    }));
+  }, []);
 
-  const fetchGyms = useCallback(async () => {
-    if (!authUser) return;
-
+  const fetchGyms = useCallback(async (currentUserId: string) => {
     setIsLoading(true);
-    setPageError("");
-
-    const userId = String(authUser.id);
+    setPageError(null);
 
     try {
-      const res = await fetch(`/api/gyms?userId=${encodeURIComponent(userId)}`, {
+      // Viktigt: skicka med credentials så session-cookie följer med.
+      const res = await fetch(`/api/gyms?userId=${encodeURIComponent(currentUserId)}`, {
         cache: "no-store",
+        credentials: "include",
       });
 
       const data = await res.json();
 
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Kunde inte hämta gym");
+        throw new Error(data?.error || "Kunde inte hämta gym.");
       }
 
-      const nextGyms = Array.isArray(data.gyms)
-        ? (data.gyms as ApiGym[]).map(mapApiGym)
-        : [];
-
+      const nextGyms = Array.isArray(data.gyms) ? (data.gyms as Gym[]) : [];
       setGyms(nextGyms);
+
+      // Öppna första gymmet automatiskt om inget redan är valt.
+      setExpandedGymId((prev) => {
+        if (prev && nextGyms.some((gym) => gym.id === prev)) return prev;
+        return nextGyms[0]?.id ?? null;
+      });
     } catch (error) {
+      console.error("GET gyms failed:", error);
       setPageError(
-        error instanceof Error ? error.message : "Kunde inte hämta gym"
+        error instanceof Error ? error.message : "Kunde inte hämta gym."
       );
       setGyms([]);
     } finally {
       setIsLoading(false);
     }
-  }, [authUser]);
+  }, []);
 
   useEffect(() => {
-    if (!authChecked || !authUser) return;
-    void fetchGyms();
-  }, [authChecked, authUser, fetchGyms]);
+    let isMounted = true;
 
-  const addGym = async () => {
-    if (!authUser) return;
+    async function checkAuth() {
+      try {
+        setPageError(null);
 
-    const trimmedName = newGymName.trim();
-    if (!trimmedName || isSavingGym) return;
+        // Samma auth-mönster som på /home.
+        const res = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
+        let data: unknown = null;
+
+        try {
+          data = await res.json();
+        } catch {
+          data = null;
+        }
+
+        if (
+          !res.ok ||
+          !data ||
+          typeof data !== "object" ||
+          !("user" in data) ||
+          !(data as { user?: unknown }).user
+        ) {
+          router.replace("/");
+          return;
+        }
+
+        const user = (data as { user: AuthUser }).user;
+
+        if (!isMounted) return;
+
+        setAuthUser(user);
+        setAuthChecked(true);
+
+        await fetchGyms(String(user.id));
+      } catch (error) {
+        console.error("Auth check failed on /gyms:", error);
+        if (!isMounted) return;
+        router.replace("/");
+      } finally {
+        if (isMounted) {
+          setAuthChecked(true);
+        }
+      }
+    }
+
+    void checkAuth();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchGyms, router]);
+
+  async function handleCreateGym(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!userId) return;
+
+    if (!newGymName.trim()) {
+      setPageError("Ange ett namn på gymmet.");
+      return;
+    }
 
     setIsSavingGym(true);
-    setPageError("");
-
-    const userId = String(authUser.id);
+    setPageError(null);
+    setSuccessMessage(null);
 
     try {
       const res = await fetch("/api/gyms", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           userId,
-          name: trimmedName,
+          name: newGymName.trim(),
+          description: newGymDescription.trim() || null,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Kunde inte skapa gym");
+        throw new Error(data?.error || "Kunde inte skapa gym.");
       }
 
       setNewGymName("");
-      await fetchGyms();
+      setNewGymDescription("");
+      setSuccessMessage("Gym sparat.");
+
+      await fetchGyms(userId);
+
+      if (data?.gym?.id) {
+        setExpandedGymId(String(data.gym.id));
+      }
     } catch (error) {
-      setPageError(
-        error instanceof Error ? error.message : "Kunde inte skapa gym"
-      );
+      console.error("Create gym failed:", error);
+      setPageError(error instanceof Error ? error.message : "Kunde inte skapa gym.");
     } finally {
       setIsSavingGym(false);
     }
-  };
+  }
 
-  const removeGym = async (gymId: string) => {
-    if (!authUser || isDeletingGymId) return;
+  function startEditGym(gym: Gym) {
+    setEditingGymId(gym.id);
+    setEditingGymName(gym.name);
+    setEditingGymDescription(gym.description ?? "");
+    setSuccessMessage(null);
+    setPageError(null);
+  }
 
-    setIsDeletingGymId(gymId);
-    setPageError("");
+  function cancelEditGym() {
+    setEditingGymId(null);
+    setEditingGymName("");
+    setEditingGymDescription("");
+  }
 
-    const userId = String(authUser.id);
+  async function handleSaveGym(gymId: string) {
+    if (!userId) return;
+    if (!editingGymName.trim()) {
+      setPageError("Gymmet måste ha ett namn.");
+      return;
+    }
+
+    setIsUpdatingGym(true);
+    setPageError(null);
+    setSuccessMessage(null);
 
     try {
-      const res = await fetch(`/api/gyms/${encodeURIComponent(gymId)}`, {
+      const res = await fetch(`/api/gyms/${gymId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId,
+          name: editingGymName.trim(),
+          description: editingGymDescription.trim() || null,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Kunde inte spara ändringar.");
+      }
+
+      setSuccessMessage("Gym uppdaterat.");
+      cancelEditGym();
+      await fetchGyms(userId);
+    } catch (error) {
+      console.error("Update gym failed:", error);
+      setPageError(
+        error instanceof Error ? error.message : "Kunde inte uppdatera gym."
+      );
+    } finally {
+      setIsUpdatingGym(false);
+    }
+  }
+
+  async function handleDeleteGym(gymId: string) {
+    if (!userId) return;
+
+    const confirmed = window.confirm(
+      "Vill du verkligen ta bort detta gym och dess utrustning?"
+    );
+
+    if (!confirmed) return;
+
+    setDeletingGymId(gymId);
+    setPageError(null);
+    setSuccessMessage(null);
+
+    try {
+      const res = await fetch(`/api/gyms/${gymId}`, {
         method: "DELETE",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -317,669 +441,671 @@ export default function GymsPage() {
       const data = await res.json();
 
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Kunde inte ta bort gym");
+        throw new Error(data?.error || "Kunde inte ta bort gym.");
       }
 
-      setGyms((prev) => prev.filter((gym) => gym.id !== gymId));
-
-      if (expandedGymId === gymId) setExpandedGymId(null);
-      if (editingGymId === gymId) {
-        setEditingGymId(null);
-        setEditingGymName("");
-      }
+      setSuccessMessage("Gym borttaget.");
+      await fetchGyms(userId);
     } catch (error) {
-      setPageError(
-        error instanceof Error ? error.message : "Kunde inte ta bort gym"
-      );
+      console.error("Delete gym failed:", error);
+      setPageError(error instanceof Error ? error.message : "Kunde inte ta bort gym.");
     } finally {
-      setIsDeletingGymId(null);
+      setDeletingGymId(null);
     }
-  };
+  }
 
-  const startEditGym = (gym: Gym) => {
-    setEditingGymId(gym.id);
-    setEditingGymName(gym.name);
-  };
+  async function handleAddEquipment(gymId: string) {
+    if (!userId) return;
 
-  const saveGymName = async (gymId: string) => {
-    if (!authUser) return;
+    const draft = getDraftForGym(gymId);
 
-    const trimmedName = editingGymName.trim();
-    if (!trimmedName || isSavingGymName) return;
-
-    setIsSavingGymName(true);
-    setPageError("");
-
-    const userId = String(authUser.id);
-
-    try {
-      const res = await fetch(`/api/gyms/${encodeURIComponent(gymId)}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          userId,
-          name: trimmedName,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Kunde inte uppdatera gymnamn");
-      }
-
-      setGyms((prev) =>
-        prev.map((gym) =>
-          gym.id === gymId ? { ...gym, name: trimmedName } : gym
-        )
-      );
-
-      setEditingGymId(null);
-      setEditingGymName("");
-    } catch (error) {
-      setPageError(
-        error instanceof Error ? error.message : "Kunde inte uppdatera gymnamn"
-      );
-    } finally {
-      setIsSavingGymName(false);
-    }
-  };
-
-  const cancelEditGym = () => {
-    setEditingGymId(null);
-    setEditingGymName("");
-  };
-
-  const handleGymNameBlur = async (gymId: string) => {
-    if (isSavingGymName) return;
-
-    const trimmedName = editingGymName.trim();
-    if (!trimmedName) {
-      cancelEditGym();
+    if (!draft.label.trim()) {
+      setPageError("Ange ett namn på utrustningen.");
       return;
     }
 
-    await saveGymName(gymId);
-  };
-
-  const handleEquipmentTypeChange = (gymId: string, nextType: EquipmentType) => {
-    const nextDefaultName = defaultNameForType(nextType);
-
-    setEquipmentTypeByGym((prev) => ({
-      ...prev,
-      [gymId]: nextType,
-    }));
-
-    setEquipmentNameByGym((prev) => {
-      const currentName = prev[gymId] ?? "";
-      const previousType = equipmentTypeByGym[gymId] ?? "other";
-      const previousDefaultName = defaultNameForType(previousType);
-
-      if (!currentName || currentName === previousDefaultName) {
-        return {
-          ...prev,
-          [gymId]: nextDefaultName,
-        };
-      }
-
-      return prev;
-    });
-
-    if (!isWeightBasedType(nextType)) {
-      setEquipmentWeightsByGym((prev) => ({
-        ...prev,
-        [gymId]: [],
-      }));
-      setEquipmentWeightInputByGym((prev) => ({
-        ...prev,
-        [gymId]: "",
-      }));
-    }
-
-    if (nextType !== "bands") {
-      setEquipmentBandLevelByGym((prev) => ({
-        ...prev,
-        [gymId]: "",
-      }));
-    }
-  };
-
-  const addWeightToEquipment = (gymId: string) => {
-    const type = equipmentTypeByGym[gymId] ?? "other";
-    if (!isWeightBasedType(type)) return;
-
-    const rawValue = (equipmentWeightInputByGym[gymId] ?? "").trim();
-    if (!rawValue) return;
-
-    const parsedValue = Number(rawValue.replace(",", "."));
-    if (!Number.isFinite(parsedValue) || parsedValue <= 0) return;
-
-    const step = getWeightStep(type);
-    const normalized = normalizeWeight(parsedValue, step);
-
-    setEquipmentWeightsByGym((prev) => {
-      const current = prev[gymId] ?? [];
-      const next = [...new Set([...current, normalized])].sort((a, b) => a - b);
-
-      return {
-        ...prev,
-        [gymId]: next,
-      };
-    });
-
-    setEquipmentWeightInputByGym((prev) => ({
-      ...prev,
-      [gymId]: "",
-    }));
-  };
-
-  const removeWeightFromEquipment = (gymId: string, weightToRemove: number) => {
-    setEquipmentWeightsByGym((prev) => ({
-      ...prev,
-      [gymId]: (prev[gymId] ?? []).filter((weight) => weight !== weightToRemove),
-    }));
-  };
-
-  const addEquipment = async (gymId: string) => {
-    if (!authUser) return;
-
-    const type = equipmentTypeByGym[gymId] ?? "other";
-    const rawName = (equipmentNameByGym[gymId] ?? "").trim();
-    const name = rawName || (type !== "other" ? defaultNameForType(type) : "");
-    const notes = (equipmentNotesByGym[gymId] ?? "").trim();
-    const weightsKg = isWeightBasedType(type)
-      ? (equipmentWeightsByGym[gymId] ?? [])
-      : [];
-    const bandLevel = equipmentBandLevelByGym[gymId] ?? "";
-
-    if (!name) return;
-    if (type === "bands" && !bandLevel) return;
-    if (isSavingEquipmentByGym[gymId]) return;
-
-    setIsSavingEquipmentByGym((prev) => ({
-      ...prev,
-      [gymId]: true,
-    }));
-    setPageError("");
-
-    const userId = String(authUser.id);
+    setSavingEquipmentGymId(gymId);
+    setPageError(null);
+    setSuccessMessage(null);
 
     try {
+      const weights = isWeightBasedType(draft.equipmentType)
+        ? draft.weightsInput
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean)
+        : null;
+
       const res = await fetch("/api/gym-equipment", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           userId,
           gym_id: gymId,
-          equipment_type: type,
-          label: name,
-          weights_kg: isWeightBasedType(type)
-            ? weightsKg.length > 0
-              ? weightsKg
-              : null
-            : null,
-          band_level: type === "bands" ? bandLevel : null,
-          quantity: null,
-          notes: notes || null,
+          equipment_type: draft.equipmentType,
+          label: draft.label.trim(),
+          quantity: draft.quantity ? Number(draft.quantity) : null,
+          notes: draft.notes.trim() || null,
+          weights_kg: weights,
+          band_level: draft.equipmentType === "bands" ? draft.bandLevel : null,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Kunde inte lägga till utrustning");
+        throw new Error(data?.error || "Kunde inte spara utrustning.");
       }
 
-      const createdItem = mapApiEquipment(data.equipment as ApiGymEquipment);
-
-      setGyms((prev) =>
-        prev.map((gym) =>
-          gym.id === gymId
-            ? {
-                ...gym,
-                equipment: [...gym.equipment, createdItem],
-              }
-            : gym
-        )
-      );
-
-      setEquipmentTypeByGym((prev) => ({ ...prev, [gymId]: "other" }));
-      setEquipmentNameByGym((prev) => ({ ...prev, [gymId]: "" }));
-      setEquipmentNotesByGym((prev) => ({ ...prev, [gymId]: "" }));
-      setEquipmentWeightsByGym((prev) => ({ ...prev, [gymId]: [] }));
-      setEquipmentWeightInputByGym((prev) => ({ ...prev, [gymId]: "" }));
-      setEquipmentBandLevelByGym((prev) => ({ ...prev, [gymId]: "" }));
+      resetDraftForGym(gymId);
+      setSuccessMessage("Utrustning tillagd.");
+      await fetchGyms(userId);
+      setExpandedGymId(gymId);
     } catch (error) {
+      console.error("Add equipment failed:", error);
       setPageError(
-        error instanceof Error
-          ? error.message
-          : "Kunde inte lägga till utrustning"
+        error instanceof Error ? error.message : "Kunde inte spara utrustning."
       );
     } finally {
-      setIsSavingEquipmentByGym((prev) => ({
-        ...prev,
-        [gymId]: false,
-      }));
+      setSavingEquipmentGymId(null);
     }
-  };
+  }
 
-  const removeEquipment = async (gymId: string, equipmentId: string) => {
-    if (!authUser || isDeletingEquipmentId) return;
+  async function handleDeleteEquipment(equipmentId: string) {
+    if (!userId) return;
 
-    setIsDeletingEquipmentId(equipmentId);
-    setPageError("");
+    const confirmed = window.confirm("Vill du ta bort denna utrustning?");
+    if (!confirmed) return;
 
-    const userId = String(authUser.id);
+    setDeletingEquipmentId(equipmentId);
+    setPageError(null);
+    setSuccessMessage(null);
 
     try {
-      const res = await fetch(
-        `/api/gym-equipment/${encodeURIComponent(equipmentId)}`,
-        {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ userId }),
-        }
-      );
+      const res = await fetch(`/api/gym-equipment/${equipmentId}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ userId }),
+      });
 
       const data = await res.json();
 
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Kunde inte ta bort utrustning");
+        throw new Error(data?.error || "Kunde inte ta bort utrustning.");
       }
 
-      setGyms((prev) =>
-        prev.map((gym) =>
-          gym.id === gymId
-            ? {
-                ...gym,
-                equipment: gym.equipment.filter((item) => item.id !== equipmentId),
-              }
-            : gym
-        )
-      );
+      setSuccessMessage("Utrustning borttagen.");
+      await fetchGyms(userId);
     } catch (error) {
+      console.error("Delete equipment failed:", error);
       setPageError(
-        error instanceof Error ? error.message : "Kunde inte ta bort utrustning"
+        error instanceof Error ? error.message : "Kunde inte ta bort utrustning."
       );
     } finally {
-      setIsDeletingEquipmentId(null);
+      setDeletingEquipmentId(null);
     }
-  };
+  }
 
   if (!authChecked) {
     return (
-      <main className="min-h-screen flex items-center justify-center p-6">
-        <div className="text-sm text-gray-600">Kontrollerar inloggning...</div>
+      <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl rounded-[32px] border border-[var(--app-border)] bg-[var(--app-surface)] p-8 shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
+          <p className="text-sm font-medium text-[var(--app-text-muted)]">
+            Kontrollerar inloggning...
+          </p>
+        </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4">
-      <div className="mx-auto max-w-md space-y-4 pb-24">
-        <header className="space-y-3">
-          <button
-            type="button"
-            onClick={() => router.push("/home")}
-            className="text-sm font-semibold text-blue-600"
-          >
-            ← Tillbaka
-          </button>
+    <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="overflow-hidden rounded-[32px] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
+          <div className="grid lg:grid-cols-[1.2fr_0.8fr]">
+            <section className="border-b border-[var(--app-border)] bg-[linear-gradient(180deg,#f8fbff_0%,#f4f7fb_100%)] p-6 sm:p-8 lg:border-b-0 lg:border-r lg:p-10">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong)]">
+                    Träningsapp
+                  </p>
+                  <h1 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--app-text-strong)] sm:text-4xl">
+                    Hantera gym
+                  </h1>
+                  <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--app-text)]">
+                    Lägg till gym och ange vilken utrustning som finns i varje gym.
+                    Dina sparade gym används sedan för att anpassa AI-genererade pass
+                    efter tillgänglig utrustning. :contentReference[oaicite:1]{index=1}
+                  </p>
+                </div>
 
-          <div>
-            <p className="text-sm text-gray-600">Gym</p>
-            <h1 className="text-3xl font-bold text-gray-950">Hantera gym</h1>
-            <p className="mt-2 text-sm text-gray-600">
-              Lägg till gym och ange vilken utrustning som finns i varje gym.
-            </p>
-          </div>
-        </header>
-
-        {pageError ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {pageError}
-          </div>
-        ) : null}
-
-        <section className="rounded-2xl border bg-white p-4 shadow-sm">
-          <h2 className="text-base font-semibold text-gray-900">Skapa nytt gym</h2>
-
-          <div className="mt-3 space-y-3">
-            <input
-              type="text"
-              value={newGymName}
-              onChange={(e) => setNewGymName(e.target.value)}
-              placeholder="Namn på gym"
-              className="w-full rounded-xl border px-3 py-3 text-base"
-            />
-
-            <button
-              type="button"
-              onClick={addGym}
-              disabled={isSavingGym}
-              className="w-full rounded-2xl bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-60"
-            >
-              {isSavingGym ? "Sparar..." : "Spara gym"}
-            </button>
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          {isLoading ? (
-            <div className="rounded-2xl border bg-white p-4 text-sm text-gray-600 shadow-sm">
-              Hämtar gym...
-            </div>
-          ) : gyms.length === 0 ? (
-            <div className="rounded-2xl border bg-white p-4 text-sm text-gray-600 shadow-sm">
-              Inga gym sparade ännu.
-            </div>
-          ) : (
-            gyms.map((gym) => {
-              const isExpanded = expandedGymId === gym.id;
-              const isEditing = editingGymId === gym.id;
-              const selectedType = equipmentTypeByGym[gym.id] ?? "other";
-              const selectedWeights = equipmentWeightsByGym[gym.id] ?? [];
-              const showWeights = isWeightBasedType(selectedType);
-              const showBandLevel = selectedType === "bands";
-              const weightStep = getWeightStep(selectedType);
-              const isSavingEquipment = !!isSavingEquipmentByGym[gym.id];
-
-              return (
-                <div
-                  key={gym.id}
-                  className="rounded-2xl border bg-white p-4 shadow-sm"
+                <Link
+                  href="/home"
+                  className="inline-flex items-center justify-center rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      {isEditing ? (
-                        <div className="space-y-2">
-                          <input
-                            ref={editingGymInputRef}
-                            type="text"
-                            value={editingGymName}
-                            onChange={(e) => setEditingGymName(e.target.value)}
-                            onBlur={() => void handleGymNameBlur(gym.id)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                void saveGymName(gym.id);
-                              }
+                  ← Tillbaka till hem
+                </Link>
+              </div>
 
-                              if (e.key === "Escape") {
-                                e.preventDefault();
-                                cancelEditGym();
-                              }
-                            }}
-                            disabled={isSavingGymName}
-                            className="w-full rounded-xl border px-3 py-3 text-base"
-                          />
-                          <p className="text-xs text-gray-500">
-                            Enter = spara, Escape = avbryt
-                          </p>
-                        </div>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => startEditGym(gym)}
-                            className="text-left text-lg font-semibold text-gray-950"
-                          >
-                            {gym.name}
-                          </button>
-                          <p className="mt-1 text-sm text-gray-600">
-                            {gym.equipment.length > 0
-                              ? `${gym.equipment.length} utrustningsobjekt`
-                              : "Ingen utrustning angiven"}
-                          </p>
-                        </>
-                      )}
-                    </div>
+              {pageError ? (
+                <div className="mt-6 rounded-2xl border border-[var(--app-danger-border)] bg-[var(--app-danger-bg)] px-4 py-3 text-sm text-[var(--app-danger-text)]">
+                  {pageError}
+                </div>
+              ) : null}
 
-                    {!isEditing && (
-                      <div className="flex flex-col gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedGymId((prev) =>
-                              prev === gym.id ? null : gym.id
-                            )
-                          }
-                          className="rounded-xl border px-3 py-2 text-sm font-semibold text-gray-900"
-                        >
-                          {isExpanded ? "Dölj" : "Öppna"}
-                        </button>
+              {successMessage ? (
+                <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                  {successMessage}
+                </div>
+              ) : null}
 
-                        <button
-                          type="button"
-                          onClick={() => removeGym(gym.id)}
-                          disabled={isDeletingGymId === gym.id}
-                          className="rounded-xl border px-3 py-2 text-sm font-semibold text-red-600 disabled:opacity-60"
-                        >
-                          {isDeletingGymId === gym.id ? "Tar bort..." : "Ta bort"}
-                        </button>
-                      </div>
-                    )}
+              <div className="mt-8 grid gap-4 sm:grid-cols-3">
+                <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
+                  <p className="text-sm text-[var(--app-text-muted)]">Sparade gym</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
+                    {gyms.length}
+                  </p>
+                </div>
+
+                <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
+                  <p className="text-sm text-[var(--app-text-muted)]">Total utrustning</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
+                    {gyms.reduce((sum, gym) => sum + gym.equipment.length, 0)}
+                  </p>
+                </div>
+
+                <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
+                  <p className="text-sm text-[var(--app-text-muted)]">Inloggad användare</p>
+                  <p className="mt-2 text-lg font-semibold text-[var(--app-text-strong)]">
+                    {authUser?.username || authUser?.email || "Användare"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-7">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
+                      Sparade gym
+                    </p>
+                    <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
+                      Dina träningsmiljöer
+                    </h2>
                   </div>
+                </div>
 
-                  {isExpanded && (
-                    <div className="mt-4 space-y-4">
-                      <div>
-                        <h4 className="text-sm font-semibold text-gray-900">
-                          Utrustning
-                        </h4>
+                <div className="mt-6">
+                  {isLoading ? (
+                    <div className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 text-sm text-[var(--app-text-muted)]">
+                      Hämtar gym...
+                    </div>
+                  ) : sortedGyms.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface-muted)] px-4 py-6 text-sm text-[var(--app-text-muted)]">
+                      Inga gym sparade ännu.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {sortedGyms.map((gym) => {
+                        const isExpanded = expandedGymId === gym.id;
+                        const isEditing = editingGymId === gym.id;
+                        const draft = getDraftForGym(gym.id);
 
-                        <div className="mt-3 space-y-3">
-                          {gym.equipment.length === 0 ? (
-                            <div className="rounded-xl bg-gray-50 p-3 text-sm text-gray-600">
-                              Ingen utrustning tillagd ännu.
-                            </div>
-                          ) : (
-                            gym.equipment.map((item) => (
-                              <div
-                                key={item.id}
-                                className="rounded-xl bg-gray-50 p-3"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div>
-                                    <div className="font-semibold text-gray-900">
-                                      {item.name}
-                                    </div>
-
-                                    <div className="mt-1 text-sm text-gray-600">
-                                      {formatEquipmentType(item.type)}
-                                    </div>
-
-                                    {isWeightBasedType(item.type) ? (
-                                      <div className="mt-1 text-sm text-gray-700">
-                                        Vikter:{" "}
-                                        {item.weightsKg && item.weightsKg.length > 0
-                                          ? formatWeights(item.weightsKg)
-                                          : "Alla vikter"}
-                                      </div>
-                                    ) : null}
-
-                                    {item.type === "bands" && item.bandLevel ? (
-                                      <div className="mt-1 text-sm text-gray-700">
-                                        Motstånd: {getBandLevelLabel(item.bandLevel)}
-                                      </div>
-                                    ) : null}
-
-                                    {item.notes ? (
-                                      <div className="mt-1 text-sm text-gray-700">
-                                        Notering: {item.notes}
-                                      </div>
-                                    ) : null}
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      removeEquipment(gym.id, item.id)
-                                    }
-                                    disabled={isDeletingEquipmentId === item.id}
-                                    className="rounded-xl border px-3 py-2 text-sm font-semibold text-red-600 disabled:opacity-60"
-                                  >
-                                    {isDeletingEquipmentId === item.id
-                                      ? "Tar bort..."
-                                      : "Ta bort"}
-                                  </button>
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl border p-4">
-                        <h4 className="text-sm font-semibold text-gray-900">
-                          Lägg till utrustning
-                        </h4>
-
-                        <div className="mt-3 space-y-3">
-                          <select
-                            value={selectedType}
-                            onChange={(e) =>
-                              handleEquipmentTypeChange(
-                                gym.id,
-                                e.target.value as EquipmentType
-                              )
-                            }
-                            className="w-full rounded-xl border bg-white px-3 py-3 text-base"
+                        return (
+                          <div
+                            key={gym.id}
+                            className="overflow-hidden rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)]"
                           >
-                            {EQUIPMENT_TYPE_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
+                            <div className="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                {isEditing ? (
+                                  <div className="space-y-3">
+                                    <input
+                                      value={editingGymName}
+                                      onChange={(e) => setEditingGymName(e.target.value)}
+                                      className="w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                                      placeholder="Namn på gym"
+                                    />
 
-                          <input
-                            type="text"
-                            value={equipmentNameByGym[gym.id] ?? ""}
-                            onChange={(e) =>
-                              setEquipmentNameByGym((prev) => ({
-                                ...prev,
-                                [gym.id]: e.target.value,
-                              }))
-                            }
-                            placeholder="Namn på utrustning"
-                            className="w-full rounded-xl border px-3 py-3 text-base"
-                          />
+                                    <textarea
+                                      value={editingGymDescription}
+                                      onChange={(e) =>
+                                        setEditingGymDescription(e.target.value)
+                                      }
+                                      className="min-h-[90px] w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-sm text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                                      placeholder="Kort beskrivning av gymmet"
+                                    />
 
-                          {showWeights && (
-                            <div className="space-y-2">
-                              <div className="flex gap-2">
-                                <input
-                                  type="number"
-                                  inputMode="decimal"
-                                  step={weightStep}
-                                  min={0}
-                                  value={equipmentWeightInputByGym[gym.id] ?? ""}
-                                  onChange={(e) =>
-                                    setEquipmentWeightInputByGym((prev) => ({
-                                      ...prev,
-                                      [gym.id]: e.target.value,
-                                    }))
-                                  }
-                                  placeholder={
-                                    weightStep === 0.5
-                                      ? "Lägg till vikt, t.ex. 12.5"
-                                      : "Lägg till vikt, t.ex. 16"
-                                  }
-                                  className="w-full rounded-xl border px-3 py-3 text-base"
-                                />
+                                    <div className="flex flex-wrap gap-3">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveGym(gym.id)}
+                                        disabled={isUpdatingGym}
+                                        className="rounded-2xl bg-[var(--app-accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        {isUpdatingGym ? "Sparar..." : "Spara ändringar"}
+                                      </button>
 
-                                <button
-                                  type="button"
-                                  onClick={() => addWeightToEquipment(gym.id)}
-                                  className="rounded-xl border px-4 py-3 text-sm font-semibold text-gray-900"
-                                >
-                                  Lägg till vikt
-                                </button>
+                                      <button
+                                        type="button"
+                                        onClick={cancelEditGym}
+                                        className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
+                                      >
+                                        Avbryt
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <h3 className="text-xl font-semibold text-[var(--app-text-strong)]">
+                                      {gym.name}
+                                    </h3>
+
+                                    {gym.description?.trim() ? (
+                                      <p className="mt-2 text-sm leading-6 text-[var(--app-text)]">
+                                        {gym.description}
+                                      </p>
+                                    ) : (
+                                      <p className="mt-2 text-sm text-[var(--app-text-muted)]">
+                                        Ingen beskrivning sparad.
+                                      </p>
+                                    )}
+
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      <span className="rounded-full bg-[var(--app-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--app-accent-strong)]">
+                                        {gym.equipment.length} utrustningsposter
+                                      </span>
+                                    </div>
+                                  </>
+                                )}
                               </div>
 
-                              {selectedWeights.length > 0 ? (
-                                <div className="flex flex-wrap gap-2">
-                                  {selectedWeights.map((weight) => (
+                              <div className="flex flex-wrap gap-3">
+                                {!isEditing ? (
+                                  <>
                                     <button
-                                      key={weight}
                                       type="button"
                                       onClick={() =>
-                                        removeWeightFromEquipment(gym.id, weight)
+                                        setExpandedGymId((prev) =>
+                                          prev === gym.id ? null : gym.id
+                                        )
                                       }
-                                      className="rounded-full bg-gray-100 px-3 py-1 text-sm text-gray-800"
+                                      className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
                                     >
-                                      {weight} kg ×
+                                      {isExpanded ? "Dölj" : "Visa"}
                                     </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="rounded-xl bg-blue-50 p-3 text-sm text-blue-900">
-                                  Inga specifika vikter angivna. AI kommer då att
-                                  anta att alla vikter finns.
-                                </div>
-                              )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() => startEditGym(gym)}
+                                      className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
+                                    >
+                                      Redigera gym
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteGym(gym.id)}
+                                      disabled={deletingGymId === gym.id}
+                                      className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      {deletingGymId === gym.id
+                                        ? "Tar bort..."
+                                        : "Ta bort"}
+                                    </button>
+                                  </>
+                                ) : null}
+                              </div>
                             </div>
-                          )}
 
-                          {showBandLevel && (
-                            <select
-                              value={equipmentBandLevelByGym[gym.id] ?? ""}
-                              onChange={(e) =>
-                                setEquipmentBandLevelByGym((prev) => ({
-                                  ...prev,
-                                  [gym.id]: e.target.value as BandLevel,
-                                }))
-                              }
-                              className="w-full rounded-xl border bg-white px-3 py-3 text-base"
-                            >
-                              <option value="">Välj motståndsnivå</option>
-                              {BAND_LEVEL_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          )}
+                            {isExpanded ? (
+                              <div className="border-t border-[var(--app-border)] bg-[var(--app-surface-muted)] px-5 py-5">
+                                <div className="grid gap-6 xl:grid-cols-[1fr_0.95fr]">
+                                  <div>
+                                    <div className="flex items-center justify-between gap-3">
+                                      <h4 className="text-lg font-semibold text-[var(--app-text-strong)]">
+                                        Utrustning
+                                      </h4>
+                                    </div>
 
-                          <input
-                            type="text"
-                            value={equipmentNotesByGym[gym.id] ?? ""}
-                            onChange={(e) =>
-                              setEquipmentNotesByGym((prev) => ({
-                                ...prev,
-                                [gym.id]: e.target.value,
-                              }))
-                            }
-                            placeholder="Valfri notering"
-                            className="w-full rounded-xl border px-3 py-3 text-base"
-                          />
+                                    <div className="mt-4">
+                                      {gym.equipment.length === 0 ? (
+                                        <div className="rounded-2xl border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-5 text-sm text-[var(--app-text-muted)]">
+                                          Ingen utrustning sparad ännu.
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-3">
+                                          {gym.equipment.map((item) => (
+                                            <div
+                                              key={item.id}
+                                              className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-4"
+                                            >
+                                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                                <div className="min-w-0">
+                                                  <p className="text-sm font-semibold text-[var(--app-text-strong)]">
+                                                    {item.label}
+                                                  </p>
+                                                  <p className="mt-1 text-xs uppercase tracking-[0.14em] text-[var(--app-text-muted)]">
+                                                    {getEquipmentTypeLabel(
+                                                      item.equipment_type
+                                                    )}
+                                                  </p>
 
-                          <button
-                            type="button"
-                            onClick={() => addEquipment(gym.id)}
-                            disabled={isSavingEquipment}
-                            className="w-full rounded-2xl bg-gray-900 px-4 py-3 font-semibold text-white disabled:opacity-60"
-                          >
-                            {isSavingEquipment
-                              ? "Sparar..."
-                              : "Lägg till utrustning"}
-                          </button>
-                        </div>
-                      </div>
+                                                  {formatEquipmentMeta(item) ? (
+                                                    <p className="mt-2 text-sm text-[var(--app-text)]">
+                                                      {formatEquipmentMeta(item)}
+                                                    </p>
+                                                  ) : null}
+                                                </div>
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    handleDeleteEquipment(item.id)
+                                                  }
+                                                  disabled={deletingEquipmentId === item.id}
+                                                  className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                  {deletingEquipmentId === item.id
+                                                    ? "Tar bort..."
+                                                    : "Ta bort"}
+                                                </button>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] p-5">
+                                    <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
+                                      Lägg till utrustning
+                                    </p>
+                                    <h4 className="mt-2 text-lg font-semibold text-[var(--app-text-strong)]">
+                                      Ny utrustning i {gym.name}
+                                    </h4>
+
+                                    <div className="mt-5 space-y-4">
+                                      <div>
+                                        <label className="text-sm font-semibold text-[var(--app-text-strong)]">
+                                          Typ
+                                        </label>
+                                        <select
+                                          value={draft.equipmentType}
+                                          onChange={(e) => {
+                                            const nextType = e.target
+                                              .value as EquipmentType;
+                                            updateDraftForGym(gym.id, {
+                                              equipmentType: nextType,
+                                              label:
+                                                draft.label ===
+                                                DEFAULT_LABELS[draft.equipmentType]
+                                                  ? DEFAULT_LABELS[nextType]
+                                                  : draft.label,
+                                            });
+                                          }}
+                                          className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                                        >
+                                          {EQUIPMENT_TYPE_OPTIONS.map((option) => (
+                                            <option
+                                              key={option.value}
+                                              value={option.value}
+                                            >
+                                              {option.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      <div>
+                                        <label className="text-sm font-semibold text-[var(--app-text-strong)]">
+                                          Namn
+                                        </label>
+                                        <input
+                                          value={draft.label}
+                                          onChange={(e) =>
+                                            updateDraftForGym(gym.id, {
+                                              label: e.target.value,
+                                            })
+                                          }
+                                          placeholder={DEFAULT_LABELS[draft.equipmentType]}
+                                          className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                                        />
+                                      </div>
+
+                                      {isWeightBasedType(draft.equipmentType) ? (
+                                        <div>
+                                          <label className="text-sm font-semibold text-[var(--app-text-strong)]">
+                                            Specifika vikter
+                                          </label>
+                                          <input
+                                            value={draft.weightsInput}
+                                            onChange={(e) =>
+                                              updateDraftForGym(gym.id, {
+                                                weightsInput: e.target.value,
+                                              })
+                                            }
+                                            placeholder="t.ex. 5, 7.5, 10, 12.5, 15"
+                                            className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                                          />
+                                          <p className="mt-2 text-xs text-[var(--app-text-muted)]">
+                                            Lämna tomt om alla vikter ska antas finnas.
+                                          </p>
+                                        </div>
+                                      ) : null}
+
+                                      {draft.equipmentType === "bands" ? (
+                                        <div>
+                                          <label className="text-sm font-semibold text-[var(--app-text-strong)]">
+                                            Motstånd
+                                          </label>
+                                          <select
+                                            value={draft.bandLevel}
+                                            onChange={(e) =>
+                                              updateDraftForGym(gym.id, {
+                                                bandLevel: e.target
+                                                  .value as BandLevel,
+                                              })
+                                            }
+                                            className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                                          >
+                                            <option value="light">Lätt</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="heavy">Tung</option>
+                                          </select>
+                                        </div>
+                                      ) : null}
+
+                                      <div>
+                                        <label className="text-sm font-semibold text-[var(--app-text-strong)]">
+                                          Antal
+                                        </label>
+                                        <input
+                                          inputMode="numeric"
+                                          value={draft.quantity}
+                                          onChange={(e) =>
+                                            updateDraftForGym(gym.id, {
+                                              quantity: e.target.value.replace(
+                                                /[^\d]/g,
+                                                ""
+                                              ),
+                                            })
+                                          }
+                                          placeholder="t.ex. 2"
+                                          className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                                        />
+                                      </div>
+
+                                      <div>
+                                        <label className="text-sm font-semibold text-[var(--app-text-strong)]">
+                                          Notering
+                                        </label>
+                                        <textarea
+                                          value={draft.notes}
+                                          onChange={(e) =>
+                                            updateDraftForGym(gym.id, {
+                                              notes: e.target.value,
+                                            })
+                                          }
+                                          placeholder="Valfritt"
+                                          className="mt-2 min-h-[90px] w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-sm text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                                        />
+                                      </div>
+
+                                      <div className="flex flex-wrap gap-3">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleAddEquipment(gym.id)}
+                                          disabled={savingEquipmentGymId === gym.id}
+                                          className="rounded-2xl bg-[var(--app-accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                          {savingEquipmentGymId === gym.id
+                                            ? "Sparar..."
+                                            : "Lägg till utrustning"}
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => resetDraftForGym(gym.id)}
+                                          className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
+                                        >
+                                          Rensa
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
-              );
-            })
-          )}
-        </section>
+              </div>
+
+              <div className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-7">
+                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
+                  Skapa nytt gym
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
+                  Lägg till ny träningsmiljö
+                </h2>
+
+                <form onSubmit={handleCreateGym} className="mt-6 grid gap-4">
+                  <div>
+                    <label
+                      htmlFor="new-gym-name"
+                      className="text-sm font-semibold text-[var(--app-text-strong)]"
+                    >
+                      Namn på gym
+                    </label>
+                    <input
+                      id="new-gym-name"
+                      value={newGymName}
+                      onChange={(e) => setNewGymName(e.target.value)}
+                      placeholder="t.ex. Hemmagym, Friskis, Jobbgym"
+                      className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="new-gym-description"
+                      className="text-sm font-semibold text-[var(--app-text-strong)]"
+                    >
+                      Beskrivning
+                    </label>
+                    <textarea
+                      id="new-gym-description"
+                      value={newGymDescription}
+                      onChange={(e) => setNewGymDescription(e.target.value)}
+                      placeholder="Valfritt, t.ex. litet hemmagym i garaget"
+                      className="mt-2 min-h-[100px] w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-sm text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="submit"
+                      disabled={isSavingGym}
+                      className="rounded-2xl bg-[var(--app-accent)] px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSavingGym ? "Sparar..." : "Skapa gym"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </section>
+
+            <aside className="bg-[var(--app-surface)] p-6 sm:p-8 lg:p-10">
+              <div className="space-y-6">
+                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-6">
+                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
+                    Översikt
+                  </p>
+                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
+                    Gym & utrustning
+                  </h2>
+                  <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
+                    Här bygger du upp dina träningsmiljöer så att kommande pass blir
+                    bättre anpassade efter vad du faktiskt har tillgång till.
+                  </p>
+                </div>
+
+                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm">
+                  <h3 className="text-lg font-semibold text-[var(--app-text-strong)]">
+                    Snabbnavigering
+                  </h3>
+
+                  <div className="mt-5 grid gap-3">
+                    <Link
+                      href="/home"
+                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
+                    >
+                      Till hem
+                    </Link>
+
+                    <Link
+                      href="/history"
+                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
+                    >
+                      Träningshistorik
+                    </Link>
+
+                    <Link
+                      href="/settings"
+                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
+                    >
+                      Inställningar
+                    </Link>
+                  </div>
+                </div>
+
+                <div className="rounded-[28px] border border-[var(--app-border)] bg-[linear-gradient(180deg,#ecfdf5_0%,#f8fafc_100%)] p-6">
+                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
+                    Tips
+                  </p>
+                  <h3 className="mt-2 text-lg font-semibold text-[var(--app-text-strong)]">
+                    Bra upplägg
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
+                    Skapa gärna separata gym för till exempel hemmagym, kommersiellt
+                    gym och kroppsvikt. Då blir AI-pass lättare att anpassa efter rätt
+                    miljö.
+                  </p>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
       </div>
     </main>
   );
