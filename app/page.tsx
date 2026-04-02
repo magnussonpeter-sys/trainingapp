@@ -45,7 +45,7 @@ export default function LoginPage() {
     <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-10">
       <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-5xl items-center justify-center">
         <div className="grid w-full max-w-4xl overflow-hidden rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[0_20px_60px_rgba(15,23,42,0.14)] md:grid-cols-2">
-          {/* Enkel vänstersida för lite mer appkänsla */}
+          {/* Vänstersida för lite tydligare appkänsla */}
           <div className="hidden bg-[var(--app-accent-soft)] p-8 md:flex md:flex-col md:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong)]">
@@ -73,7 +73,7 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Login-box */}
+          {/* Själva login-delen */}
           <div className="p-6 sm:p-8 md:p-10">
             <div className="mx-auto max-w-md">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong)] md:hidden">
