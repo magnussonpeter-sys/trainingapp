@@ -3,7 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { pool } from "@/lib/db";
 
-// Enkel typ för auth-user i appen
+// Typ för user i session
 type AppAuthUser = {
   id: string;
   email: string;
@@ -12,7 +12,7 @@ type AppAuthUser = {
   status: "active" | "disabled";
 };
 
-// Läs bootstrap-admin från env på servern
+// ENV-admin (bootstrap)
 const ENV_ADMIN_USERNAME =
   process.env.ADMIN_USERNAME?.trim().toLowerCase() ?? "";
 
@@ -21,51 +21,38 @@ const ENV_ADMIN_PASSWORD_HASH =
 
 export const authOptions: NextAuthOptions = {
   session: {
-    strategy: "jwt", // Vi kör JWT-sessioner
+    strategy: "jwt",
   },
 
   providers: [
     CredentialsProvider({
       name: "Credentials",
       credentials: {
-        identifier: {
-          label: "E-post eller användarnamn",
-          type: "text",
-        },
-        password: {
-          label: "Lösenord",
-          type: "password",
-        },
+        identifier: { label: "E-post", type: "text" },
+        password: { label: "Lösenord", type: "password" },
       },
 
       async authorize(credentials) {
         const identifier = credentials?.identifier?.trim();
         const password = credentials?.password;
 
-        // Skydda mot tomma fält
-        if (!identifier || !password) {
-          return null;
-        }
+        if (!identifier || !password) return null;
 
-        const normalizedIdentifier = identifier.toLowerCase();
+        const normalized = identifier.toLowerCase();
 
-        // 1) Först: tillåt bootstrap-admin från env
-        // Detta är en reserv/admin-ingång och inte huvudspåret långsiktigt.
+        // 🔐 1. ENV ADMIN (bootstrap)
         if (ENV_ADMIN_USERNAME && ENV_ADMIN_PASSWORD_HASH) {
-          const isEnvAdminUser =
-            normalizedIdentifier === ENV_ADMIN_USERNAME;
-
-          if (isEnvAdminUser) {
-            const isValidEnvPassword = await bcrypt.compare(
+          if (normalized === ENV_ADMIN_USERNAME) {
+            const ok = await bcrypt.compare(
               password,
               ENV_ADMIN_PASSWORD_HASH
             );
 
-            if (isValidEnvPassword) {
+            if (ok) {
               return {
-                id: "env-admin", // Syntetiskt id för bootstrap-admin
-                email: `${ENV_ADMIN_USERNAME}@local.admin`,
-                name: "Bootstrap Admin",
+                id: "env-admin",
+                email: `${ENV_ADMIN_USERNAME}@local`,
+                name: "Admin",
                 role: "admin",
                 status: "active",
               } satisfies AppAuthUser;
@@ -73,9 +60,7 @@ export const authOptions: NextAuthOptions = {
           }
         }
 
-        // 2) Annars: vanlig login mot databasen
-        // Tillåt login med e-post eller nuvarande name-fält
-        // På sikt bör detta ersättas av ett separat username-fält
+        // 👤 2. VANLIG USER (DB)
         const result = await pool.query(
           `
           SELECT id, email, name, password_hash, role, status
@@ -88,86 +73,60 @@ export const authOptions: NextAuthOptions = {
         );
 
         const user = result.rows[0];
+        if (!user) return null;
 
-        if (!user) {
-          return null;
-        }
+        if (user.status !== "active") return null;
 
-        // Blockera inaktiverade användare
-        if ((user.status ?? "active") !== "active") {
-          return null;
-        }
+        const valid = await bcrypt.compare(password, user.password_hash);
+        if (!valid) return null;
 
-        // Kontrollera lösenord mot hash
-        const isValid = await bcrypt.compare(password, user.password_hash);
-
-        if (!isValid) {
-          return null;
-        }
-
-        // Uppdatera senaste inloggning
         await pool.query(
-          `
-          UPDATE app_users
-          SET last_login_at = NOW(), updated_at = NOW()
-          WHERE id = $1
-          `,
+          `UPDATE app_users SET last_login_at = NOW() WHERE id = $1`,
           [user.id]
         );
 
         return {
           id: String(user.id),
           email: String(user.email),
-          name: user.name ? String(user.name) : null,
-          role: (user.role ?? "user") as "user" | "admin",
-          status: (user.status ?? "active") as "active" | "disabled",
+          name: user.name,
+          role: user.role ?? "user",
+          status: user.status ?? "active",
         } satisfies AppAuthUser;
       },
     }),
   ],
 
   callbacks: {
-    // Lägg extra data i JWT
     async jwt({ token, user }) {
       if (user) {
-        const authUser = user as AppAuthUser;
-        token.id = authUser.id;
-        token.role = authUser.role;
-        token.status = authUser.status;
-        token.name = authUser.name;
-        token.email = authUser.email;
+        const u = user as AppAuthUser;
+        token.id = u.id;
+        token.role = u.role;
+        token.status = u.status;
+        token.email = u.email;
+        token.name = u.name;
       }
-
       return token;
     },
 
-    // Exponera samma data i session.user
     async session({ session, token }) {
       if (session.user) {
-        (session.user as { id?: string }).id = String(token.id ?? "");
-        (session.user as { role?: "user" | "admin" }).role =
-          (token.role as "user" | "admin" | undefined) ?? "user";
-        (session.user as { status?: "active" | "disabled" }).status =
-          (token.status as "active" | "disabled" | undefined) ?? "active";
-
-        session.user.name =
-          typeof token.name === "string" ? token.name : null;
-
-        session.user.email =
-          typeof token.email === "string" ? token.email : null;
+        (session.user as any).id = token.id;
+        (session.user as any).role = token.role;
+        (session.user as any).status = token.status;
+        session.user.email = token.email as string;
+        session.user.name = token.name as string | null;
       }
-
       return session;
     },
   },
 
   pages: {
-    signIn: "/", // Startsidan är login-sida
+    signIn: "/", // login ligger på startsidan
   },
 
   secret: process.env.NEXTAUTH_SECRET,
 };
 
 const handler = NextAuth(authOptions);
-
 export { handler as GET, handler as POST };
