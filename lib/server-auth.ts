@@ -1,25 +1,60 @@
 import { getServerSession } from "next-auth";
+
 import { authOptions } from "@/auth";
 
-// 🧠 Hämtar aktuell user från session (server-side)
-export async function getCurrentUser() {
+// Gemensam typ för aktuell inloggad user på servern
+export type CurrentUser = {
+  id: string;
+  role: "user" | "admin";
+  status: "active" | "disabled";
+};
+
+// Hämtar aktuell user från sessionen server-side
+export async function getCurrentUser(): Promise<CurrentUser | null> {
   const session = await getServerSession(authOptions);
 
-  if (!session?.user) return null;
+  if (!session?.user) {
+    return null;
+  }
+
+  const user = session.user as {
+    id?: string;
+    role?: "user" | "admin";
+    status?: "active" | "disabled";
+  };
+
+  if (!user.id) {
+    return null;
+  }
 
   return {
-    id: (session.user as any).id,
-    role: (session.user as any).role,
-    status: (session.user as any).status,
+    id: String(user.id),
+    role: user.role ?? "user",
+    status: user.status ?? "active",
   };
 }
 
-// 🔒 Säker helper för admin-routes
-export async function requireAdmin() {
+// Kräver inloggad och aktiv användare
+export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
 
-  if (!user || user.role !== "admin") {
+  if (!user) {
     throw new Error("Unauthorized");
+  }
+
+  if (user.status !== "active") {
+    throw new Error("Account disabled");
+  }
+
+  return user;
+}
+
+// Kräver admin och aktiv användare
+export async function requireAdmin(): Promise<CurrentUser> {
+  const user = await requireUser();
+
+  if (user.role !== "admin") {
+    throw new Error("Forbidden");
   }
 
   return user;
