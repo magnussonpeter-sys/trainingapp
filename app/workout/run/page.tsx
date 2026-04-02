@@ -42,7 +42,18 @@ type LoggedSet = {
   completed: boolean;
 };
 
-const EXTRA_REP_OPTIONS: ExtraRepsOption[] = [0, 2, 4, 6];
+type TimedSetPhase = "idle" | "running" | "ready_to_save";
+
+const EXTRA_REP_OPTIONS: Array<{
+  value: ExtraRepsOption;
+  label: string;
+  description: string;
+}> = [
+  { value: 0, label: "0", description: "Tungt – ungefär nära max för setet." },
+  { value: 2, label: "2", description: "Lagom – bra arbetsnivå." },
+  { value: 4, label: "4", description: "Lätt – tydlig marginal kvar." },
+  { value: 6, label: "6+", description: "Mycket lätt – klart mer kvar." },
+];
 
 const TIMED_EFFORT_OPTIONS: Array<{
   value: TimedEffortOption;
@@ -241,11 +252,11 @@ export default function WorkoutRunPage() {
   const [showExerciseDescription, setShowExerciseDescription] = useState(false);
 
   // Timer för tidsstyrda övningar.
-  const [exerciseTimerRunning, setExerciseTimerRunning] = useState(false);
   const [exerciseTimerElapsedSeconds, setExerciseTimerElapsedSeconds] =
     useState(0);
   const [exerciseTimerAlarmPlayed, setExerciseTimerAlarmPlayed] =
     useState(false);
+  const [timedSetPhase, setTimedSetPhase] = useState<TimedSetPhase>("idle");
 
   // Vilotimer mellan set.
   const [showRestTimer, setShowRestTimer] = useState(false);
@@ -273,7 +284,6 @@ export default function WorkoutRunPage() {
           authData = null;
         }
 
-        // Nytt auth-format: { user }
         if (
           !authRes.ok ||
           !authData ||
@@ -301,7 +311,6 @@ export default function WorkoutRunPage() {
 
         setWorkout(activeWorkout);
 
-        // Läs tidigare vikt för varje övning.
         const initialWeights: Record<string, string> = {};
         activeWorkout.exercises.forEach((exercise) => {
           const savedWeight = getLastWeightForExercise(userId, exercise.id);
@@ -328,6 +337,7 @@ export default function WorkoutRunPage() {
 
         setExerciseTimerElapsedSeconds(0);
         setExerciseTimerAlarmPlayed(false);
+        setTimedSetPhase("idle");
         lastCountdownSecondRef.current = null;
       } catch (error) {
         console.error("Could not load run page", error);
@@ -343,14 +353,14 @@ export default function WorkoutRunPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!exerciseTimerRunning) return;
+    if (timedSetPhase !== "running") return;
 
     const timeout = window.setTimeout(() => {
       setExerciseTimerElapsedSeconds((prev) => prev + 1);
     }, 1000);
 
     return () => window.clearTimeout(timeout);
-  }, [exerciseTimerRunning, exerciseTimerElapsedSeconds]);
+  }, [timedSetPhase, exerciseTimerElapsedSeconds]);
 
   useEffect(() => {
     if (!showRestTimer || !restTimerRunning || restRemainingSeconds <= 0) {
@@ -408,7 +418,7 @@ export default function WorkoutRunPage() {
       : 0;
 
   useEffect(() => {
-    if (!timedExercise || !exerciseTimerRunning || targetDurationSeconds <= 0) {
+    if (!timedExercise || timedSetPhase !== "running" || targetDurationSeconds <= 0) {
       return;
     }
 
@@ -431,7 +441,7 @@ export default function WorkoutRunPage() {
     }
   }, [
     timedExercise,
-    exerciseTimerRunning,
+    timedSetPhase,
     targetDurationSeconds,
     exerciseTimerElapsedSeconds,
     exerciseTimerAlarmPlayed,
@@ -447,7 +457,9 @@ export default function WorkoutRunPage() {
   }, [exerciseTimerElapsedSeconds, workout, timedExercise]);
 
   const currentExerciseSummary = useMemo(() => {
-    return completedExercises.find((item) => item.exerciseId === exercise.id) ?? null;
+    return (
+      completedExercises.find((item) => item.exerciseId === exercise.id) ?? null
+    );
   }, [completedExercises, exercise.id]);
 
   const completedSetsForCurrentExercise = currentExerciseSummary?.sets.length ?? 0;
@@ -485,6 +497,15 @@ export default function WorkoutRunPage() {
       (isNewExerciseForRating && selectedRating === null)
     : selectedExtraReps === null ||
       (isNewExerciseForRating && selectedRating === null);
+
+  const canSaveTimedSet =
+    timedExercise &&
+    timedSetPhase === "ready_to_save" &&
+    toNullableNumber(setLog.durationSeconds) !== null &&
+    !setLog.completed;
+
+  const canSaveRepSet =
+    !timedExercise && !setLog.completed && !!setLog.reps.trim();
 
   function getPreferredRestSeconds(exerciseId: string, defaultRest: number) {
     if (!userId) return defaultRest;
@@ -542,33 +563,27 @@ export default function WorkoutRunPage() {
     startRestTimer(preferredRest, exercise.id);
   }
 
-  function startExerciseTimer() {
+  function startTimedSet() {
     stopRestTimer();
     lastCountdownSecondRef.current = null;
-
-    if (exerciseTimerElapsedSeconds === 0) {
-      setSetLog((prev) => ({
-        ...prev,
-        durationSeconds: "0",
-      }));
-    }
-
-    setExerciseTimerRunning(true);
+    setExerciseTimerElapsedSeconds(0);
+    setExerciseTimerAlarmPlayed(false);
+    setSetLog((prev) => ({
+      ...prev,
+      durationSeconds: "0",
+      completed: false,
+    }));
+    setTimedSetPhase("running");
   }
 
-  function stopExerciseTimer() {
-    setExerciseTimerRunning(false);
+  function stopTimedSet() {
+    if (timedSetPhase !== "running") return;
 
+    setTimedSetPhase("ready_to_save");
     setSetLog((prev) => ({
       ...prev,
       durationSeconds: String(exerciseTimerElapsedSeconds),
     }));
-
-    // Starta vila direkt efter stop på tidsstyrd övning om fler set återstår.
-    if (!isLastSet) {
-      const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
-      startRestTimer(preferredRest, exercise.id);
-    }
   }
 
   function startNextSet() {
@@ -582,9 +597,9 @@ export default function WorkoutRunPage() {
       completed: false,
     });
 
-    setExerciseTimerRunning(false);
     setExerciseTimerElapsedSeconds(0);
     setExerciseTimerAlarmPlayed(false);
+    setTimedSetPhase("idle");
     lastCountdownSecondRef.current = null;
     stopRestTimer();
     setShowExerciseDescription(false);
@@ -612,9 +627,9 @@ export default function WorkoutRunPage() {
       completed: false,
     });
 
-    setExerciseTimerRunning(false);
     setExerciseTimerElapsedSeconds(0);
     setExerciseTimerAlarmPlayed(false);
+    setTimedSetPhase("idle");
     lastCountdownSecondRef.current = null;
     stopRestTimer();
     setShowExerciseDescription(false);
@@ -626,6 +641,10 @@ export default function WorkoutRunPage() {
     if (setLog.completed) return;
 
     if (!timedExercise && !setLog.reps.trim()) {
+      return;
+    }
+
+    if (timedExercise && timedSetPhase !== "ready_to_save") {
       return;
     }
 
@@ -686,6 +705,23 @@ export default function WorkoutRunPage() {
       completed: true,
     }));
 
+    // Tidsstyrda övningar ska direkt vidare när setet sparas.
+    if (timedExercise) {
+      if (isLastSet) {
+        openFeedbackForCompletedExercise();
+        return;
+      }
+
+      const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
+      if (preferredRest > 0) {
+        startRestTimer(preferredRest, exercise.id);
+      }
+
+      startNextSet();
+      return;
+    }
+
+    // Reps-övningar visar vila men väntar på nästa klick.
     if (!isLastSet) {
       const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
       startRestTimer(preferredRest, exercise.id);
@@ -702,9 +738,10 @@ export default function WorkoutRunPage() {
     setSelectedTimedEffort(summary.timedEffort ?? null);
     setSelectedRating(summary.rating ?? null);
     setShowExerciseFeedback(true);
+    stopRestTimer();
   }
 
-  function continueAfterSavedSet() {
+  function continueAfterSavedRepSet() {
     if (!setLog.completed) return;
 
     if (isLastSet) {
@@ -713,6 +750,17 @@ export default function WorkoutRunPage() {
     }
 
     startNextSet();
+  }
+
+  function skipExercise() {
+    stopRestTimer();
+
+    if (isLastExercise) {
+      void finishWorkout("completed");
+      return;
+    }
+
+    goToNextExercise();
   }
 
   async function completeExerciseFeedback() {
@@ -924,16 +972,18 @@ export default function WorkoutRunPage() {
             <div className="mt-4 flex gap-3">
               <button
                 type="button"
-                onClick={startExerciseTimer}
-                className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 font-semibold text-white"
+                onClick={startTimedSet}
+                disabled={timedSetPhase === "running"}
+                className="flex-1 rounded-2xl bg-green-600 px-4 py-3 font-semibold text-white disabled:opacity-50"
               >
                 Starta
               </button>
 
               <button
                 type="button"
-                onClick={stopExerciseTimer}
-                className="flex-1 rounded-2xl border px-4 py-3 font-semibold text-gray-900"
+                onClick={stopTimedSet}
+                disabled={timedSetPhase !== "running"}
+                className="flex-1 rounded-2xl bg-red-600 px-4 py-3 font-semibold text-white disabled:opacity-50"
               >
                 Stoppa
               </button>
@@ -990,66 +1040,89 @@ export default function WorkoutRunPage() {
           </div>
         ) : null}
 
-        <div className="mt-6 flex gap-3">
-          {!showExerciseFeedback ? (
-            <>
-              <button
-                type="button"
-                onClick={() => router.push("/workout/preview")}
-                className="flex-1 rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900"
-              >
-                Tillbaka
-              </button>
-
-              {!setLog.completed ? (
+        {!showExerciseFeedback ? (
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            {timedExercise ? (
+              <>
                 <button
                   type="button"
                   onClick={completeSet}
-                  className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
+                  disabled={!canSaveTimedSet}
+                  className="rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
                 >
                   Spara set
                 </button>
-              ) : (
+
                 <button
                   type="button"
-                  onClick={continueAfterSavedSet}
-                  className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
+                  onClick={skipExercise}
+                  className="rounded-2xl border border-gray-300 px-4 py-3 text-base font-semibold text-gray-900"
                 >
-                  {isLastSet ? "Avsluta övning" : "Nästa set"}
+                  Hoppa över övning
                 </button>
-              )}
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowExerciseFeedback(false);
-                  setSelectedExtraReps(null);
-                  setSelectedTimedEffort(null);
-                  setSelectedRating(null);
-                }}
-                className="flex-1 rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900"
-              >
-                Tillbaka
-              </button>
+              </>
+            ) : (
+              <>
+                {!setLog.completed ? (
+                  <button
+                    type="button"
+                    onClick={completeSet}
+                    disabled={!canSaveRepSet}
+                    className="rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
+                  >
+                    Spara set
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={continueAfterSavedRepSet}
+                    className="rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
+                  >
+                    {isLastSet ? "Avsluta övning" : "Nästa set"}
+                  </button>
+                )}
 
-              <button
-                type="button"
-                onClick={() => {
-                  void completeExerciseFeedback();
-                }}
-                disabled={disableFeedbackContinue}
-                className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
-              >
-                {isLastExercise ? "Avsluta pass" : "Nästa övning"}
-              </button>
-            </>
-          )}
-        </div>
+                <button
+                  type="button"
+                  onClick={skipExercise}
+                  className="rounded-2xl border border-gray-300 px-4 py-3 text-base font-semibold text-gray-900"
+                >
+                  Hoppa över övning
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="mt-6 flex gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setShowExerciseFeedback(false);
+                setSelectedExtraReps(null);
+                setSelectedTimedEffort(null);
+                setSelectedRating(null);
+              }}
+              className="flex-1 rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900"
+            >
+              Tillbaka
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                void completeExerciseFeedback();
+              }}
+              disabled={disableFeedbackContinue}
+              className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
+            >
+              {isLastExercise ? "Avsluta pass" : "Nästa övning"}
+            </button>
+          </div>
+        )}
       </section>
 
-      {showRestTimer ? (
+      {/* Vilotimern visas inte medan tidsstyrt arbetsset pågår */}
+      {showRestTimer && timedSetPhase !== "running" ? (
         <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-950">Vilotimer</h2>
 
@@ -1159,19 +1232,20 @@ export default function WorkoutRunPage() {
           ) : (
             <div className="mt-4">
               <p className="text-sm font-medium text-gray-900">Extra reps</p>
-              <div className="mt-2 flex flex-wrap gap-2">
+              <div className="mt-2 grid gap-2">
                 {EXTRA_REP_OPTIONS.map((option) => (
                   <button
-                    key={option}
+                    key={option.value}
                     type="button"
-                    onClick={() => setSelectedExtraReps(option)}
-                    className={`rounded-xl border px-3 py-2 text-sm font-semibold ${
-                      selectedExtraReps === option
+                    onClick={() => setSelectedExtraReps(option.value)}
+                    className={`rounded-xl border px-3 py-3 text-left ${
+                      selectedExtraReps === option.value
                         ? "border-blue-600 bg-blue-50 text-blue-700"
                         : "text-gray-900"
                     }`}
                   >
-                    {option === 6 ? "6+" : option}
+                    <div className="font-semibold">{option.label}</div>
+                    <div className="text-sm">{option.description}</div>
                   </button>
                 ))}
               </div>
