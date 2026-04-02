@@ -578,11 +578,11 @@ export default function GymsPage() {
                   <h1 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--app-text-strong)] sm:text-4xl">
                     Hantera gym
                   </h1>
-                  <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--app-text)]">
-                    Lägg till gym och ange vilken utrustning som finns i varje gym.
-                    Dina sparade gym används sedan för att anpassa AI-genererade pass
-                    efter tillgänglig utrustning. :contentReference[oaicite:1]{index=1}
-                  </p>
+<p className="mt-3 max-w-2xl text-base leading-7 text-[var(--app-text)]">
+  Lägg till gym och ange vilken utrustning som finns i varje gym.
+  Dina sparade gym används sedan för att anpassa AI-genererade pass
+  efter tillgänglig utrustning.
+</p>
                 </div>
 
                 <Link
