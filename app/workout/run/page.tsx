@@ -253,11 +253,8 @@ export default function WorkoutRunPage() {
   const [restDurationSeconds, setRestDurationSeconds] = useState(0);
   const [restRemainingSeconds, setRestRemainingSeconds] = useState(0);
 
-  // Hindrar upprepade pip.
+  // Hindrar upprepade countdown-pip.
   const lastCountdownSecondRef = useRef<number | null>(null);
-
-  // Hindrar dubbelstart av vila efter stop.
-  const hasStartedRestAfterStopRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -304,6 +301,7 @@ export default function WorkoutRunPage() {
 
         setWorkout(activeWorkout);
 
+        // Läs tidigare vikt för varje övning.
         const initialWeights: Record<string, string> = {};
         activeWorkout.exercises.forEach((exercise) => {
           const savedWeight = getLastWeightForExercise(userId, exercise.id);
@@ -331,7 +329,6 @@ export default function WorkoutRunPage() {
         setExerciseTimerElapsedSeconds(0);
         setExerciseTimerAlarmPlayed(false);
         lastCountdownSecondRef.current = null;
-        hasStartedRestAfterStopRef.current = false;
       } catch (error) {
         console.error("Could not load run page", error);
         router.replace("/");
@@ -377,7 +374,6 @@ export default function WorkoutRunPage() {
   }, [showRestTimer, restTimerRunning, restRemainingSeconds]);
 
   const userId = authUser ? String(authUser.id) : null;
-
   const exercises = workout?.exercises ?? [];
 
   const safeExercise: Exercise = exercises[currentExerciseIndex] ?? {
@@ -442,8 +438,7 @@ export default function WorkoutRunPage() {
   ]);
 
   useEffect(() => {
-    if (!workout) return;
-    if (!timedExercise) return;
+    if (!workout || !timedExercise) return;
 
     setSetLog((prev) => ({
       ...prev,
@@ -454,6 +449,8 @@ export default function WorkoutRunPage() {
   const currentExerciseSummary = useMemo(() => {
     return completedExercises.find((item) => item.exerciseId === exercise.id) ?? null;
   }, [completedExercises, exercise.id]);
+
+  const completedSetsForCurrentExercise = currentExerciseSummary?.sets.length ?? 0;
 
   const totalSetsCompleted = savedWorkoutLog
     ? savedWorkoutLog.exercises.reduce((sum, item) => sum + item.sets.length, 0)
@@ -471,7 +468,17 @@ export default function WorkoutRunPage() {
           }, 0)
         );
       }, 0)
-    : 0;
+    : completedExercises.reduce((sum, item) => {
+        return (
+          sum +
+          item.sets.reduce((setSum, set) => {
+            if (set.actualWeight == null || set.actualReps == null) {
+              return setSum;
+            }
+            return setSum + set.actualWeight * set.actualReps;
+          }, 0)
+        );
+      }, 0);
 
   const disableFeedbackContinue = timedExercise
     ? selectedTimedEffort === null ||
@@ -479,12 +486,12 @@ export default function WorkoutRunPage() {
     : selectedExtraReps === null ||
       (isNewExerciseForRating && selectedRating === null);
 
-  const getPreferredRestSeconds = (exerciseId: string, defaultRest: number) => {
+  function getPreferredRestSeconds(exerciseId: string, defaultRest: number) {
     if (!userId) return defaultRest;
     return getLastRestForExercise(userId, exerciseId) ?? defaultRest;
-  };
+  }
 
-  const startRestTimer = (seconds: number, exerciseId?: string) => {
+  function startRestTimer(seconds: number, exerciseId?: string) {
     const safeSeconds = Math.max(0, Math.round(seconds));
 
     if (userId && exerciseId) {
@@ -503,21 +510,16 @@ export default function WorkoutRunPage() {
     setRestTimerRunning(true);
     setRestDurationSeconds(safeSeconds);
     setRestRemainingSeconds(safeSeconds);
-  };
+  }
 
-  const stopRestTimer = () => {
+  function stopRestTimer() {
     setShowRestTimer(false);
     setRestTimerRunning(false);
     setRestDurationSeconds(0);
     setRestRemainingSeconds(0);
-  };
+  }
 
-  const dismissRestTimerForActiveSet = () => {
-    // Dölj vilotimern så fort användaren börjar nästa set.
-    stopRestTimer();
-  };
-
-  const adjustRestTimer = (deltaSeconds: number) => {
+  function adjustRestTimer(deltaSeconds: number) {
     const nextDuration = Math.max(5, restDurationSeconds + deltaSeconds);
     const nextRemaining = Math.max(5, restRemainingSeconds + deltaSeconds);
 
@@ -528,21 +530,21 @@ export default function WorkoutRunPage() {
     if (userId) {
       saveLastRestForExercise(userId, exercise.id, nextDuration);
     }
-  };
+  }
 
-  const toggleRestTimer = () => {
+  function toggleRestTimer() {
     if (!showRestTimer) return;
     setRestTimerRunning((prev) => !prev);
-  };
+  }
 
-  const resetRestTimerToPreferred = () => {
+  function resetRestTimerToPreferred() {
     const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
     startRestTimer(preferredRest, exercise.id);
-  };
+  }
 
-  const startExerciseTimer = () => {
-    dismissRestTimerForActiveSet();
-    hasStartedRestAfterStopRef.current = false;
+  function startExerciseTimer() {
+    stopRestTimer();
+    lastCountdownSecondRef.current = null;
 
     if (exerciseTimerElapsedSeconds === 0) {
       setSetLog((prev) => ({
@@ -552,9 +554,9 @@ export default function WorkoutRunPage() {
     }
 
     setExerciseTimerRunning(true);
-  };
+  }
 
-  const stopExerciseTimer = () => {
+  function stopExerciseTimer() {
     setExerciseTimerRunning(false);
 
     setSetLog((prev) => ({
@@ -562,16 +564,14 @@ export default function WorkoutRunPage() {
       durationSeconds: String(exerciseTimerElapsedSeconds),
     }));
 
-    // Starta vila direkt när användaren trycker stop på tidsstyrd övning,
-    // men bara om det inte är sista setet på övningen.
-    if (!isLastSet && !hasStartedRestAfterStopRef.current) {
+    // Starta vila direkt efter stop på tidsstyrd övning om fler set återstår.
+    if (!isLastSet) {
       const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
       startRestTimer(preferredRest, exercise.id);
-      hasStartedRestAfterStopRef.current = true;
     }
-  };
+  }
 
-  const startNextSet = () => {
+  function startNextSet() {
     const nextSetNumber = currentSet + 1;
 
     setCurrentSet(nextSetNumber);
@@ -586,12 +586,11 @@ export default function WorkoutRunPage() {
     setExerciseTimerElapsedSeconds(0);
     setExerciseTimerAlarmPlayed(false);
     lastCountdownSecondRef.current = null;
-    hasStartedRestAfterStopRef.current = false;
-    dismissRestTimerForActiveSet();
+    stopRestTimer();
     setShowExerciseDescription(false);
-  };
+  }
 
-  const goToNextExercise = () => {
+  function goToNextExercise() {
     const nextExerciseIndex = currentExerciseIndex + 1;
 
     if (nextExerciseIndex >= exercises.length) {
@@ -617,12 +616,11 @@ export default function WorkoutRunPage() {
     setExerciseTimerElapsedSeconds(0);
     setExerciseTimerAlarmPlayed(false);
     lastCountdownSecondRef.current = null;
-    hasStartedRestAfterStopRef.current = false;
-    dismissRestTimerForActiveSet();
+    stopRestTimer();
     setShowExerciseDescription(false);
-  };
+  }
 
-  const completeSet = () => {
+  function completeSet() {
     if (!userId) return;
     if (!exercise) return;
     if (setLog.completed) return;
@@ -635,16 +633,9 @@ export default function WorkoutRunPage() {
       return;
     }
 
-    const currentExerciseLog = currentExerciseSummary
-      ? currentExerciseSummary
-      : createEmptyExerciseLog({
-          exerciseId: exercise.id,
-          exerciseName: exercise.name,
-          plannedSets: exercise.sets,
-          plannedReps: exercise.reps ?? null,
-          plannedDuration: exercise.duration ?? null,
-          isNewExercise: isNewExerciseForRating,
-        });
+    const existingLog =
+      completedExercises.find((item) => item.exerciseId === exercise.id) ??
+      createEmptyExerciseLog(exercise, isNewExerciseForRating);
 
     const actualReps = timedExercise ? null : toNullableNumber(setLog.reps);
     const actualDuration = timedExercise
@@ -661,6 +652,7 @@ export default function WorkoutRunPage() {
       actualDuration,
       actualWeight,
       repsLeft: null,
+      timedEffort: null,
       completedAt: new Date().toISOString(),
     };
 
@@ -673,8 +665,8 @@ export default function WorkoutRunPage() {
     }
 
     const updatedExerciseLog: CompletedExercise = {
-      ...currentExerciseLog,
-      sets: [...currentExerciseLog.sets, newSet],
+      ...existingLog,
+      sets: [...existingLog.sets, newSet],
     };
 
     setCompletedExercises((prev) => {
@@ -698,15 +690,9 @@ export default function WorkoutRunPage() {
       const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
       startRestTimer(preferredRest, exercise.id);
     }
+  }
 
-    if (!timedExercise) {
-      setExerciseTimerRunning(false);
-      setExerciseTimerElapsedSeconds(0);
-      setExerciseTimerAlarmPlayed(false);
-    }
-  };
-
-  const openFeedbackForCompletedExercise = () => {
+  function openFeedbackForCompletedExercise() {
     const summary =
       completedExercises.find((item) => item.exerciseId === exercise.id) ?? null;
 
@@ -716,9 +702,9 @@ export default function WorkoutRunPage() {
     setSelectedTimedEffort(summary.timedEffort ?? null);
     setSelectedRating(summary.rating ?? null);
     setShowExerciseFeedback(true);
-  };
+  }
 
-  const continueAfterSavedSet = () => {
+  function continueAfterSavedSet() {
     if (!setLog.completed) return;
 
     if (isLastSet) {
@@ -727,18 +713,29 @@ export default function WorkoutRunPage() {
     }
 
     startNextSet();
-  };
+  }
 
-  const completeExerciseFeedback = async () => {
+  async function completeExerciseFeedback() {
     setCompletedExercises((prev) =>
       prev.map((item) => {
         if (item.exerciseId !== exercise.id) return item;
+
+        const updatedSets = item.sets.map((set, index) => {
+          if (index !== item.sets.length - 1) return set;
+
+          return {
+            ...set,
+            repsLeft: timedExercise ? null : selectedExtraReps,
+            timedEffort: timedExercise ? selectedTimedEffort : null,
+          };
+        });
 
         return {
           ...item,
           extraReps: timedExercise ? null : selectedExtraReps,
           timedEffort: timedExercise ? selectedTimedEffort : null,
           rating: isNewExerciseForRating ? selectedRating : item.rating,
+          sets: updatedSets,
         };
       })
     );
@@ -762,24 +759,20 @@ export default function WorkoutRunPage() {
     }
 
     goToNextExercise();
-  };
+  }
 
-  const finishWorkout = async (status: "completed" | "aborted") => {
+  async function finishWorkout(status: "completed" | "aborted") {
     if (!workout || !userId) return;
-
-    const completedAt = new Date().toISOString();
 
     const workoutLog = createWorkoutLog({
       userId,
-      workoutId: workout.id,
-      workoutName: workout.name,
+      workout,
       startedAt: sessionStartedAt,
-      completedAt,
-      status,
       exercises: completedExercises,
+      status,
     });
 
-    saveWorkoutLog(userId, workoutLog);
+    saveWorkoutLog(workoutLog);
 
     try {
       await saveWorkoutLogToApi(workoutLog);
@@ -789,7 +782,7 @@ export default function WorkoutRunPage() {
 
     setSavedWorkoutLog(workoutLog);
     setWorkoutFinished(true);
-  };
+  }
 
   if (!authChecked) {
     return <div className="p-6">Kontrollerar inloggning...</div>;
@@ -1124,6 +1117,10 @@ export default function WorkoutRunPage() {
         ) : (
           <p className="mt-2 text-sm text-gray-800">Inga set sparade ännu.</p>
         )}
+
+        <p className="mt-3 text-sm text-gray-700">
+          Klara set i denna övning: {completedSetsForCurrentExercise} / {exercise.sets}
+        </p>
       </section>
 
       {showExerciseFeedback ? (
