@@ -1,26 +1,82 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Grundfärger */
+  --background: #f4f7fb;
+  --foreground: #0f172a;
+
+  /* App-ytor */
+  --app-page-bg: #f4f7fb;
+  --app-surface: #ffffff;
+  --app-surface-muted: #f8fafc;
+  --app-input-bg: #ffffff;
+
+  /* Text */
+  --app-text-strong: #0f172a;
+  --app-text: #334155;
+  --app-text-muted: #64748b;
+
+  /* Borders */
+  --app-border: #dbe3ee;
+  --app-border-strong: #cbd5e1;
+
+  /* Accent */
+  --app-accent: #0f766e;
+  --app-accent-strong: #115e59;
+  --app-accent-soft: #ecfdf5;
+  --app-accent-ring: rgba(15, 118, 110, 0.14);
+
+  /* Error/dialog */
+  --app-danger-bg: #fef2f2;
+  --app-danger-border: #fecaca;
+  --app-danger-text: #991b1b;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+
+  /* Använd globalt definierade fonter från layout.tsx */
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
 }
 
 body {
+  margin: 0;
+  min-height: 100vh;
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Gör text i standarddialoger och formulär mörkare och tydligare */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--app-text-strong);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--app-text-muted);
+  opacity: 1;
+}
+
+/* Mörkare text i ev. native dialogrutor */
+dialog {
+  color: var(--app-text-strong);
+}
+
+::selection {
+  background: rgba(15, 118, 110, 0.18);
 }

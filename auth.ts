@@ -40,13 +40,25 @@ export const authOptions: NextAuthOptions = {
       },
 
       async authorize(credentials) {
-          console.log("LOGIN identifier:", identifier);
-console.log("ENV admin username:", ENV_ADMIN_USERNAME);
         const identifier = credentials?.identifier?.trim();
         const password = credentials?.password;
 
+        // Tydliga debug-loggar för felsökning i terminalen
+        console.log("=== AUTH AUTHORIZE START ===");
+        console.log("identifier raw:", credentials?.identifier);
+        console.log("identifier trimmed:", identifier);
+        console.log("identifier normalized:", identifier?.toLowerCase());
+        console.log("ENV_ADMIN_USERNAME:", ENV_ADMIN_USERNAME);
+        console.log("HASH FROM ENV:", ENV_ADMIN_PASSWORD_HASH);
+        console.log(
+          "ENV_ADMIN_PASSWORD_HASH exists:",
+          Boolean(ENV_ADMIN_PASSWORD_HASH)
+        );
+
         // Skydda mot tomma fält
         if (!identifier || !password) {
+          console.log("AUTH FAILED: missing identifier or password");
+          console.log("=== AUTH AUTHORIZE END ===");
           return null;
         }
 
@@ -57,14 +69,21 @@ console.log("ENV admin username:", ENV_ADMIN_USERNAME);
         if (ENV_ADMIN_USERNAME && ENV_ADMIN_PASSWORD_HASH) {
           const isEnvAdminUser = normalizedIdentifier === ENV_ADMIN_USERNAME;
 
+          console.log("Checking env admin...");
+          console.log("isEnvAdminUser:", isEnvAdminUser);
+
           if (isEnvAdminUser) {
             const isValidEnvPassword = await bcrypt.compare(
               password,
               ENV_ADMIN_PASSWORD_HASH
             );
 
+            console.log("isValidEnvPassword:", isValidEnvPassword);
+
             if (isValidEnvPassword) {
-                console.log("ENV admin matched");
+              console.log("AUTH SUCCESS: env admin matched");
+              console.log("=== AUTH AUTHORIZE END ===");
+
               return {
                 id: "env-admin", // Syntetiskt id för bootstrap-admin
                 email: `${ENV_ADMIN_USERNAME}@local.admin`,
@@ -73,12 +92,18 @@ console.log("ENV admin username:", ENV_ADMIN_USERNAME);
                 status: "active",
               } satisfies AppAuthUser;
             }
+
+            console.log("AUTH FAILED: env admin password mismatch");
           }
+        } else {
+          console.log("Env admin not configured");
         }
 
         // 2) Annars: vanlig login mot databasen
         // Tillåt login med e-post eller nuvarande name-fält
         // På sikt bör detta ersättas av ett separat username-fält
+        console.log("Falling through to DB login...");
+
         const result = await pool.query(
           `
           SELECT id, email, name, password_hash, role, status
@@ -92,19 +117,32 @@ console.log("ENV admin username:", ENV_ADMIN_USERNAME);
 
         const user = result.rows[0];
 
+        console.log("DB user found:", Boolean(user));
+
         if (!user) {
+          console.log("AUTH FAILED: no DB user found");
+          console.log("=== AUTH AUTHORIZE END ===");
           return null;
         }
 
+        console.log("DB user status:", user.status ?? "active");
+        console.log("DB user role:", user.role ?? "user");
+
         // Blockera inaktiverade användare
         if ((user.status ?? "active") !== "active") {
+          console.log("AUTH FAILED: DB user is not active");
+          console.log("=== AUTH AUTHORIZE END ===");
           return null;
         }
 
         // Kontrollera lösenord mot hash
         const isValid = await bcrypt.compare(password, user.password_hash);
 
+        console.log("DB password valid:", isValid);
+
         if (!isValid) {
+          console.log("AUTH FAILED: DB password mismatch");
+          console.log("=== AUTH AUTHORIZE END ===");
           return null;
         }
 
@@ -117,6 +155,9 @@ console.log("ENV admin username:", ENV_ADMIN_USERNAME);
           `,
           [user.id]
         );
+
+        console.log("AUTH SUCCESS: DB user matched");
+        console.log("=== AUTH AUTHORIZE END ===");
 
         return {
           id: String(user.id),
@@ -134,6 +175,14 @@ console.log("ENV admin username:", ENV_ADMIN_USERNAME);
     async jwt({ token, user }) {
       if (user) {
         const authUser = user as AppAuthUser;
+
+        console.log("JWT callback user:", {
+          id: authUser.id,
+          email: authUser.email,
+          role: authUser.role,
+          status: authUser.status,
+        });
+
         token.id = authUser.id;
         token.role = authUser.role;
         token.status = authUser.status;
@@ -159,6 +208,13 @@ console.log("ENV admin username:", ENV_ADMIN_USERNAME);
         session.user.email =
           typeof token.email === "string" ? token.email : null;
       }
+
+      console.log("SESSION callback:", {
+        id: token.id,
+        email: token.email,
+        role: token.role,
+        status: token.status,
+      });
 
       return session;
     },
