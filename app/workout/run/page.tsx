@@ -26,7 +26,10 @@ import {
 } from "../../../lib/workout-log-storage";
 import { saveWorkoutLogToApi } from "../../../lib/workout-log-api";
 import type { Workout, Exercise } from "../../../types/workout";
-import type { TimedEffortOption } from "../../../types/exercise-feedback";
+import type {
+  TimedEffortOption,
+  ExerciseFeedbackEntry,
+} from "../../../types/exercise-feedback";
 
 type AuthUser = {
   id: number | string;
@@ -324,8 +327,8 @@ export default function WorkoutRunPage() {
         }
 
         const user = (authData as { user: AuthUser }).user;
-        const userId = String(user.id);
-        const activeWorkout = getActiveWorkout(userId);
+        const nextUserId = String(user.id);
+        const activeWorkout = getActiveWorkout(nextUserId);
 
         if (!isMounted) return;
 
@@ -339,9 +342,10 @@ export default function WorkoutRunPage() {
 
         setWorkout(activeWorkout);
 
+        // Hämta sparade vikter för alla övningar i passet.
         const initialWeights: Record<string, string> = {};
         activeWorkout.exercises.forEach((exerciseItem) => {
-          const savedWeight = getLastWeightForExercise(userId, exerciseItem.id);
+          const savedWeight = getLastWeightForExercise(nextUserId, exerciseItem.id);
           if (savedWeight) {
             initialWeights[exerciseItem.id] = savedWeight;
           }
@@ -351,7 +355,7 @@ export default function WorkoutRunPage() {
 
         const firstExercise = activeWorkout.exercises[0];
         const initialWeight = firstExercise
-          ? getLastWeightForExercise(userId, firstExercise.id)
+          ? getLastWeightForExercise(nextUserId, firstExercise.id)
           : "";
 
         setSetLog({
@@ -446,7 +450,11 @@ export default function WorkoutRunPage() {
       : 0;
 
   useEffect(() => {
-    if (!timedExercise || timedSetPhase !== "running" || targetDurationSeconds <= 0) {
+    if (
+      !timedExercise ||
+      timedSetPhase !== "running" ||
+      targetDurationSeconds <= 0
+    ) {
       return;
     }
 
@@ -591,22 +599,6 @@ export default function WorkoutRunPage() {
     startRestTimer(preferredRest, exercise.id);
   }
 
-  function resetCurrentSetUi(nextExercise: Exercise) {
-    setSetLog({
-      reps: getDefaultRepsValue(nextExercise.reps),
-      durationSeconds: getDefaultDurationValue(nextExercise.duration),
-      weight: lastWeightByExercise[nextExercise.id] ?? "",
-      completed: false,
-    });
-
-    setExerciseTimerElapsedSeconds(0);
-    setExerciseTimerAlarmPlayed(false);
-    setTimedSetPhase("idle");
-    lastCountdownSecondRef.current = null;
-    stopRestTimer();
-    setShowExerciseDescription(false);
-  }
-
   function startTimedSet() {
     stopRestTimer();
     lastCountdownSecondRef.current = null;
@@ -634,7 +626,19 @@ export default function WorkoutRunPage() {
     const nextSetNumber = currentSet + 1;
 
     setCurrentSet(nextSetNumber);
-    resetCurrentSetUi(exercise);
+    setSetLog({
+      reps: getDefaultRepsValue(exercise.reps),
+      durationSeconds: getDefaultDurationValue(exercise.duration),
+      weight: lastWeightByExercise[exercise.id] ?? "",
+      completed: false,
+    });
+
+    setExerciseTimerElapsedSeconds(0);
+    setExerciseTimerAlarmPlayed(false);
+    setTimedSetPhase("idle");
+    lastCountdownSecondRef.current = null;
+    stopRestTimer();
+    setShowExerciseDescription(false);
   }
 
   function goToNextExercise() {
@@ -667,7 +671,7 @@ export default function WorkoutRunPage() {
     setShowExerciseDescription(false);
   }
 
-  function openFeedbackForExerciseSummary(summary: CompletedExercise) {
+  function openFeedbackFromSummary(summary: CompletedExercise) {
     setSelectedExtraReps(summary.extraReps ?? null);
     setSelectedTimedEffort(summary.timedEffort ?? null);
     setSelectedRating(normalizeRating(summary.rating));
@@ -680,7 +684,7 @@ export default function WorkoutRunPage() {
       completedExercises.find((item) => item.exerciseId === exercise.id) ?? null;
 
     if (!summary) return;
-    openFeedbackForExerciseSummary(summary);
+    openFeedbackFromSummary(summary);
   }
 
   function completeSet() {
@@ -753,10 +757,10 @@ export default function WorkoutRunPage() {
       completed: true,
     }));
 
-    // Tidsstyrda övningar ska direkt vidare när setet sparas.
+    // Tidsstyrda övningar går direkt vidare när setet sparas.
     if (timedExercise) {
       if (isLastSet) {
-        openFeedbackForExerciseSummary(updatedExerciseLog);
+        openFeedbackFromSummary(updatedExerciseLog);
         return;
       }
 
@@ -776,7 +780,7 @@ export default function WorkoutRunPage() {
       return;
     }
 
-    openFeedbackForExerciseSummary(updatedExerciseLog);
+    openFeedbackFromSummary(updatedExerciseLog);
   }
 
   function continueAfterSavedRepSet() {
@@ -802,6 +806,8 @@ export default function WorkoutRunPage() {
   }
 
   async function completeExerciseFeedback() {
+    const ratingToSave = isNewExerciseForRating ? selectedRating : null;
+
     setCompletedExercises((prev) =>
       prev.map((item) => {
         if (item.exerciseId !== exercise.id) return item;
@@ -820,18 +826,22 @@ export default function WorkoutRunPage() {
           ...item,
           extraReps: timedExercise ? null : selectedExtraReps,
           timedEffort: timedExercise ? selectedTimedEffort : null,
-          rating: isNewExerciseForRating ? selectedRating : item.rating,
+          rating: ratingToSave ?? item.rating,
           sets: updatedSets,
         };
       })
     );
 
     if (userId) {
-      saveExerciseFeedbackEntry(userId, exercise.id, {
+      const entry: ExerciseFeedbackEntry = {
+        exerciseId: exercise.id,
         extraReps: timedExercise ? null : selectedExtraReps,
         timedEffort: timedExercise ? selectedTimedEffort : null,
-        rating: isNewExerciseForRating ? selectedRating : null,
-      });
+        rating: ratingToSave,
+      };
+
+      // Repo-versionen tar två argument: userId och entry-objekt.
+      saveExerciseFeedbackEntry(userId, entry);
     }
 
     setShowExerciseFeedback(false);
