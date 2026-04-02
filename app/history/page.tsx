@@ -2,14 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getWorkoutLogs, type WorkoutLog } from "@/lib/workout-log-storage";
+import {
+  getWorkoutLogs,
+  type WorkoutLog,
+} from "@/lib/workout-log-storage";
 import { saveActiveWorkout } from "@/lib/workout-storage";
 import type { Workout } from "@/types/workout";
 
 type AuthUser = {
-  id: number;
+  id: number | string;
   email: string | null;
-  username: string | null;
+  username?: string | null;
+  name?: string | null;
 };
 
 type DataSource = "api" | "local";
@@ -100,31 +104,48 @@ export default function HistoryPage() {
 
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-
   const [workouts, setWorkouts] = useState<WorkoutLog[]>([]);
   const [dataSource, setDataSource] = useState<DataSource>("api");
   const [loadError, setLoadError] = useState<string | null>(null);
-
   const [showClearAllConfirm, setShowClearAllConfirm] = useState(false);
   const [deletingWorkoutId, setDeletingWorkoutId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
+
     async function loadHistory() {
       try {
         setLoadError(null);
 
-        // Hämta inloggad användare från samma auth-källa som /run använder.
-        const authRes = await fetch("/api/auth/me", { cache: "no-store" });
-        const authData = await authRes.json();
+        // Hämta inloggad användare från nya auth-formatet: { user }.
+        const authRes = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "include",
+        });
 
-        if (!authRes.ok || !authData?.ok || !authData.user) {
+        let authData: unknown = null;
+        try {
+          authData = await authRes.json();
+        } catch {
+          authData = null;
+        }
+
+        if (
+          !authRes.ok ||
+          !authData ||
+          typeof authData !== "object" ||
+          !("user" in authData) ||
+          !(authData as { user?: unknown }).user
+        ) {
           router.replace("/");
           return;
         }
 
-        const user = authData.user as AuthUser;
+        const user = (authData as { user: AuthUser }).user;
         const userId = String(user.id);
+
+        if (!isMounted) return;
 
         setAuthUser(user);
         setAuthChecked(true);
@@ -133,7 +154,10 @@ export default function HistoryPage() {
         try {
           const logsRes = await fetch(
             `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=50`,
-            { cache: "no-store" }
+            {
+              cache: "no-store",
+              credentials: "include",
+            }
           );
 
           const logsData = await logsRes.json();
@@ -141,6 +165,8 @@ export default function HistoryPage() {
           if (!logsRes.ok || !logsData?.ok || !Array.isArray(logsData.logs)) {
             throw new Error(logsData?.error || "Kunde inte hämta träningshistorik");
           }
+
+          if (!isMounted) return;
 
           setWorkouts(logsData.logs as WorkoutLog[]);
           setDataSource("api");
@@ -150,17 +176,30 @@ export default function HistoryPage() {
 
           // Om API-hämtningen fallerar visar vi lokal fallback.
           const localLogs = getWorkoutLogs(userId);
+
+          if (!isMounted) return;
+
           setWorkouts(localLogs);
           setDataSource("local");
-          setLoadError("Kunde inte hämta historik från databasen. Visar lokal historik.");
+          setLoadError(
+            "Kunde inte hämta historik från databasen. Visar lokal historik."
+          );
         }
       } catch (error) {
         console.error("Failed to load history page", error);
         router.replace("/");
+      } finally {
+        if (isMounted) {
+          setAuthChecked(true);
+        }
       }
     }
 
     void loadHistory();
+
+    return () => {
+      isMounted = false;
+    };
   }, [router]);
 
   const repeatWorkout = (workoutLog: WorkoutLog) => {
@@ -192,9 +231,12 @@ export default function HistoryPage() {
       if (dataSource === "api") {
         // Radera passet i databasen.
         const response = await fetch(
-          `/api/workout-logs/${encodeURIComponent(workoutId)}?userId=${encodeURIComponent(userId)}`,
+          `/api/workout-logs/${encodeURIComponent(
+            workoutId
+          )}?userId=${encodeURIComponent(userId)}`,
           {
             method: "DELETE",
+            credentials: "include",
           }
         );
 
@@ -234,6 +276,7 @@ export default function HistoryPage() {
           `/api/workout-logs?userId=${encodeURIComponent(userId)}`,
           {
             method: "DELETE",
+            credentials: "include",
           }
         );
 
@@ -246,7 +289,6 @@ export default function HistoryPage() {
 
       // Rensa alltid lokal fallback också så att ingen gammal data blir kvar.
       clearAllWorkoutLogsFromStorage(userId);
-
       setWorkouts([]);
       setShowClearAllConfirm(false);
       setDeletingWorkoutId(null);
@@ -259,254 +301,245 @@ export default function HistoryPage() {
   };
 
   if (!authChecked) {
-    return (
-      <main className="min-h-screen bg-gray-50 p-4">
-        <div className="mx-auto max-w-md rounded-2xl border bg-white p-4 shadow-sm">
-          <p className="text-sm text-gray-700">Laddar historik...</p>
-        </div>
-      </main>
-    );
+    return <div className="p-6">Laddar historik...</div>;
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col p-4 pb-32">
-        <header className="mb-4">
-          <p className="text-sm text-gray-500">Historik</p>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-950">
-            Tidigare pass
-          </h1>
+    <main className="mx-auto max-w-4xl p-4 sm:p-6">
+      <button
+        type="button"
+        onClick={() => router.push("/home")}
+        className="text-sm font-semibold text-blue-600"
+      >
+        ← Historik
+      </button>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            <span
-              className={`rounded-full px-3 py-1 text-xs font-medium ${
-                dataSource === "api"
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-amber-100 text-amber-800"
-              }`}
-            >
-              {dataSource === "api" ? "Visar databasdata" : "Visar lokal fallback"}
-            </span>
-          </div>
+      <h1 className="mt-4 text-3xl font-bold text-gray-950">Tidigare pass</h1>
 
-          {loadError ? (
-            <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {loadError}
-            </p>
-          ) : null}
-        </header>
+      <p className="mt-2 text-sm text-gray-800">
+        {dataSource === "api" ? "Visar databasdata" : "Visar lokal fallback"}
+      </p>
 
-        {workouts.length === 0 ? (
-          <section className="rounded-2xl border bg-white p-5 shadow-sm">
-            <h2 className="text-base font-semibold text-gray-900">
-              Ingen träningshistorik ännu
-            </h2>
-            <p className="mt-2 text-sm text-gray-600">
-              När du har genomfört ett pass kommer det att visas här.
-            </p>
-
-            <button
-              onClick={() => router.push("/home")}
-              className="mt-4 w-full rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
-            >
-              Till startsidan
-            </button>
-          </section>
-        ) : (
-          <>
-            <section className="mb-4 rounded-2xl border bg-white p-4 shadow-sm">
-              <h2 className="text-base font-semibold text-gray-900">
-                Hantera träningsdata
-              </h2>
-              <p className="mt-2 text-sm text-gray-600">
-                Du kan radera enskilda pass eller ta bort all träningsdata.
-              </p>
-
-              <button
-                type="button"
-                onClick={() => setShowClearAllConfirm(true)}
-                disabled={isDeleting}
-                className="mt-4 w-full rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-base font-semibold text-red-700 disabled:opacity-50"
-              >
-                Ta bort all träningsdata
-              </button>
-            </section>
-
-            <section className="space-y-3">
-              {workouts.map((workout) => {
-                const isDeleteOpen = deletingWorkoutId === workout.id;
-                const totalSets = getTotalSets(workout);
-                const totalVolume = getWorkoutVolume(workout);
-
-                return (
-                  <div
-                    key={workout.id}
-                    className="rounded-2xl border bg-white p-4 shadow-sm"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => openDetails(workout.id)}
-                      className="w-full text-left"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs text-gray-500">
-                            {formatDateTime(workout.completedAt)}
-                          </p>
-                          <h2 className="mt-1 text-lg font-semibold text-gray-950">
-                            {workout.workoutName}
-                          </h2>
-                        </div>
-
-                        <span className="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700">
-                          {workout.status === "completed" ? "Genomfört" : "Avbrutet"}
-                        </span>
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <div className="text-gray-500">Tid</div>
-                          <div className="mt-1 font-semibold text-gray-900">
-                            {formatDuration(workout.durationSeconds)}
-                          </div>
-                        </div>
-
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <div className="text-gray-500">Övningar</div>
-                          <div className="mt-1 font-semibold text-gray-900">
-                            {workout.exercises.length}
-                          </div>
-                        </div>
-
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <div className="text-gray-500">Set</div>
-                          <div className="mt-1 font-semibold text-gray-900">
-                            {totalSets}
-                          </div>
-                        </div>
-
-                        <div className="rounded-xl bg-gray-50 p-3">
-                          <div className="text-gray-500">Volym</div>
-                          <div className="mt-1 font-semibold text-gray-900">
-                            {Math.round(totalVolume)} kg
-                          </div>
-                        </div>
-                      </div>
-
-                      <p className="mt-3 text-sm text-blue-600">Visa detaljer</p>
-                    </button>
-
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => repeatWorkout(workout)}
-                        className="rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
-                      >
-                        Kör igen
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDeletingWorkoutId((prev) =>
-                            prev === workout.id ? null : workout.id
-                          )
-                        }
-                        disabled={isDeleting}
-                        className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-base font-semibold text-red-700 disabled:opacity-50"
-                      >
-                        Radera
-                      </button>
-                    </div>
-
-                    {isDeleteOpen ? (
-                      <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 p-4">
-                        <p className="text-sm font-semibold text-red-800">
-                          Radera detta pass?
-                        </p>
-                        <p className="mt-1 text-sm text-red-700">
-                          Det här passet tas bort från historiken och kan inte
-                          återskapas.
-                        </p>
-
-                        <div className="mt-3 grid grid-cols-2 gap-3">
-                          <button
-                            type="button"
-                            onClick={() => setDeletingWorkoutId(null)}
-                            disabled={isDeleting}
-                            className="rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-gray-900 disabled:opacity-50"
-                          >
-                            Avbryt
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void deleteWorkout(workout.id);
-                            }}
-                            disabled={isDeleting}
-                            className="rounded-2xl bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
-                          >
-                            {isDeleting ? "Raderar..." : "Ja, radera"}
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </section>
-          </>
-        )}
-      </div>
-
-      {showClearAllConfirm ? (
-        <div className="fixed inset-0 z-40 flex items-end bg-black/40 p-4 sm:items-center sm:justify-center">
-          <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-xl">
-            <h2 className="text-lg font-semibold text-gray-950">
-              Ta bort all träningsdata?
-            </h2>
-            <p className="mt-2 text-sm text-gray-600">
-              Är du helt säker? All träningshistorik kommer att raderas och kan
-              inte återskapas.
-            </p>
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setShowClearAllConfirm(false)}
-                disabled={isDeleting}
-                className="rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900 disabled:opacity-50"
-              >
-                Avbryt
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  void clearAllWorkoutData();
-                }}
-                disabled={isDeleting}
-                className="rounded-2xl bg-red-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
-              >
-                {isDeleting ? "Raderar..." : "Ja, radera allt"}
-              </button>
-            </div>
-          </div>
+      {loadError ? (
+        <div className="mt-4 rounded-2xl bg-yellow-50 p-4 text-sm text-yellow-800">
+          {loadError}
         </div>
       ) : null}
 
-      <div className="fixed inset-x-0 bottom-0 border-t bg-white/95 backdrop-blur">
-        <div className="mx-auto w-full max-w-md p-4">
-            {/* Enkel avslutsknapp som går tillbaka till startsidan */}
-                <button
-                    onClick={() => router.push("/home")}
-                    className="w-full rounded-2xl bg-blue-600 px-4 py-4 text-base font-semibold text-white"
+      {workouts.length === 0 ? (
+        <section className="mt-6 rounded-3xl border bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-gray-950">
+            Ingen träningshistorik ännu
+          </h2>
+          <p className="mt-2 text-sm text-gray-800">
+            När du har genomfört ett pass kommer det att visas här.
+          </p>
+          <button
+            type="button"
+            onClick={() => router.push("/home")}
+            className="mt-4 w-full rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
+          >
+            Till startsidan
+          </button>
+        </section>
+      ) : (
+        <>
+          <section className="mt-6 rounded-3xl border bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-gray-950">
+              Hantera träningsdata
+            </h2>
+            <p className="mt-2 text-sm text-gray-800">
+              Du kan radera enskilda pass eller ta bort all träningsdata.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setShowClearAllConfirm(true)}
+              disabled={isDeleting}
+              className="mt-4 w-full rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-base font-semibold text-red-700 disabled:opacity-50"
+            >
+              Ta bort all träningsdata
+            </button>
+          </section>
+
+          <div className="mt-4 space-y-4">
+            {workouts.map((workout) => {
+              const isDeleteOpen = deletingWorkoutId === workout.id;
+              const totalSets = getTotalSets(workout);
+              const totalVolume = getWorkoutVolume(workout);
+
+              return (
+                <section
+                  key={workout.id}
+                  className="rounded-3xl border bg-white p-5 shadow-sm"
                 >
-                    Avsluta
-                </button>
-        </div>
-      </div>
+                  <button
+                    type="button"
+                    onClick={() => openDetails(workout.id)}
+                    className="w-full text-left"
+                  >
+                    <p className="text-sm text-gray-700">
+                      {formatDateTime(workout.completedAt)}
+                    </p>
+                    <h2 className="mt-1 text-2xl font-bold text-gray-950">
+                      {workout.workoutName}
+                    </h2>
+                    <p className="mt-1 text-sm text-gray-800">
+                      {workout.status === "completed" ? "Genomfört" : "Avbrutet"}
+                    </p>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <div className="rounded-2xl bg-gray-50 p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-700">
+                          Tid
+                        </p>
+                        <p className="mt-1 font-semibold text-gray-950">
+                          {formatDuration(workout.durationSeconds)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl bg-gray-50 p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-700">
+                          Övningar
+                        </p>
+                        <p className="mt-1 font-semibold text-gray-950">
+                          {workout.exercises.length}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl bg-gray-50 p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-700">
+                          Set
+                        </p>
+                        <p className="mt-1 font-semibold text-gray-950">
+                          {totalSets}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl bg-gray-50 p-3">
+                        <p className="text-xs uppercase tracking-wide text-gray-700">
+                          Volym
+                        </p>
+                        <p className="mt-1 font-semibold text-gray-950">
+                          {Math.round(totalVolume)} kg
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={() => openDetails(workout.id)}
+                      className="rounded-2xl border border-gray-200 px-4 py-3 text-base font-semibold text-gray-900"
+                    >
+                      Visa detaljer
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => repeatWorkout(workout)}
+                      className="rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
+                    >
+                      Kör igen
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDeletingWorkoutId((prev) =>
+                          prev === workout.id ? null : workout.id
+                        )
+                      }
+                      disabled={isDeleting}
+                      className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-base font-semibold text-red-700 disabled:opacity-50"
+                    >
+                      Radera
+                    </button>
+                  </div>
+
+                  {isDeleteOpen ? (
+                    <div className="mt-4 rounded-2xl bg-red-50 p-4">
+                      <h3 className="text-lg font-semibold text-red-900">
+                        Radera detta pass?
+                      </h3>
+                      <p className="mt-2 text-sm text-red-800">
+                        Det här passet tas bort från historiken och kan inte
+                        återskapas.
+                      </p>
+
+                      <div className="mt-4 flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setDeletingWorkoutId(null)}
+                          disabled={isDeleting}
+                          className="rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-gray-900 disabled:opacity-50"
+                        >
+                          Avbryt
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void deleteWorkout(workout.id);
+                          }}
+                          disabled={isDeleting}
+                          className="rounded-2xl bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+                        >
+                          {isDeleting ? "Raderar..." : "Ja, radera"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {showClearAllConfirm ? (
+        <section className="mt-6 rounded-3xl border border-red-200 bg-red-50 p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-red-900">
+            Ta bort all träningsdata?
+          </h2>
+          <p className="mt-2 text-sm text-red-800">
+            Är du helt säker? All träningshistorik kommer att raderas och kan
+            inte återskapas.
+          </p>
+
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => setShowClearAllConfirm(false)}
+              disabled={isDeleting}
+              className="rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900 disabled:opacity-50"
+            >
+              Avbryt
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                void clearAllWorkoutData();
+              }}
+              disabled={isDeleting}
+              className="rounded-2xl bg-red-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
+            >
+              {isDeleting ? "Raderar..." : "Ja, radera allt"}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {/* Enkel avslutsknapp som går tillbaka till startsidan */}
+      <button
+        type="button"
+        onClick={() => router.push("/home")}
+        className="mt-6 w-full rounded-2xl bg-blue-600 px-4 py-4 text-base font-semibold text-white"
+      >
+        Avsluta
+      </button>
     </main>
   );
 }
