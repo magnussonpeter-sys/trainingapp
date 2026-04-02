@@ -281,15 +281,13 @@ export default function WorkoutPreviewPage() {
           authData = null;
         }
 
-        const authUserFromApi =
-          authRes.ok &&
-          typeof authData === "object" &&
-          authData !== null &&
-          "ok" in authData &&
-          (authData as { ok?: unknown }).ok &&
-          "user" in authData
-            ? ((authData as { user?: AuthUser }).user ?? null)
-            : null;
+const authUserFromApi =
+  authRes.ok &&
+  typeof authData === "object" &&
+  authData !== null &&
+  "user" in authData
+    ? ((authData as { user?: AuthUser }).user ?? null)
+    : null;
 
         const resolvedUserId =
           authUserFromApi?.id != null

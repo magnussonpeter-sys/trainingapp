@@ -1,5 +1,3 @@
-// app/workout/custom/page.tsx
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -13,9 +11,10 @@ import {
 import type { Exercise, Workout } from "@/types/workout";
 
 type AuthUser = {
-  id: number;
+  id: number | string;
   email: string | null;
-  username: string | null;
+  username?: string | null;
+  name?: string | null;
 };
 
 type AddMode = "catalog" | "custom";
@@ -71,6 +70,8 @@ export default function CustomWorkoutPage() {
   const [newDescription, setNewDescription] = useState("");
 
   useEffect(() => {
+    let isMounted = true;
+
     async function load() {
       try {
         const authRes = await fetch("/api/auth/me", {
@@ -78,14 +79,27 @@ export default function CustomWorkoutPage() {
           credentials: "include",
         });
 
-        const authData = await authRes.json();
+        let authData: unknown = null;
+        try {
+          authData = await authRes.json();
+        } catch {
+          authData = null;
+        }
 
-        if (!authRes.ok || !authData?.ok || !authData.user) {
+        if (
+          !authRes.ok ||
+          !authData ||
+          typeof authData !== "object" ||
+          !("user" in authData) ||
+          !(authData as { user?: unknown }).user
+        ) {
           router.replace("/");
           return;
         }
 
-        setAuthUser(authData.user as AuthUser);
+        if (!isMounted) return;
+
+        setAuthUser((authData as { user: AuthUser }).user);
         setAuthChecked(true);
       } catch {
         router.replace("/");
@@ -93,6 +107,10 @@ export default function CustomWorkoutPage() {
     }
 
     void load();
+
+    return () => {
+      isMounted = false;
+    };
   }, [router]);
 
   const filteredCatalog = useMemo(() => {
@@ -165,7 +183,9 @@ export default function CustomWorkoutPage() {
   }
 
   function removeExercise(exerciseId: string) {
-    setExercises((prev) => prev.filter((exercise) => exercise.id !== exerciseId));
+    setExercises((prev) =>
+      prev.filter((exercise) => exercise.id !== exerciseId)
+    );
   }
 
   function startWorkout() {
@@ -195,253 +215,234 @@ export default function CustomWorkoutPage() {
   }
 
   if (!authChecked) {
-    return (
-      <main className="min-h-screen bg-gray-50 p-4">
-        <div className="mx-auto max-w-md rounded-2xl border bg-white p-4 shadow-sm">
-          Laddar...
-        </div>
-      </main>
-    );
+    return <div className="p-6">Laddar...</div>;
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 pb-28">
-      <div className="mx-auto w-full max-w-md px-4 py-6">
-        <section className="rounded-3xl border bg-white p-5 shadow-sm">
-          <p className="text-sm text-gray-500">Manuellt pass</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-950">
-            Eget pass
-          </h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Välj helst från övningsbiblioteket för bättre AI-historik. Egen
-            fritextövning finns kvar som reserv.
-          </p>
-        </section>
-
-        <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setAddMode("catalog")}
-              className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold ${
-                addMode === "catalog"
-                  ? "bg-gray-900 text-white"
-                  : "border text-gray-900"
-              }`}
-            >
-              Välj från bibliotek
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setAddMode("custom")}
-              className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold ${
-                addMode === "custom"
-                  ? "bg-gray-900 text-white"
-                  : "border text-gray-900"
-              }`}
-            >
-              Skapa egen övning
-            </button>
-          </div>
-
-          {addMode === "catalog" ? (
-            <div className="mt-4">
-              <input
-                value={catalogSearch}
-                onChange={(e) => setCatalogSearch(e.target.value)}
-                placeholder="Sök övning, muskel eller utrustning"
-                className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-              />
-
-              <div className="mt-3 max-h-[420px] space-y-3 overflow-y-auto pr-1">
-                {filteredCatalog.map((exercise) => {
-                  const isTimed =
-                    typeof exercise.defaultDuration === "number" &&
-                    exercise.defaultDuration > 0 &&
-                    typeof exercise.defaultReps !== "number";
-
-                  return (
-                    <button
-                      key={exercise.id}
-                      type="button"
-                      onClick={() => addCatalogExercise(exercise)}
-                      className="w-full rounded-2xl border p-4 text-left transition hover:bg-gray-50"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <h3 className="text-base font-semibold text-gray-950">
-                            {exercise.name}
-                          </h3>
-                          <p className="mt-1 text-sm text-gray-600">
-                            {exercise.defaultSets} set ·{" "}
-                            {isTimed
-                              ? `${exercise.defaultDuration} sek`
-                              : `${exercise.defaultReps ?? 10} reps`}{" "}
-                            · Vila {exercise.defaultRest} sek
-                          </p>
-                        </div>
-
-                        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">
-                          {exercise.movementPattern}
-                        </span>
-                      </div>
-
-                      <p className="mt-2 text-sm text-gray-500">
-                        {exercise.description}
-                      </p>
-                    </button>
-                  );
-                })}
-
-                {filteredCatalog.length === 0 ? (
-                  <p className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-500">
-                    Ingen övning matchade sökningen.
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            <div className="mt-4 space-y-3">
-              <input
-                value={newExerciseName}
-                onChange={(e) => setNewExerciseName(e.target.value)}
-                placeholder="Namn på egen övning"
-                className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-              />
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-sm text-gray-600">Set</label>
-                  <input
-                    value={newSets}
-                    onChange={(e) => setNewSets(e.target.value)}
-                    inputMode="numeric"
-                    className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm text-gray-600">Vila</label>
-                  <input
-                    value={newRest}
-                    onChange={(e) => setNewRest(e.target.value)}
-                    inputMode="numeric"
-                    className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm text-gray-600">Reps</label>
-                  <input
-                    value={newReps}
-                    onChange={(e) => setNewReps(e.target.value)}
-                    inputMode="numeric"
-                    className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm text-gray-600">
-                    Tid (sek)
-                  </label>
-                  <input
-                    value={newDuration}
-                    onChange={(e) => setNewDuration(e.target.value)}
-                    inputMode="numeric"
-                    placeholder="Lämna tomt för reps"
-                    className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-                  />
-                </div>
-              </div>
-
-              <textarea
-                value={newDescription}
-                onChange={(e) => setNewDescription(e.target.value)}
-                placeholder="Kort beskrivning"
-                rows={3}
-                className="w-full rounded-xl border px-3 py-3 text-base outline-none"
-              />
-
-              <button
-                type="button"
-                onClick={addCustomExercise}
-                className="w-full rounded-2xl bg-gray-900 px-4 py-3 text-base font-semibold text-white"
-              >
-                Lägg till egen övning
-              </button>
-            </div>
-          )}
-
-          {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
-        </section>
-
-        <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-950">Övningar i passet</h2>
-
-          {exercises.length === 0 ? (
-            <p className="mt-3 rounded-2xl bg-gray-50 p-3 text-sm text-gray-500">
-              Inga övningar tillagda ännu.
-            </p>
-          ) : (
-            <div className="mt-4 space-y-3">
-              {exercises.map((exercise, index) => (
-                <div key={`${exercise.id}-${index}`} className="rounded-2xl border p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                        Övning {index + 1}
-                      </p>
-                      <h3 className="text-lg font-semibold text-gray-950">
-                        {exercise.name}
-                      </h3>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => removeExercise(exercise.id)}
-                      className="rounded-xl border px-3 py-2 text-sm font-medium text-red-600"
-                    >
-                      Ta bort
-                    </button>
-                  </div>
-
-                  <p className="mt-2 text-sm text-gray-700">
-                    {exercise.sets} set ·{" "}
-                    {typeof exercise.duration === "number" && exercise.duration > 0
-                      ? `${exercise.duration} sek`
-                      : `${exercise.reps} reps`}{" "}
-                    · Vila {exercise.rest} sek
-                  </p>
-
-                  {exercise.description ? (
-                    <p className="mt-2 text-sm text-gray-500">
-                      {exercise.description}
-                    </p>
-                  ) : null}
-
-                  {exercise.id.startsWith("custom_") ? (
-                    <p className="mt-2 text-xs text-amber-700">
-                      Egen övning · används inte lika starkt i AI-analysen som
-                      katalogövningar.
-                    </p>
-                  ) : (
-                    <p className="mt-2 text-xs text-emerald-700">
-                      Katalogövning · ger bättre historik för AI.
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+    <main className="mx-auto max-w-5xl p-4 sm:p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <Link href="/home" className="text-sm font-semibold text-blue-600">
+          ← Manuellt pass
+        </Link>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 border-t bg-white/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-md gap-3 p-4">
+      <h1 className="text-3xl font-bold text-gray-950">Eget pass</h1>
+      <p className="mt-2 text-sm text-gray-800">
+        Välj helst från övningsbiblioteket för bättre AI-historik. Egen
+        fritextövning finns kvar som reserv.
+      </p>
+
+      <section className="mt-6 rounded-3xl border bg-white p-5 shadow-sm">
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => setAddMode("catalog")}
+            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold ${
+              addMode === "catalog"
+                ? "bg-gray-900 text-white"
+                : "border text-gray-900"
+            }`}
+          >
+            Välj från bibliotek
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setAddMode("custom")}
+            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold ${
+              addMode === "custom"
+                ? "bg-gray-900 text-white"
+                : "border text-gray-900"
+            }`}
+          >
+            Skapa egen övning
+          </button>
+        </div>
+
+        {addMode === "catalog" ? (
+          <div className="mt-4">
+            <input
+              value={catalogSearch}
+              onChange={(e) => setCatalogSearch(e.target.value)}
+              placeholder="Sök övning, muskel eller utrustning"
+              className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+            />
+
+            <div className="mt-4 grid gap-3">
+              {filteredCatalog.map((exercise) => {
+                const isTimed =
+                  typeof exercise.defaultDuration === "number" &&
+                  exercise.defaultDuration > 0 &&
+                  typeof exercise.defaultReps !== "number";
+
+                return (
+                  <button
+                    key={exercise.id}
+                    type="button"
+                    onClick={() => addCatalogExercise(exercise)}
+                    className="w-full rounded-2xl border p-4 text-left transition hover:bg-gray-50"
+                  >
+                    <h3 className="font-semibold text-gray-950">
+                      {exercise.name}
+                    </h3>
+                    <p className="mt-1 text-sm text-gray-800">
+                      {exercise.defaultSets} set ·{" "}
+                      {isTimed
+                        ? `${exercise.defaultDuration} sek`
+                        : `${exercise.defaultReps ?? 10} reps`}{" "}
+                      · Vila {exercise.defaultRest} sek
+                    </p>
+                    <p className="mt-1 text-xs uppercase tracking-wide text-gray-700">
+                      {exercise.movementPattern}
+                    </p>
+                    <p className="mt-2 text-sm text-gray-800">
+                      {exercise.description}
+                    </p>
+                  </button>
+                );
+              })}
+
+              {filteredCatalog.length === 0 ? (
+                <p className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
+                  Ingen övning matchade sökningen.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-3">
+            <input
+              value={newExerciseName}
+              onChange={(e) => setNewExerciseName(e.target.value)}
+              placeholder="Namn på egen övning"
+              className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+            />
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-900">
+                  Set
+                </label>
+                <input
+                  value={newSets}
+                  onChange={(e) => setNewSets(e.target.value)}
+                  inputMode="numeric"
+                  className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-900">
+                  Vila
+                </label>
+                <input
+                  value={newRest}
+                  onChange={(e) => setNewRest(e.target.value)}
+                  inputMode="numeric"
+                  className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-900">
+                  Reps
+                </label>
+                <input
+                  value={newReps}
+                  onChange={(e) => setNewReps(e.target.value)}
+                  inputMode="numeric"
+                  className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-900">
+                  Tid (sek)
+                </label>
+                <input
+                  value={newDuration}
+                  onChange={(e) => setNewDuration(e.target.value)}
+                  inputMode="numeric"
+                  placeholder="Lämna tomt för reps"
+                  className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+                />
+              </div>
+            </div>
+
+            <textarea
+              value={newDescription}
+              onChange={(e) => setNewDescription(e.target.value)}
+              placeholder="Kort beskrivning"
+              rows={3}
+              className="w-full rounded-xl border px-3 py-3 text-base outline-none"
+            />
+
+            <button
+              type="button"
+              onClick={addCustomExercise}
+              className="w-full rounded-2xl bg-gray-900 px-4 py-3 text-base font-semibold text-white"
+            >
+              Lägg till egen övning
+            </button>
+          </div>
+        )}
+
+        {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
+      </section>
+
+      <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
+        <h2 className="text-lg font-semibold text-gray-950">
+          Övningar i passet
+        </h2>
+
+        {exercises.length === 0 ? (
+          <p className="mt-3 rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
+            Inga övningar tillagda ännu.
+          </p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {exercises.map((exercise) => (
+              <div
+                key={exercise.id}
+                className="rounded-2xl border border-gray-200 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold text-gray-950">
+                      {exercise.name}
+                    </h3>
+                    <p className="mt-1 text-sm text-gray-800">
+                      {exercise.sets} set ·{" "}
+                      {typeof exercise.duration === "number" &&
+                      exercise.duration > 0
+                        ? `${exercise.duration} sek`
+                        : `${exercise.reps ?? 10} reps`}{" "}
+                      · Vila {exercise.rest} sek
+                    </p>
+                    {exercise.description ? (
+                      <p className="mt-2 text-sm text-gray-800">
+                        {exercise.description}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => removeExercise(exercise.id)}
+                    className="rounded-xl border px-3 py-2 text-sm font-medium text-gray-900"
+                  >
+                    Ta bort
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-6 flex gap-3">
           <Link
             href="/home"
-            className="flex-1 rounded-2xl border px-4 py-3 text-center text-base font-semibold"
+            className="rounded-2xl border border-gray-200 px-5 py-3 font-semibold text-gray-900"
           >
             Tillbaka
           </Link>
@@ -449,13 +450,12 @@ export default function CustomWorkoutPage() {
           <button
             type="button"
             onClick={startWorkout}
-            disabled={exercises.length === 0}
-            className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
+            className="rounded-2xl bg-blue-600 px-5 py-3 font-semibold text-white"
           >
             Starta pass
           </button>
         </div>
-      </div>
+      </section>
     </main>
   );
 }
