@@ -63,7 +63,7 @@ export default function AdminUsersPage() {
       });
 
       if (!meResponse.ok) {
-        router.replace("/login");
+        router.replace("/");
         return;
       }
 

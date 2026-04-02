@@ -40,6 +40,8 @@ export const authOptions: NextAuthOptions = {
       },
 
       async authorize(credentials) {
+          console.log("LOGIN identifier:", identifier);
+console.log("ENV admin username:", ENV_ADMIN_USERNAME);
         const identifier = credentials?.identifier?.trim();
         const password = credentials?.password;
 
@@ -62,6 +64,7 @@ export const authOptions: NextAuthOptions = {
             );
 
             if (isValidEnvPassword) {
+                console.log("ENV admin matched");
               return {
                 id: "env-admin", // Syntetiskt id för bootstrap-admin
                 email: `${ENV_ADMIN_USERNAME}@local.admin`,
