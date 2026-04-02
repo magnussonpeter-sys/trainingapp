@@ -12,6 +12,13 @@ type AppAuthUser = {
   status: "active" | "disabled";
 };
 
+// Läs bootstrap-admin från env på servern
+const ENV_ADMIN_USERNAME =
+  process.env.ADMIN_USERNAME?.trim().toLowerCase() ?? "";
+
+const ENV_ADMIN_PASSWORD_HASH =
+  process.env.ADMIN_PASSWORD_HASH?.trim() ?? "";
+
 export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt", // Vi kör JWT-sessioner
@@ -40,6 +47,33 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
+        const normalizedIdentifier = identifier.toLowerCase();
+
+        // 1) Först: tillåt bootstrap-admin från env
+        // Detta är en reserv/admin-ingång och inte huvudspåret långsiktigt.
+        if (ENV_ADMIN_USERNAME && ENV_ADMIN_PASSWORD_HASH) {
+          const isEnvAdminUser =
+            normalizedIdentifier === ENV_ADMIN_USERNAME;
+
+          if (isEnvAdminUser) {
+            const isValidEnvPassword = await bcrypt.compare(
+              password,
+              ENV_ADMIN_PASSWORD_HASH
+            );
+
+            if (isValidEnvPassword) {
+              return {
+                id: "env-admin", // Syntetiskt id för bootstrap-admin
+                email: `${ENV_ADMIN_USERNAME}@local.admin`,
+                name: "Bootstrap Admin",
+                role: "admin",
+                status: "active",
+              } satisfies AppAuthUser;
+            }
+          }
+        }
+
+        // 2) Annars: vanlig login mot databasen
         // Tillåt login med e-post eller nuvarande name-fält
         // På sikt bör detta ersättas av ett separat username-fält
         const result = await pool.query(
