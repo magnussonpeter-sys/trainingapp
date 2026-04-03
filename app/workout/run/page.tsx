@@ -835,6 +835,8 @@ export default function WorkoutRunPage() {
 if (userId) {
   const entry: ExerciseFeedbackEntry = {
     exerciseId: exercise.id,
+    exerciseName: exercise.name,
+    completedAt: new Date().toISOString(),
     extraReps: timedExercise ? undefined : selectedExtraReps ?? undefined,
     timedEffort: timedExercise
       ? selectedTimedEffort ?? undefined
@@ -842,7 +844,6 @@ if (userId) {
     rating: ratingToSave ?? undefined,
   };
 
-  // Repo-versionen tar två argument: userId och entry-objekt.
   saveExerciseFeedbackEntry(userId, entry);
 }
 
