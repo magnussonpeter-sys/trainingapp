@@ -46,7 +46,7 @@ export default function RegisterPage() {
         return;
       }
 
-      // Login via samma auth-spår som övriga appen.
+      // Logga in direkt efter lyckad registrering.
       const loginResult = await signIn("credentials", {
         identifier: email,
         password,
@@ -70,7 +70,7 @@ export default function RegisterPage() {
   return (
     <main className="min-h-screen bg-[var(--app-bg)] px-4 py-6 text-[var(--app-text)]">
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-2">
-        {/* Vänstersida för lite tydligare appkänsla */}
+        {/* Vänstersida med kort info om appen */}
         <section className="hidden rounded-3xl border border-[var(--app-border)] bg-[var(--app-surface)] p-8 shadow-sm lg:block">
           <div className="inline-flex rounded-full border border-[var(--app-border-strong)] bg-[var(--app-surface-2)] px-3 py-1 text-sm font-medium text-[var(--app-accent-strong)]">
             Träningsapp
@@ -96,7 +96,7 @@ export default function RegisterPage() {
           </div>
         </section>
 
-        {/* Registreringsdelen */}
+        {/* Registreringsdel */}
         <section className="rounded-3xl border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-8">
           <div className="inline-flex rounded-full border border-[var(--app-border-strong)] bg-[var(--app-surface-2)] px-3 py-1 text-sm font-medium text-[var(--app-accent-strong)]">
             Träningsapp
@@ -192,6 +192,7 @@ export default function RegisterPage() {
                   {showRegistrationCode ? "Dölj" : "Visa"}
                 </button>
               </div>
+
               <p className="mt-2 text-xs text-[var(--app-text-muted)]">
                 Du behöver en giltig kod för att kunna skapa konto.
               </p>
