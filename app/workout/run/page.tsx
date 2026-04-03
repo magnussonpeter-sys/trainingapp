@@ -832,13 +832,19 @@ export default function WorkoutRunPage() {
       })
     );
 
-    if (userId) {
-      const entry: ExerciseFeedbackEntry = {
-        exerciseId: exercise.id,
-        extraReps: timedExercise ? null : selectedExtraReps,
-        timedEffort: timedExercise ? selectedTimedEffort : null,
-        rating: ratingToSave,
-      };
+if (userId) {
+  const entry: ExerciseFeedbackEntry = {
+    exerciseId: exercise.id,
+    extraReps: timedExercise ? undefined : selectedExtraReps ?? undefined,
+    timedEffort: timedExercise
+      ? selectedTimedEffort ?? undefined
+      : undefined,
+    rating: ratingToSave ?? undefined,
+  };
+
+  // Repo-versionen tar två argument: userId och entry-objekt.
+  saveExerciseFeedbackEntry(userId, entry);
+}
 
       // Repo-versionen tar två argument: userId och entry-objekt.
       saveExerciseFeedbackEntry(userId, entry);
