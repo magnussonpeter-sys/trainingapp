@@ -846,10 +846,6 @@ if (userId) {
   saveExerciseFeedbackEntry(userId, entry);
 }
 
-      // Repo-versionen tar två argument: userId och entry-objekt.
-      saveExerciseFeedbackEntry(userId, entry);
-    }
-
     setShowExerciseFeedback(false);
     setSelectedExtraReps(null);
     setSelectedTimedEffort(null);
