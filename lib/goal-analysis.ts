@@ -19,6 +19,22 @@ export type RecommendationTimeframe =
   | "next_7_days"
   | "next_14_days";
 
+export type GoalBenchmarkProfile = {
+  label: string;
+  weeklyFrequencyMin: number;
+  weeklyFrequencyIdeal: number;
+  weeklyFrequencyTargetLabel: string;
+  sets28dMin: number;
+  sets28dIdeal: number;
+  sets28dTargetLabel: string;
+  varietyMin: number;
+  varietyIdeal: number;
+  varietyTargetLabel: string;
+  averageWorkoutMinutesMin: number;
+  averageWorkoutMinutesIdeal: number;
+  primaryAdvice: string;
+};
+
 export type TrainingMetrics = {
   weeklyFrequency: number;
   consistencyScore: number;
@@ -30,6 +46,9 @@ export type TrainingMetrics = {
   completedWorkouts28d: number;
   uniqueExercises28d: number;
   totalSets28d: number;
+  frequencyVsGoalScore: number;
+  volumeVsGoalScore: number;
+  varietyVsGoalScore: number;
 };
 
 export type GoalEvaluation = {
@@ -71,8 +90,83 @@ export type GoalAnalysis = {
     averageGapDays: number | null;
     averageWorkoutMinutes: number;
     goalWeights: Record<string, number>;
+    benchmark: GoalBenchmarkProfile;
   };
 };
+
+const GOAL_BENCHMARKS: Record<GoalType, GoalBenchmarkProfile> = {
+  strength: {
+    label: "Styrka",
+    weeklyFrequencyMin: 2,
+    weeklyFrequencyIdeal: 3,
+    weeklyFrequencyTargetLabel: "2–4 pass / vecka",
+    sets28dMin: 32,
+    sets28dIdeal: 48,
+    sets28dTargetLabel: "32–64 set / 28 dagar",
+    varietyMin: 4,
+    varietyIdeal: 6,
+    varietyTargetLabel: "måttlig variation",
+    averageWorkoutMinutesMin: 20,
+    averageWorkoutMinutesIdeal: 45,
+    primaryAdvice:
+      "För styrkemål behöver du regelbundna pass, tydliga huvudövningar och tillräcklig återhämtning mellan tyngre belastningar.",
+  },
+  hypertrophy: {
+    label: "Muskelbyggnad",
+    weeklyFrequencyMin: 3,
+    weeklyFrequencyIdeal: 4,
+    weeklyFrequencyTargetLabel: "3–5 pass / vecka",
+    sets28dMin: 48,
+    sets28dIdeal: 72,
+    sets28dTargetLabel: "48–96 set / 28 dagar",
+    varietyMin: 6,
+    varietyIdeal: 8,
+    varietyTargetLabel: "god övningsbredd",
+    averageWorkoutMinutesMin: 25,
+    averageWorkoutMinutesIdeal: 50,
+    primaryAdvice:
+      "För hypertrofi behöver du oftast både tillräcklig träningsfrekvens och tillräcklig total veckovolym. För lite pass eller för få set gör att muskelbyggnaden bromsas.",
+  },
+  health: {
+    label: "Hälsa och funktion",
+    weeklyFrequencyMin: 2,
+    weeklyFrequencyIdeal: 3,
+    weeklyFrequencyTargetLabel: "2–4 pass / vecka",
+    sets28dMin: 28,
+    sets28dIdeal: 44,
+    sets28dTargetLabel: "28–64 set / 28 dagar",
+    varietyMin: 6,
+    varietyIdeal: 8,
+    varietyTargetLabel: "bred helkroppstäckning",
+    averageWorkoutMinutesMin: 20,
+    averageWorkoutMinutesIdeal: 40,
+    primaryAdvice:
+      "För hälsomål är hållbar regelbundenhet och bred helkroppstäckning viktigare än maximal belastning i enskilda pass.",
+  },
+  body_composition: {
+    label: "Kroppssammansättning",
+    weeklyFrequencyMin: 3,
+    weeklyFrequencyIdeal: 4,
+    weeklyFrequencyTargetLabel: "3–5 pass / vecka",
+    sets28dMin: 40,
+    sets28dIdeal: 60,
+    sets28dTargetLabel: "40–84 set / 28 dagar",
+    varietyMin: 5,
+    varietyIdeal: 7,
+    varietyTargetLabel: "god övningsbredd",
+    averageWorkoutMinutesMin: 20,
+    averageWorkoutMinutesIdeal: 45,
+    primaryAdvice:
+      "För kroppssammansättning behöver du framför allt jämn träningsfrekvens och tillräcklig mängd arbete över tid, inte bara enstaka hårda pass.",
+  },
+};
+
+/**
+ * Publik benchmarkprofil så dashboard och andra delar använder samma målbild.
+ */
+export function getGoalBenchmarkProfile(goal: GoalType): GoalBenchmarkProfile {
+  return GOAL_BENCHMARKS[goal];
+}
 
 /**
  * Hjälpfunktion för att hålla värden inom ett intervall.
@@ -183,42 +277,46 @@ function getGoalWeights(goal: GoalType) {
   switch (goal) {
     case "strength":
       return {
-        frequency: 0.18,
-        consistency: 0.16,
-        progression: 0.26,
+        frequency: 0.16,
+        consistency: 0.15,
+        progression: 0.24,
         volume: 0.14,
-        recovery: 0.18,
-        variety: 0.08,
+        recovery: 0.19,
+        variety: 0.06,
+        goalAlignment: 0.06,
       };
 
     case "hypertrophy":
       return {
-        frequency: 0.18,
-        consistency: 0.16,
-        progression: 0.18,
-        volume: 0.26,
+        frequency: 0.16,
+        consistency: 0.14,
+        progression: 0.16,
+        volume: 0.24,
         recovery: 0.1,
-        variety: 0.12,
+        variety: 0.1,
+        goalAlignment: 0.1,
       };
 
     case "health":
       return {
-        frequency: 0.28,
-        consistency: 0.22,
-        progression: 0.1,
+        frequency: 0.24,
+        consistency: 0.2,
+        progression: 0.08,
         volume: 0.1,
-        recovery: 0.18,
-        variety: 0.12,
+        recovery: 0.16,
+        variety: 0.1,
+        goalAlignment: 0.12,
       };
 
     case "body_composition":
       return {
-        frequency: 0.26,
-        consistency: 0.2,
-        progression: 0.14,
+        frequency: 0.22,
+        consistency: 0.18,
+        progression: 0.12,
         volume: 0.18,
-        recovery: 0.1,
-        variety: 0.12,
+        recovery: 0.08,
+        variety: 0.08,
+        goalAlignment: 0.14,
       };
   }
 }
@@ -254,25 +352,48 @@ function calculateExerciseVarietyScore(
   uniqueExercises28d: number,
   goal: GoalType
 ) {
-  switch (goal) {
-    case "strength":
-      return clamp(uniqueExercises28d / 8);
-    case "hypertrophy":
-      return clamp(uniqueExercises28d / 10);
-    case "health":
-      return clamp(uniqueExercises28d / 10);
-    case "body_composition":
-      return clamp(uniqueExercises28d / 9);
-  }
+  const benchmark = getGoalBenchmarkProfile(goal);
+  return clamp(uniqueExercises28d / benchmark.varietyIdeal);
+}
+
+/**
+ * Hur väl passfrekvensen möter målets krav.
+ */
+function calculateFrequencyVsGoalScore(
+  weeklyFrequency: number,
+  goal: GoalType
+) {
+  const benchmark = getGoalBenchmarkProfile(goal);
+  return clamp(weeklyFrequency / benchmark.weeklyFrequencyIdeal);
+}
+
+/**
+ * Hur väl den totala mängden set möter målets krav.
+ */
+function calculateVolumeVsGoalScore(totalSets28d: number, goal: GoalType) {
+  const benchmark = getGoalBenchmarkProfile(goal);
+  return clamp(totalSets28d / benchmark.sets28dIdeal);
+}
+
+/**
+ * Hur väl övningsbredden möter målets krav.
+ */
+function calculateVarietyVsGoalScore(
+  uniqueExercises28d: number,
+  goal: GoalType
+) {
+  const benchmark = getGoalBenchmarkProfile(goal);
+  return clamp(uniqueExercises28d / benchmark.varietyIdeal);
 }
 
 /**
  * Styrkor för UI.
  */
-function buildStrengths(metrics: TrainingMetrics): string[] {
+function buildStrengths(metrics: TrainingMetrics, goal: GoalType): string[] {
   const strengths: string[] = [];
+  const benchmark = getGoalBenchmarkProfile(goal);
 
-  if (metrics.weeklyFrequency >= 2) {
+  if (metrics.weeklyFrequency >= benchmark.weeklyFrequencyMin) {
     strengths.push("Du tränar tillräckligt ofta för att bygga vidare.");
   }
 
@@ -284,16 +405,16 @@ function buildStrengths(metrics: TrainingMetrics): string[] {
     strengths.push("Balansen mellan pass och vila ser rimlig ut.");
   }
 
-  if (metrics.volumeScore >= 0.65) {
-    strengths.push("Du får in en bra total träningsmängd.");
+  if (metrics.totalSets28d >= benchmark.sets28dMin) {
+    strengths.push("Du får in en träningsmängd som börjar räcka för målet.");
   }
 
   if (metrics.progressionScore >= 0.7) {
     strengths.push("Den senaste perioden ser stabil eller förbättrad ut.");
   }
 
-  if (metrics.exerciseVarietyScore >= 0.7) {
-    strengths.push("Du får in en bra bredd i övningsvalet.");
+  if (metrics.uniqueExercises28d >= benchmark.varietyMin) {
+    strengths.push("Övningsbredden är tillräcklig för att ge bra stimulans.");
   }
 
   return strengths.slice(0, 3);
@@ -302,58 +423,61 @@ function buildStrengths(metrics: TrainingMetrics): string[] {
 /**
  * Luckor för UI.
  */
-function buildGaps(metrics: TrainingMetrics): string[] {
+function buildGaps(metrics: TrainingMetrics, goal: GoalType): string[] {
   const gaps: string[] = [];
+  const benchmark = getGoalBenchmarkProfile(goal);
 
-  if (metrics.weeklyFrequency < 1.5) {
-    gaps.push("Träningsfrekvensen är lite för låg just nu.");
+  if (metrics.weeklyFrequency < benchmark.weeklyFrequencyMin) {
+    gaps.push(
+      `Du ligger på ${metrics.weeklyFrequency.toFixed(
+        1
+      )} pass per vecka, vilket är för lågt för målet just nu.`
+    );
   }
 
   if (metrics.consistencyScore < 0.5) {
     gaps.push("Passen kommer ganska ojämnt över veckorna.");
   }
 
-  if (metrics.recoveryScore < 0.45) {
-    gaps.push("Återhämtningen mellan passen verkar mindre optimal.");
+  if (goal !== "health" && metrics.totalSets28d < benchmark.sets28dMin) {
+    gaps.push(
+      `Du får in ${metrics.totalSets28d} set på 28 dagar, men målet kräver ungefär minst ${benchmark.sets28dMin}.`
+    );
   }
 
-  if (metrics.volumeScore < 0.4) {
-    gaps.push("Den totala träningsmängden senaste tiden är ganska låg.");
+  if (goal === "health" && metrics.uniqueExercises28d < benchmark.varietyMin) {
+    gaps.push("Helkroppstäckningen är lite för smal just nu.");
   }
 
   if (metrics.progressionScore < 0.5) {
     gaps.push("Senaste perioden visar inte ännu någon tydlig framåtrörelse.");
   }
 
-  if (metrics.exerciseVarietyScore < 0.35) {
-    gaps.push("Övningsbredden är låg och kan begränsa utvecklingen.");
-  }
-
-  return gaps.slice(0, 3);
+  return gaps.slice(0, 4);
 }
 
 /**
  * Kort sammanfattning.
  */
-function buildSummary(status: GoalStatus, goal: GoalType) {
-  const goalTextMap: Record<GoalType, string> = {
-    strength: "styrka",
-    hypertrophy: "muskelbyggnad",
-    health: "hälsa och funktion",
-    body_composition: "kroppssammansättning",
-  };
+function buildSummary(
+  status: GoalStatus,
+  goal: GoalType,
+  metrics: TrainingMetrics
+) {
+  const benchmark = getGoalBenchmarkProfile(goal);
+  const goalText = benchmark.label.toLowerCase();
 
-  const goalText = goalTextMap[goal];
-
-  switch (status) {
-    case "on_track":
-      return `Du ligger bra till i din träning mot målet ${goalText}. Fortsätt bygga vidare med jämn belastning och små steg framåt.`;
-    case "needs_attention":
-      return `Just nu är träningen lite för ojämn eller låg i förhållande till målet ${goalText}. Fokus bör vara att skapa mer regelbundenhet först.`;
-    case "steady":
-    default:
-      return `Du har en stabil grund mot målet ${goalText}, men det finns tydlig potential att förbättra kontinuitet och progression.`;
+  if (status === "on_track") {
+    return `Du ligger bra till i din träning mot målet ${goalText}. Fortsätt bygga vidare med jämn belastning och små steg framåt.`;
   }
+
+  if (status === "needs_attention") {
+    return `Just nu matchar träningen inte målet ${goalText} tillräckligt bra. Du ligger på ${metrics.weeklyFrequency.toFixed(
+      1
+    )} pass per vecka och ${metrics.totalSets28d} set senaste 28 dagarna, så första steget är att höja regelbundenhet och total mängd.`;
+  }
+
+  return `Du har en stabil grund mot målet ${goalText}, men för att ta nästa steg behöver träningen bli lite mer konsekvent eller lite bättre anpassad till målets krav.`;
 }
 
 function getPriorityFromScore(value: number): FocusPriority {
@@ -367,14 +491,16 @@ function getPriorityFromScore(value: number): FocusPriority {
  */
 function buildFocusAreas(goal: GoalType, metrics: TrainingMetrics): FocusArea[] {
   const areas: FocusArea[] = [];
+  const benchmark = getGoalBenchmarkProfile(goal);
 
-  if (metrics.weeklyFrequency < 2) {
+  if (metrics.weeklyFrequency < benchmark.weeklyFrequencyMin) {
     areas.push({
       id: "frequency",
       title: "Öka träningsfrekvensen",
-      reason:
-        "Du får just nu in för få pass per vecka för att skapa tydlig utveckling.",
-      priority: getPriorityFromScore(metrics.weeklyFrequency / 2),
+      reason: `Du ligger på ${metrics.weeklyFrequency.toFixed(
+        1
+      )} pass per vecka, men för målet behövs ungefär ${benchmark.weeklyFrequencyTargetLabel}.`,
+      priority: getPriorityFromScore(metrics.frequencyVsGoalScore),
       metric: "weeklyFrequency",
     });
   }
@@ -390,26 +516,14 @@ function buildFocusAreas(goal: GoalType, metrics: TrainingMetrics): FocusArea[] 
     });
   }
 
-  if (metrics.progressionScore < 0.6) {
-    areas.push({
-      id: "progression",
-      title: "Tydligare framåtrörelse",
-      reason:
-        "Den senaste perioden visar ännu inte en tydlig positiv trend.",
-      priority: getPriorityFromScore(metrics.progressionScore),
-      metric: "progressionScore",
-    });
-  }
-
   if (goal === "hypertrophy" || goal === "body_composition") {
-    if (metrics.volumeScore < 0.65) {
+    if (metrics.totalSets28d < benchmark.sets28dMin) {
       areas.push({
         id: "volume",
         title: "Mer total träningsmängd",
-        reason:
-          "För ditt mål behövs oftast lite högre träningsvolym över veckan.",
-        priority: getPriorityFromScore(metrics.volumeScore),
-        metric: "volumeScore",
+        reason: `Du får in ${metrics.totalSets28d} set på 28 dagar, men för målet behövs ungefär minst ${benchmark.sets28dMin}.`,
+        priority: getPriorityFromScore(metrics.volumeVsGoalScore),
+        metric: "volumeVsGoalScore",
       });
     }
   }
@@ -425,14 +539,24 @@ function buildFocusAreas(goal: GoalType, metrics: TrainingMetrics): FocusArea[] 
     });
   }
 
-  if (goal === "health" && metrics.exerciseVarietyScore < 0.55) {
+  if (goal === "health" && metrics.uniqueExercises28d < benchmark.varietyMin) {
     areas.push({
       id: "variety",
       title: "Bredda övningsvalet",
-      reason:
-        "Lite större variation kan förbättra funktion, motivation och helkroppstäckning.",
-      priority: getPriorityFromScore(metrics.exerciseVarietyScore),
+      reason: `Du ligger på ${metrics.uniqueExercises28d} unika övningar senaste 28 dagarna. För målet behövs ungefär ${benchmark.varietyTargetLabel}.`,
+      priority: getPriorityFromScore(metrics.varietyVsGoalScore),
       metric: "exerciseVarietyScore",
+    });
+  }
+
+  if (metrics.progressionScore < 0.6) {
+    areas.push({
+      id: "progression",
+      title: "Tydligare framåtrörelse",
+      reason:
+        "Den senaste perioden visar ännu inte en tydlig positiv trend, så du behöver bygga mer stabil kontinuitet eller lite högre träningsmängd.",
+      priority: getPriorityFromScore(metrics.progressionScore),
+      metric: "progressionScore",
     });
   }
 
@@ -455,13 +579,15 @@ function buildRecommendations(
   metrics: TrainingMetrics
 ): GoalRecommendation[] {
   const recommendations: GoalRecommendation[] = [];
+  const benchmark = getGoalBenchmarkProfile(goal);
 
-  if (metrics.weeklyFrequency < 2) {
+  if (metrics.weeklyFrequency < benchmark.weeklyFrequencyMin) {
     recommendations.push({
-      id: "add-one-session",
-      title: "Planera in ett extra pass denna vecka",
-      description:
-        "Försök få in minst ett extra kort pass de kommande 7 dagarna. Regelbundenhet är just nu den viktigaste förbättringen.",
+      id: "raise-frequency",
+      title: "Höj veckofrekvensen direkt",
+      description: `Du ligger nu på ${metrics.weeklyFrequency.toFixed(
+        1
+      )} pass per vecka. Sikta först på minst ${benchmark.weeklyFrequencyMin} pass per vecka innan du försöker optimera detaljer.`,
       timeframe: "next_7_days",
     });
   }
@@ -484,15 +610,34 @@ function buildRecommendations(
         "Välj en huvudövning där kvalitet och fokus är hög, och håll resten av passet lite enklare så att progressionen blir tydligare.",
       timeframe: "next_workout",
     });
+
+    if (metrics.recoveryScore < 0.6) {
+      recommendations.push({
+        id: "strength-recovery",
+        title: "Lägg de tyngsta passen glesare",
+        description:
+          "För styrka blir kvaliteten ofta bättre om de mest belastande passen inte ligger för tätt. Försök få minst en lugnare dag mellan tyngre pass.",
+        timeframe: "next_7_days",
+      });
+    }
   }
 
   if (goal === "hypertrophy") {
+    if (metrics.totalSets28d < benchmark.sets28dMin) {
+      recommendations.push({
+        id: "hypertrophy-volume",
+        title: "Öka antalet arbetsset",
+        description: `Du ligger på ${metrics.totalSets28d} set senaste 28 dagarna. För muskelbyggnad behöver du komma närmare minst ${benchmark.sets28dMin} set på 28 dagar.`,
+        timeframe: "next_7_days",
+      });
+    }
+
     recommendations.push({
-      id: "hypertrophy-volume",
-      title: "Höj veckovolymen något",
+      id: "hypertrophy-repeat-muscles",
+      title: "Låt större muskelgrupper återkomma oftare",
       description:
-        "Lägg gärna till några extra arbetsset i 1–2 övningar under veckan för att öka stimulansen för muskelbyggnad.",
-      timeframe: "next_7_days",
+        "Se till att samma större muskelgrupper stimuleras flera gånger under veckan, inte bara i enstaka pass.",
+      timeframe: "next_14_days",
     });
   }
 
@@ -507,6 +652,15 @@ function buildRecommendations(
   }
 
   if (goal === "body_composition") {
+    if (metrics.totalSets28d < benchmark.sets28dMin) {
+      recommendations.push({
+        id: "body-comp-volume",
+        title: "Öka träningsmängden något",
+        description: `Du behöver sannolikt lite fler arbetsset över veckan. Sikta mot minst ${benchmark.sets28dMin} set på 28 dagar som första nivå.`,
+        timeframe: "next_7_days",
+      });
+    }
+
     recommendations.push({
       id: "body-comp-density",
       title: "Behåll styrkan men håll tempot uppe",
@@ -516,7 +670,7 @@ function buildRecommendations(
     });
   }
 
-  if (metrics.exerciseVarietyScore < 0.45) {
+  if (goal !== "strength" && metrics.uniqueExercises28d < benchmark.varietyMin) {
     recommendations.push({
       id: "add-one-exercise",
       title: "Lägg till en kompletterande övning",
@@ -526,17 +680,7 @@ function buildRecommendations(
     });
   }
 
-  if (metrics.recoveryScore < 0.5) {
-    recommendations.push({
-      id: "protect-recovery",
-      title: "Skydda återhämtningen",
-      description:
-        "Planera så att de lite tyngre passen inte hamnar för tätt. Det ökar chansen att nästa pass håller bättre kvalitet.",
-      timeframe: "next_7_days",
-    });
-  }
-
-  return recommendations.slice(0, 5);
+  return recommendations.slice(0, 6);
 }
 
 /**
@@ -545,6 +689,7 @@ function buildRecommendations(
 export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysis {
   const completedLogs = getCompletedLogs(logs);
   const now = new Date();
+  const benchmark = getGoalBenchmarkProfile(goal);
 
   const recent28d = completedLogs.filter(
     (log) => diffDays(new Date(log.startedAt), now) <= 28
@@ -559,7 +704,6 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
   const averageGapDays = getAverageGapDays(recent28d);
 
   let consistencyScore = 0;
-
   if (averageGapDays !== null) {
     const distanceFromIdeal = Math.abs(averageGapDays - 3);
     consistencyScore = clamp(1 - distanceFromIdeal / 5);
@@ -571,7 +715,6 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
   const volumeScore = clamp(totalSets28d / 90);
 
   let recoveryScore = 0.5;
-
   if (averageGapDays !== null) {
     if (averageGapDays >= 1.5 && averageGapDays <= 4) {
       recoveryScore = 0.85;
@@ -588,13 +731,15 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
     recent28d.length,
     previous28d.length
   );
-
   const uniqueExercises28d = countUniqueExercises(recent28d);
   const exerciseVarietyScore = calculateExerciseVarietyScore(
     uniqueExercises28d,
     goal
   );
   const averageWorkoutMinutes = getAverageWorkoutMinutes(recent28d);
+  const frequencyVsGoalScore = calculateFrequencyVsGoalScore(weeklyFrequency, goal);
+  const volumeVsGoalScore = calculateVolumeVsGoalScore(totalSets28d, goal);
+  const varietyVsGoalScore = calculateVarietyVsGoalScore(uniqueExercises28d, goal);
 
   const metrics: TrainingMetrics = {
     weeklyFrequency,
@@ -607,26 +752,40 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
     completedWorkouts28d: recent28d.length,
     uniqueExercises28d,
     totalSets28d,
+    frequencyVsGoalScore: round(frequencyVsGoalScore, 2),
+    volumeVsGoalScore: round(volumeVsGoalScore, 2),
+    varietyVsGoalScore: round(varietyVsGoalScore, 2),
   };
 
   const weights = getGoalWeights(goal);
-  const normalizedFrequencyScore = clamp(weeklyFrequency / 3);
+  const goalAlignmentScore = round(
+    (frequencyVsGoalScore + volumeVsGoalScore + varietyVsGoalScore) / 3,
+    2
+  );
 
   const overallScore = round(
-    normalizedFrequencyScore * weights.frequency +
+    metrics.frequencyVsGoalScore * weights.frequency +
       metrics.consistencyScore * weights.consistency +
       metrics.progressionScore * weights.progression +
       metrics.volumeScore * weights.volume +
       metrics.recoveryScore * weights.recovery +
-      metrics.exerciseVarietyScore * weights.variety,
+      metrics.exerciseVarietyScore * weights.variety +
+      goalAlignmentScore * weights.goalAlignment,
     2
   );
 
   let status: GoalStatus = "steady";
-
-  if (overallScore >= 0.72) {
+  if (
+    overallScore >= 0.72 &&
+    metrics.weeklyFrequency >= benchmark.weeklyFrequencyMin &&
+    metrics.totalSets28d >= benchmark.sets28dMin
+  ) {
     status = "on_track";
-  } else if (overallScore < 0.45) {
+  } else if (
+    overallScore < 0.45 ||
+    metrics.weeklyFrequency < benchmark.weeklyFrequencyMin * 0.8 ||
+    metrics.totalSets28d < benchmark.sets28dMin * 0.65
+  ) {
     status = "needs_attention";
   }
 
@@ -636,9 +795,9 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
     evaluation: {
       status,
       overallScore,
-      summary: buildSummary(status, goal),
-      strengths: buildStrengths(metrics),
-      gaps: buildGaps(metrics),
+      summary: buildSummary(status, goal, metrics),
+      strengths: buildStrengths(metrics, goal),
+      gaps: buildGaps(metrics, goal),
     },
     focusAreas: buildFocusAreas(goal, metrics),
     recommendations: buildRecommendations(goal, metrics),
@@ -652,6 +811,7 @@ export function analyzeTraining(logs: WorkoutLog[], goal: GoalType): GoalAnalysi
       averageGapDays: averageGapDays === null ? null : round(averageGapDays, 2),
       averageWorkoutMinutes,
       goalWeights: weights,
+      benchmark,
     },
   };
 }

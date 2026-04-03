@@ -143,9 +143,7 @@ function getTotalVolume(log: WorkoutLog) {
 }
 
 // Dashboard-badge beroende på analysstatus.
-function getAnalysisBadgeClasses(
-  status: DashboardAnalysis["status"]
-) {
+function getAnalysisBadgeClasses(status: DashboardAnalysis["status"]) {
   switch (status) {
     case "excellent":
       return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -161,9 +159,7 @@ function getAnalysisBadgeClasses(
 }
 
 // Färg på kravkort beroende på hur väl användaren möter målet.
-function getRequirementClasses(
-  status: "good" | "warning" | "low"
-) {
+function getRequirementClasses(status: "good" | "warning" | "low") {
   switch (status) {
     case "good":
       return "border-emerald-200 bg-emerald-50";
@@ -1061,7 +1057,27 @@ export default function HomePage() {
               </h2>
             </div>
 
-            <div className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
+            <div className="mt-6 rounded-[28px] border border-indigo-100 bg-indigo-50/70 p-5">
+              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">
+                För att nå målet nu
+              </p>
+
+              <div className="mt-4 space-y-3">
+                {dashboardAnalysis.actionPlan.map((step) => (
+                  <div
+                    key={step.title}
+                    className="rounded-2xl border border-indigo-100 bg-white px-4 py-4 text-sm leading-6 text-slate-700"
+                  >
+                    <h3 className="text-base font-semibold text-slate-900">
+                      {step.title}
+                    </h3>
+                    <p className="mt-2">{step.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
               <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
                 Fokusområden
               </p>
