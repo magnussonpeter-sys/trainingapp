@@ -51,7 +51,7 @@ type EquipmentDraft = {
   label: string;
   quantity: string;
   notes: string;
-  weightsInput: string;
+  weightInput: string;
   bandLevel: BandLevel;
 };
 
@@ -83,6 +83,7 @@ const DEFAULT_LABELS: Record<EquipmentType, string> = {
   other: "Namn på utrustning",
 };
 
+// Skapar ett tomt draft-objekt för vald utrustningstyp.
 function createDefaultEquipmentDraft(
   equipmentType: EquipmentType = "dumbbell"
 ): EquipmentDraft {
@@ -91,7 +92,7 @@ function createDefaultEquipmentDraft(
     label: DEFAULT_LABELS[equipmentType],
     quantity: "",
     notes: "",
-    weightsInput: "",
+    weightInput: "",
     bandLevel: "medium",
   };
 }
@@ -100,11 +101,22 @@ function isWeightBasedType(type: EquipmentType) {
   return type === "dumbbell" || type === "barbell" || type === "kettlebell";
 }
 
-function formatWeights(weights?: number[] | null) {
-  if (!weights || weights.length === 0) return "Alla vikter / ej specificerat";
-  return `${weights.join(", ")} kg`;
+function getEquipmentTypeLabel(type: EquipmentType) {
+  return (
+    EQUIPMENT_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type
+  );
 }
 
+// Visar vikter i sorterad lista.
+function formatWeights(weights?: number[] | null) {
+  if (!weights || weights.length === 0) {
+    return "Alla vikter / ej specificerat";
+  }
+
+  return `${[...weights].sort((a, b) => a - b).join(", ")} kg`;
+}
+
+// Samlar metadata för varje utrustningsrad.
 function formatEquipmentMeta(item: GymEquipment) {
   const parts: string[] = [];
 
@@ -133,10 +145,8 @@ function formatEquipmentMeta(item: GymEquipment) {
   return parts.join(" • ");
 }
 
-function getEquipmentTypeLabel(type: EquipmentType) {
-  return (
-    EQUIPMENT_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type
-  );
+function getGymDisplayCount(gym: Gym) {
+  return gym.equipment.length;
 }
 
 export default function GymsPage() {
@@ -155,15 +165,13 @@ export default function GymsPage() {
   const [newGymDescription, setNewGymDescription] = useState("");
   const [isSavingGym, setIsSavingGym] = useState(false);
 
-  const [expandedGymId, setExpandedGymId] = useState<string | null>(null);
-
-  // State för redigering av gymnamn/beskrivning.
+  // Endast ett gym i redigeringsläge åt gången för enklare UI.
   const [editingGymId, setEditingGymId] = useState<string | null>(null);
   const [editingGymName, setEditingGymName] = useState("");
   const [editingGymDescription, setEditingGymDescription] = useState("");
   const [isUpdatingGym, setIsUpdatingGym] = useState(false);
 
-  // State för utrustningsformulär per gym.
+  // Draft per gym när man lägger till utrustning.
   const [equipmentDrafts, setEquipmentDrafts] = useState<
     Record<string, EquipmentDraft>
   >({});
@@ -193,6 +201,7 @@ export default function GymsPage() {
     (gymId: string, updates: Partial<EquipmentDraft>) => {
       setEquipmentDrafts((prev) => {
         const current = prev[gymId] ?? createDefaultEquipmentDraft();
+
         return {
           ...prev,
           [gymId]: {
@@ -218,10 +227,13 @@ export default function GymsPage() {
 
     try {
       // Viktigt: skicka med credentials så session-cookie följer med.
-      const res = await fetch(`/api/gyms?userId=${encodeURIComponent(currentUserId)}`, {
-        cache: "no-store",
-        credentials: "include",
-      });
+      const res = await fetch(
+        `/api/gyms?userId=${encodeURIComponent(currentUserId)}`,
+        {
+          cache: "no-store",
+          credentials: "include",
+        }
+      );
 
       const data = await res.json();
 
@@ -232,10 +244,10 @@ export default function GymsPage() {
       const nextGyms = Array.isArray(data.gyms) ? (data.gyms as Gym[]) : [];
       setGyms(nextGyms);
 
-      // Öppna första gymmet automatiskt om inget redan är valt.
-      setExpandedGymId((prev) => {
-        if (prev && nextGyms.some((gym) => gym.id === prev)) return prev;
-        return nextGyms[0]?.id ?? null;
+      // Om redigerat gym inte längre finns kvar, lämna edit-läge.
+      setEditingGymId((prev) => {
+        if (!prev) return null;
+        return nextGyms.some((gym) => gym.id === prev) ? prev : null;
       });
     } catch (error) {
       console.error("GET gyms failed:", error);
@@ -290,7 +302,9 @@ export default function GymsPage() {
         await fetchGyms(String(user.id));
       } catch (error) {
         console.error("Auth check failed on /gyms:", error);
+
         if (!isMounted) return;
+
         router.replace("/");
       } finally {
         if (isMounted) {
@@ -347,7 +361,14 @@ export default function GymsPage() {
       await fetchGyms(userId);
 
       if (data?.gym?.id) {
-        setExpandedGymId(String(data.gym.id));
+        startEditGym({
+          id: String(data.gym.id),
+          user_id: String(userId),
+          name: String(data.gym.name ?? newGymName),
+          description:
+            typeof data.gym.description === "string" ? data.gym.description : null,
+          equipment: [],
+        });
       }
     } catch (error) {
       console.error("Create gym failed:", error);
@@ -373,6 +394,7 @@ export default function GymsPage() {
 
   async function handleSaveGym(gymId: string) {
     if (!userId) return;
+
     if (!editingGymName.trim()) {
       setPageError("Gymmet måste ha ett namn.");
       return;
@@ -403,7 +425,6 @@ export default function GymsPage() {
       }
 
       setSuccessMessage("Gym uppdaterat.");
-      cancelEditGym();
       await fetchGyms(userId);
     } catch (error) {
       console.error("Update gym failed:", error);
@@ -446,6 +467,10 @@ export default function GymsPage() {
 
       setSuccessMessage("Gym borttaget.");
       await fetchGyms(userId);
+
+      if (editingGymId === gymId) {
+        cancelEditGym();
+      }
     } catch (error) {
       console.error("Delete gym failed:", error);
       setPageError(error instanceof Error ? error.message : "Kunde inte ta bort gym.");
@@ -469,12 +494,10 @@ export default function GymsPage() {
     setSuccessMessage(null);
 
     try {
-      const weights = isWeightBasedType(draft.equipmentType)
-        ? draft.weightsInput
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean)
-        : null;
+      const weights =
+        isWeightBasedType(draft.equipmentType) && draft.weightInput.trim()
+          ? [draft.weightInput.trim()]
+          : null;
 
       const res = await fetch("/api/gym-equipment", {
         method: "POST",
@@ -501,9 +524,9 @@ export default function GymsPage() {
       }
 
       resetDraftForGym(gymId);
-      setSuccessMessage("Utrustning tillagd.");
+      setSuccessMessage("Utrustning sparad.");
       await fetchGyms(userId);
-      setExpandedGymId(gymId);
+      setEditingGymId(gymId);
     } catch (error) {
       console.error("Add equipment failed:", error);
       setPageError(
@@ -554,558 +577,456 @@ export default function GymsPage() {
 
   if (!authChecked) {
     return (
-      <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-6xl rounded-[32px] border border-[var(--app-border)] bg-[var(--app-surface)] p-8 shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
-          <p className="text-sm font-medium text-[var(--app-text-muted)]">
-            Kontrollerar inloggning...
-          </p>
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.16),_transparent_28%),linear-gradient(180deg,#f7f9fc_0%,#eef3f9_100%)] px-4 py-10 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl">
+          <div className="rounded-[32px] border border-white/70 bg-white/85 p-8 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] backdrop-blur">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+              Träningsapp
+            </p>
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+              Laddar gym...
+            </h1>
+            <p className="mt-3 text-base leading-7 text-slate-600">
+              Kontrollerar inloggning och hämtar dina gym.
+            </p>
+          </div>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="overflow-hidden rounded-[32px] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
-          <div className="grid lg:grid-cols-[1.2fr_0.8fr]">
-            <section className="border-b border-[var(--app-border)] bg-[linear-gradient(180deg,#f8fbff_0%,#f4f7fb_100%)] p-6 sm:p-8 lg:border-b-0 lg:border-r lg:p-10">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong)]">
-                    Träningsapp
-                  </p>
-                  <h1 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--app-text-strong)] sm:text-4xl">
-                    Hantera gym
-                  </h1>
-<p className="mt-3 max-w-2xl text-base leading-7 text-[var(--app-text)]">
-  Lägg till gym och ange vilken utrustning som finns i varje gym.
-  Dina sparade gym används sedan för att anpassa AI-genererade pass
-  efter tillgänglig utrustning.
-</p>
-                </div>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.16),_transparent_28%),linear-gradient(180deg,#f7f9fc_0%,#eef3f9_100%)] px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl">
+        <header className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+              Träningsapp
+            </p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
+              Hantera gym
+            </h1>
+            <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
+              Lägg till gym och ange vilken utrustning som finns i varje gym.
+              Sparade gym används sedan för att anpassa AI-genererade pass efter
+              tillgänglig utrustning.
+            </p>
+          </div>
 
-                <Link
-                  href="/home"
-                  className="inline-flex items-center justify-center rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                >
-                  ← Tillbaka till hem
-                </Link>
-              </div>
+          <Link
+            href="/home"
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Tillbaka till hem
+          </Link>
+        </header>
 
-              {pageError ? (
-                <div className="mt-6 rounded-2xl border border-[var(--app-danger-border)] bg-[var(--app-danger-bg)] px-4 py-3 text-sm text-[var(--app-danger-text)]">
-                  {pageError}
-                </div>
-              ) : null}
+        {pageError ? (
+          <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {pageError}
+          </div>
+        ) : null}
 
-              {successMessage ? (
-                <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                  {successMessage}
-                </div>
-              ) : null}
+        {successMessage ? (
+          <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            {successMessage}
+          </div>
+        ) : null}
 
-              <div className="mt-8 grid gap-4 sm:grid-cols-3">
-                <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                  <p className="text-sm text-[var(--app-text-muted)]">Sparade gym</p>
-                  <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
-                    {gyms.length}
-                  </p>
-                </div>
+        <section className="mb-6 rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+            Lägg till gym
+          </p>
 
-                <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                  <p className="text-sm text-[var(--app-text-muted)]">Total utrustning</p>
-                  <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
-                    {gyms.reduce((sum, gym) => sum + gym.equipment.length, 0)}
-                  </p>
-                </div>
+          <form onSubmit={handleCreateGym} className="mt-5 space-y-4">
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-900">
+                Namn
+              </label>
+              <input
+                value={newGymName}
+                onChange={(e) => setNewGymName(e.target.value)}
+                placeholder="Till exempel Hemmagym"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+              />
+            </div>
 
-                <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                  <p className="text-sm text-[var(--app-text-muted)]">Inloggad användare</p>
-                  <p className="mt-2 text-lg font-semibold text-[var(--app-text-strong)]">
-                    {authUser?.username || authUser?.email || "Användare"}
-                  </p>
-                </div>
-              </div>
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-900">
+                Beskrivning
+              </label>
+              <textarea
+                value={newGymDescription}
+                onChange={(e) => setNewGymDescription(e.target.value)}
+                placeholder="Kort beskrivning av gymmet"
+                rows={3}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+              />
+            </div>
 
-              <div className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-7">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                      Sparade gym
-                    </p>
-                    <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                      Dina träningsmiljöer
-                    </h2>
-                  </div>
-                </div>
+            <button
+              type="submit"
+              disabled={isSavingGym}
+              className="rounded-2xl bg-indigo-600 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSavingGym ? "Sparar..." : "Spara gym"}
+            </button>
+          </form>
+        </section>
 
-                <div className="mt-6">
-                  {isLoading ? (
-                    <div className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-4 text-sm text-[var(--app-text-muted)]">
-                      Hämtar gym...
-                    </div>
-                  ) : sortedGyms.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface-muted)] px-4 py-6 text-sm text-[var(--app-text-muted)]">
-                      Inga gym sparade ännu.
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {sortedGyms.map((gym) => {
-                        const isExpanded = expandedGymId === gym.id;
-                        const isEditing = editingGymId === gym.id;
-                        const draft = getDraftForGym(gym.id);
+        <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+            Sparade gym
+          </p>
 
-                        return (
-                          <div
-                            key={gym.id}
-                            className="overflow-hidden rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)]"
-                          >
-                            <div className="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="min-w-0">
-                                {isEditing ? (
-                                  <div className="space-y-3">
-                                    <input
-                                      value={editingGymName}
-                                      onChange={(e) => setEditingGymName(e.target.value)}
-                                      className="w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                                      placeholder="Namn på gym"
-                                    />
+          {isLoading ? (
+            <div className="mt-5 rounded-[24px] border border-slate-200 bg-slate-50/80 p-5 text-sm text-slate-600">
+              Hämtar gym...
+            </div>
+          ) : sortedGyms.length === 0 ? (
+            <div className="mt-5 rounded-[24px] border border-dashed border-slate-300 bg-slate-50/80 p-6 text-sm text-slate-600">
+              Inga gym sparade ännu.
+            </div>
+          ) : (
+            <div className="mt-5 space-y-5">
+              {sortedGyms.map((gym) => {
+                const isEditing = editingGymId === gym.id;
+                const draft = getDraftForGym(gym.id);
 
-                                    <textarea
-                                      value={editingGymDescription}
-                                      onChange={(e) =>
-                                        setEditingGymDescription(e.target.value)
-                                      }
-                                      className="min-h-[90px] w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-sm text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                                      placeholder="Kort beskrivning av gymmet"
-                                    />
+                return (
+                  <div
+                    key={gym.id}
+                    className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-5"
+                  >
+                    {!isEditing ? (
+                      <>
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <h2 className="text-xl font-semibold text-slate-900">
+                              {gym.name}
+                            </h2>
 
-                                    <div className="flex flex-wrap gap-3">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleSaveGym(gym.id)}
-                                        disabled={isUpdatingGym}
-                                        className="rounded-2xl bg-[var(--app-accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
-                                      >
-                                        {isUpdatingGym ? "Sparar..." : "Spara ändringar"}
-                                      </button>
+                            {gym.description?.trim() ? (
+                              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                                {gym.description}
+                              </p>
+                            ) : (
+                              <p className="mt-2 text-sm leading-6 text-slate-500">
+                                Ingen beskrivning ännu.
+                              </p>
+                            )}
 
-                                      <button
-                                        type="button"
-                                        onClick={cancelEditGym}
-                                        className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                                      >
-                                        Avbryt
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <h3 className="text-xl font-semibold text-[var(--app-text-strong)]">
-                                      {gym.name}
-                                    </h3>
+                            <p className="mt-3 text-sm font-medium text-slate-500">
+                              {getGymDisplayCount(gym)} utrustningsposter
+                            </p>
+                          </div>
 
-                                    {gym.description?.trim() ? (
-                                      <p className="mt-2 text-sm leading-6 text-[var(--app-text)]">
-                                        {gym.description}
-                                      </p>
-                                    ) : (
-                                      <p className="mt-2 text-sm text-[var(--app-text-muted)]">
-                                        Ingen beskrivning sparad.
-                                      </p>
-                                    )}
+                          <div className="flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              onClick={() => startEditGym(gym)}
+                              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+                            >
+                              Redigera
+                            </button>
 
-                                    <div className="mt-3 flex flex-wrap gap-2">
-                                      <span className="rounded-full bg-[var(--app-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--app-accent-strong)]">
-                                        {gym.equipment.length} utrustningsposter
-                                      </span>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteGym(gym.id)}
+                              disabled={deletingGymId === gym.id}
+                              className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {deletingGymId === gym.id ? "Tar bort..." : "Ta bort"}
+                            </button>
+                          </div>
+                        </div>
 
-                              <div className="flex flex-wrap gap-3">
-                                {!isEditing ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setExpandedGymId((prev) =>
-                                          prev === gym.id ? null : gym.id
-                                        )
-                                      }
-                                      className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                                    >
-                                      {isExpanded ? "Dölj" : "Visa"}
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => startEditGym(gym)}
-                                      className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                                    >
-                                      Redigera gym
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteGym(gym.id)}
-                                      disabled={deletingGymId === gym.id}
-                                      className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      {deletingGymId === gym.id
-                                        ? "Tar bort..."
-                                        : "Ta bort"}
-                                    </button>
-                                  </>
-                                ) : null}
-                              </div>
-                            </div>
-
-                            {isExpanded ? (
-                              <div className="border-t border-[var(--app-border)] bg-[var(--app-surface-muted)] px-5 py-5">
-                                <div className="grid gap-6 xl:grid-cols-[1fr_0.95fr]">
+                        {gym.equipment.length > 0 ? (
+                          <div className="mt-5 space-y-3">
+                            {gym.equipment.map((item) => (
+                              <div
+                                key={item.id}
+                                className="rounded-2xl border border-slate-200 bg-white p-4"
+                              >
+                                <div className="flex items-start justify-between gap-4">
                                   <div>
-                                    <div className="flex items-center justify-between gap-3">
-                                      <h4 className="text-lg font-semibold text-[var(--app-text-strong)]">
-                                        Utrustning
-                                      </h4>
-                                    </div>
-
-                                    <div className="mt-4">
-                                      {gym.equipment.length === 0 ? (
-                                        <div className="rounded-2xl border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-5 text-sm text-[var(--app-text-muted)]">
-                                          Ingen utrustning sparad ännu.
-                                        </div>
-                                      ) : (
-                                        <div className="space-y-3">
-                                          {gym.equipment.map((item) => (
-                                            <div
-                                              key={item.id}
-                                              className="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-4"
-                                            >
-                                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                                <div className="min-w-0">
-                                                  <p className="text-sm font-semibold text-[var(--app-text-strong)]">
-                                                    {item.label}
-                                                  </p>
-                                                  <p className="mt-1 text-xs uppercase tracking-[0.14em] text-[var(--app-text-muted)]">
-                                                    {getEquipmentTypeLabel(
-                                                      item.equipment_type
-                                                    )}
-                                                  </p>
-
-                                                  {formatEquipmentMeta(item) ? (
-                                                    <p className="mt-2 text-sm text-[var(--app-text)]">
-                                                      {formatEquipmentMeta(item)}
-                                                    </p>
-                                                  ) : null}
-                                                </div>
-
-                                                <button
-                                                  type="button"
-                                                  onClick={() =>
-                                                    handleDeleteEquipment(item.id)
-                                                  }
-                                                  disabled={deletingEquipmentId === item.id}
-                                                  className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                                >
-                                                  {deletingEquipmentId === item.id
-                                                    ? "Tar bort..."
-                                                    : "Ta bort"}
-                                                </button>
-                                              </div>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] p-5">
-                                    <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                                      Lägg till utrustning
+                                    <p className="text-sm font-semibold text-slate-900">
+                                      {item.label}
                                     </p>
-                                    <h4 className="mt-2 text-lg font-semibold text-[var(--app-text-strong)]">
-                                      Ny utrustning i {gym.name}
-                                    </h4>
-
-                                    <div className="mt-5 space-y-4">
-                                      <div>
-                                        <label className="text-sm font-semibold text-[var(--app-text-strong)]">
-                                          Typ
-                                        </label>
-                                        <select
-                                          value={draft.equipmentType}
-                                          onChange={(e) => {
-                                            const nextType = e.target
-                                              .value as EquipmentType;
-                                            updateDraftForGym(gym.id, {
-                                              equipmentType: nextType,
-                                              label:
-                                                draft.label ===
-                                                DEFAULT_LABELS[draft.equipmentType]
-                                                  ? DEFAULT_LABELS[nextType]
-                                                  : draft.label,
-                                            });
-                                          }}
-                                          className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                                        >
-                                          {EQUIPMENT_TYPE_OPTIONS.map((option) => (
-                                            <option
-                                              key={option.value}
-                                              value={option.value}
-                                            >
-                                              {option.label}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </div>
-
-                                      <div>
-                                        <label className="text-sm font-semibold text-[var(--app-text-strong)]">
-                                          Namn
-                                        </label>
-                                        <input
-                                          value={draft.label}
-                                          onChange={(e) =>
-                                            updateDraftForGym(gym.id, {
-                                              label: e.target.value,
-                                            })
-                                          }
-                                          placeholder={DEFAULT_LABELS[draft.equipmentType]}
-                                          className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                                        />
-                                      </div>
-
-                                      {isWeightBasedType(draft.equipmentType) ? (
-                                        <div>
-                                          <label className="text-sm font-semibold text-[var(--app-text-strong)]">
-                                            Specifika vikter
-                                          </label>
-                                          <input
-                                            value={draft.weightsInput}
-                                            onChange={(e) =>
-                                              updateDraftForGym(gym.id, {
-                                                weightsInput: e.target.value,
-                                              })
-                                            }
-                                            placeholder="t.ex. 5, 7.5, 10, 12.5, 15"
-                                            className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                                          />
-                                          <p className="mt-2 text-xs text-[var(--app-text-muted)]">
-                                            Lämna tomt om alla vikter ska antas finnas.
-                                          </p>
-                                        </div>
-                                      ) : null}
-
-                                      {draft.equipmentType === "bands" ? (
-                                        <div>
-                                          <label className="text-sm font-semibold text-[var(--app-text-strong)]">
-                                            Motstånd
-                                          </label>
-                                          <select
-                                            value={draft.bandLevel}
-                                            onChange={(e) =>
-                                              updateDraftForGym(gym.id, {
-                                                bandLevel: e.target
-                                                  .value as BandLevel,
-                                              })
-                                            }
-                                            className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                                          >
-                                            <option value="light">Lätt</option>
-                                            <option value="medium">Medium</option>
-                                            <option value="heavy">Tung</option>
-                                          </select>
-                                        </div>
-                                      ) : null}
-
-                                      <div>
-                                        <label className="text-sm font-semibold text-[var(--app-text-strong)]">
-                                          Antal
-                                        </label>
-                                        <input
-                                          inputMode="numeric"
-                                          value={draft.quantity}
-                                          onChange={(e) =>
-                                            updateDraftForGym(gym.id, {
-                                              quantity: e.target.value.replace(
-                                                /[^\d]/g,
-                                                ""
-                                              ),
-                                            })
-                                          }
-                                          placeholder="t.ex. 2"
-                                          className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                                        />
-                                      </div>
-
-                                      <div>
-                                        <label className="text-sm font-semibold text-[var(--app-text-strong)]">
-                                          Notering
-                                        </label>
-                                        <textarea
-                                          value={draft.notes}
-                                          onChange={(e) =>
-                                            updateDraftForGym(gym.id, {
-                                              notes: e.target.value,
-                                            })
-                                          }
-                                          placeholder="Valfritt"
-                                          className="mt-2 min-h-[90px] w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-sm text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                                        />
-                                      </div>
-
-                                      <div className="flex flex-wrap gap-3">
-                                        <button
-                                          type="button"
-                                          onClick={() => handleAddEquipment(gym.id)}
-                                          disabled={savingEquipmentGymId === gym.id}
-                                          className="rounded-2xl bg-[var(--app-accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                          {savingEquipmentGymId === gym.id
-                                            ? "Sparar..."
-                                            : "Lägg till utrustning"}
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={() => resetDraftForGym(gym.id)}
-                                          className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                                        >
-                                          Rensa
-                                        </button>
-                                      </div>
-                                    </div>
+                                    <p className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                      {getEquipmentTypeLabel(item.equipment_type)}
+                                    </p>
+                                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                                      {formatEquipmentMeta(item)}
+                                    </p>
                                   </div>
                                 </div>
                               </div>
-                            ) : null}
+                            ))}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">
+                              Redigerar gym
+                            </p>
+                            <h2 className="mt-2 text-xl font-semibold text-slate-900">
+                              {gym.name}
+                            </h2>
+                          </div>
 
-              <div className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-7">
-                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                  Skapa nytt gym
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                  Lägg till ny träningsmiljö
-                </h2>
+                          <div className="flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              onClick={() => void handleSaveGym(gym.id)}
+                              disabled={isUpdatingGym}
+                              className="rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isUpdatingGym ? "Sparar..." : "Spara ändringar"}
+                            </button>
 
-                <form onSubmit={handleCreateGym} className="mt-6 grid gap-4">
-                  <div>
-                    <label
-                      htmlFor="new-gym-name"
-                      className="text-sm font-semibold text-[var(--app-text-strong)]"
-                    >
-                      Namn på gym
-                    </label>
-                    <input
-                      id="new-gym-name"
-                      value={newGymName}
-                      onChange={(e) => setNewGymName(e.target.value)}
-                      placeholder="t.ex. Hemmagym, Friskis, Jobbgym"
-                      className="mt-2 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                    />
+                            <button
+                              type="button"
+                              onClick={cancelEditGym}
+                              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+                            >
+                              Klar
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 grid gap-4">
+                          <div>
+                            <label className="mb-2 block text-sm font-semibold text-slate-900">
+                              Namn
+                            </label>
+                            <input
+                              value={editingGymName}
+                              onChange={(e) => setEditingGymName(e.target.value)}
+                              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="mb-2 block text-sm font-semibold text-slate-900">
+                              Beskrivning
+                            </label>
+                            <textarea
+                              value={editingGymDescription}
+                              onChange={(e) =>
+                                setEditingGymDescription(e.target.value)
+                              }
+                              rows={3}
+                              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-6 rounded-[24px] border border-slate-200 bg-white p-4">
+                          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Utrustning i gymmet
+                          </p>
+
+                          {gym.equipment.length === 0 ? (
+                            <p className="mt-3 text-sm text-slate-500">
+                              Ingen utrustning sparad ännu.
+                            </p>
+                          ) : (
+                            <div className="mt-4 space-y-3">
+                              {gym.equipment.map((item) => (
+                                <div
+                                  key={item.id}
+                                  className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                                >
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div>
+                                      <p className="text-sm font-semibold text-slate-900">
+                                        {item.label}
+                                      </p>
+                                      <p className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                        {getEquipmentTypeLabel(item.equipment_type)}
+                                      </p>
+                                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                                        {formatEquipmentMeta(item)}
+                                      </p>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void handleDeleteEquipment(item.id)
+                                      }
+                                      disabled={deletingEquipmentId === item.id}
+                                      className="rounded-2xl border border-rose-200 bg-white px-4 py-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      {deletingEquipmentId === item.id
+                                        ? "Tar bort..."
+                                        : "Ta bort"}
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-6 rounded-[24px] border border-indigo-100 bg-indigo-50/60 p-4">
+                          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">
+                            Lägg till utrustning
+                          </p>
+
+                          <div className="mt-4 grid gap-4 md:grid-cols-2">
+                            <div>
+                              <label className="mb-2 block text-sm font-semibold text-slate-900">
+                                Typ
+                              </label>
+                              <select
+                                value={draft.equipmentType}
+                                onChange={(e) => {
+                                  const nextType = e.target.value as EquipmentType;
+
+                                  updateDraftForGym(gym.id, {
+                                    equipmentType: nextType,
+                                    label: DEFAULT_LABELS[nextType],
+                                    bandLevel:
+                                      nextType === "bands" ? "medium" : draft.bandLevel,
+                                    weightInput: "",
+                                  });
+                                }}
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                              >
+                                {EQUIPMENT_TYPE_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="mb-2 block text-sm font-semibold text-slate-900">
+                                Namn
+                              </label>
+                              <input
+                                value={draft.label}
+                                onChange={(e) =>
+                                  updateDraftForGym(gym.id, {
+                                    label: e.target.value,
+                                  })
+                                }
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                              />
+                            </div>
+
+                            {isWeightBasedType(draft.equipmentType) ? (
+                              <div>
+                                <label className="mb-2 block text-sm font-semibold text-slate-900">
+                                  Vikt att lägga till (kg)
+                                </label>
+                                <input
+                                  value={draft.weightInput}
+                                  onChange={(e) =>
+                                    updateDraftForGym(gym.id, {
+                                      weightInput: e.target.value,
+                                    })
+                                  }
+                                  inputMode="decimal"
+                                  placeholder="Till exempel 4"
+                                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                                />
+                                <p className="mt-2 text-xs text-slate-500">
+                                  Lägg till en vikt i taget. Samma utrustning slås ihop
+                                  och får en gemensam viktlista.
+                                </p>
+                              </div>
+                            ) : null}
+
+                            {draft.equipmentType === "bands" ? (
+                              <div>
+                                <label className="mb-2 block text-sm font-semibold text-slate-900">
+                                  Motstånd
+                                </label>
+                                <select
+                                  value={draft.bandLevel}
+                                  onChange={(e) =>
+                                    updateDraftForGym(gym.id, {
+                                      bandLevel: e.target.value as BandLevel,
+                                    })
+                                  }
+                                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                                >
+                                  <option value="light">Lätt</option>
+                                  <option value="medium">Medium</option>
+                                  <option value="heavy">Tung</option>
+                                </select>
+                              </div>
+                            ) : null}
+
+                            <div>
+                              <label className="mb-2 block text-sm font-semibold text-slate-900">
+                                Antal
+                              </label>
+                              <input
+                                value={draft.quantity}
+                                onChange={(e) =>
+                                  updateDraftForGym(gym.id, {
+                                    quantity: e.target.value,
+                                  })
+                                }
+                                inputMode="numeric"
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-4">
+                            <label className="mb-2 block text-sm font-semibold text-slate-900">
+                              Anteckning
+                            </label>
+                            <textarea
+                              value={draft.notes}
+                              onChange={(e) =>
+                                updateDraftForGym(gym.id, {
+                                  notes: e.target.value,
+                                })
+                              }
+                              rows={2}
+                              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                            />
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              onClick={() => void handleAddEquipment(gym.id)}
+                              disabled={savingEquipmentGymId === gym.id}
+                              className="rounded-2xl bg-indigo-600 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {savingEquipmentGymId === gym.id
+                                ? "Sparar..."
+                                : "Lägg till utrustning"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => resetDraftForGym(gym.id)}
+                              className="rounded-2xl border border-slate-200 bg-white px-5 py-3.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+                            >
+                              Återställ
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
-
-                  <div>
-                    <label
-                      htmlFor="new-gym-description"
-                      className="text-sm font-semibold text-[var(--app-text-strong)]"
-                    >
-                      Beskrivning
-                    </label>
-                    <textarea
-                      id="new-gym-description"
-                      value={newGymDescription}
-                      onChange={(e) => setNewGymDescription(e.target.value)}
-                      placeholder="Valfritt, t.ex. litet hemmagym i garaget"
-                      className="mt-2 min-h-[100px] w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-sm text-[var(--app-text-strong)] outline-none focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      type="submit"
-                      disabled={isSavingGym}
-                      className="rounded-2xl bg-[var(--app-accent)] px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isSavingGym ? "Sparar..." : "Skapa gym"}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </section>
-
-            <aside className="bg-[var(--app-surface)] p-6 sm:p-8 lg:p-10">
-              <div className="space-y-6">
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                    Översikt
-                  </p>
-                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                    Gym & utrustning
-                  </h2>
-                  <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
-                    Här bygger du upp dina träningsmiljöer så att kommande pass blir
-                    bättre anpassade efter vad du faktiskt har tillgång till.
-                  </p>
-                </div>
-
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm">
-                  <h3 className="text-lg font-semibold text-[var(--app-text-strong)]">
-                    Snabbnavigering
-                  </h3>
-
-                  <div className="mt-5 grid gap-3">
-                    <Link
-                      href="/home"
-                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      Till hem
-                    </Link>
-
-                    <Link
-                      href="/history"
-                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      Träningshistorik
-                    </Link>
-
-                    <Link
-                      href="/settings"
-                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      Inställningar
-                    </Link>
-                  </div>
-                </div>
-
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[linear-gradient(180deg,#ecfdf5_0%,#f8fafc_100%)] p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                    Tips
-                  </p>
-                  <h3 className="mt-2 text-lg font-semibold text-[var(--app-text-strong)]">
-                    Bra upplägg
-                  </h3>
-                  <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
-                    Skapa gärna separata gym för till exempel hemmagym, kommersiellt
-                    gym och kroppsvikt. Då blir AI-pass lättare att anpassa efter rätt
-                    miljö.
-                  </p>
-                </div>
-              </div>
-            </aside>
-          </div>
-        </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );

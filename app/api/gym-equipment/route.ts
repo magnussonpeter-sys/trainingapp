@@ -21,13 +21,17 @@ type EquipmentType = (typeof ALLOWED_EQUIPMENT_TYPES)[number];
 type BandLevel = (typeof ALLOWED_BAND_LEVELS)[number];
 
 function isValidEquipmentType(value: unknown): value is EquipmentType {
-  return typeof value === "string" &&
-    ALLOWED_EQUIPMENT_TYPES.includes(value as EquipmentType);
+  return (
+    typeof value === "string" &&
+    ALLOWED_EQUIPMENT_TYPES.includes(value as EquipmentType)
+  );
 }
 
 function isValidBandLevel(value: unknown): value is BandLevel {
-  return typeof value === "string" &&
-    ALLOWED_BAND_LEVELS.includes(value as BandLevel);
+  return (
+    typeof value === "string" &&
+    ALLOWED_BAND_LEVELS.includes(value as BandLevel)
+  );
 }
 
 function isWeightBasedType(type: EquipmentType) {
@@ -49,6 +53,11 @@ function normalizeWeights(input: unknown): number[] | null {
   if (numbers.length === 0) return null;
 
   return [...new Set(numbers)].sort((a, b) => a - b);
+}
+
+// Normaliserar label så samma utrustning kan matchas robust i databasen.
+function normalizeLabel(value: string) {
+  return value.trim().toLowerCase();
 }
 
 export async function POST(req: NextRequest) {
@@ -116,8 +125,8 @@ export async function POST(req: NextRequest) {
       quantity == null || quantity === ""
         ? null
         : Number.isFinite(Number(quantity)) && Number(quantity) > 0
-          ? Number(quantity)
-          : null;
+        ? Number(quantity)
+        : null;
 
     const normalizedWeights = isWeightBasedType(equipment_type)
       ? normalizeWeights(weights_kg)
@@ -132,9 +141,101 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
+
       parsedBandLevel = band_level;
     }
 
+    // För viktbaserad utrustning vill vi slå ihop samma utrustning till en post.
+    if (isWeightBasedType(equipment_type)) {
+      const existingResult = await pool.query(
+        `
+        SELECT
+          id,
+          gym_id,
+          equipment_type,
+          label,
+          weights_kg,
+          band_level,
+          quantity,
+          notes,
+          weight_unit
+        FROM gym_equipment
+        WHERE gym_id = $1
+          AND equipment_type = $2
+          AND LOWER(TRIM(label)) = $3
+        LIMIT 1
+        `,
+        [gym_id, equipment_type, normalizeLabel(trimmedLabel)]
+      );
+
+      if (existingResult.rows.length > 0) {
+        const existing = existingResult.rows[0] as {
+          id: string;
+          gym_id: string;
+          equipment_type: EquipmentType;
+          label: string;
+          weights_kg?: number[] | null;
+          band_level?: BandLevel | null;
+          quantity?: number | null;
+          notes?: string | null;
+          weight_unit?: string | null;
+        };
+
+        const mergedWeights = [
+          ...new Set([
+            ...((existing.weights_kg ?? []).map((value) => Number(value)) || []),
+            ...((normalizedWeights ?? []).map((value) => Number(value)) || []),
+          ]),
+        ]
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .sort((a, b) => a - b);
+
+        // Behåll tidigare quantity om ny inte anges, annars använd ny.
+        const nextQuantity =
+          parsedQuantity == null ? existing.quantity ?? null : parsedQuantity;
+
+        // Behåll tidigare notes om ny inte anges, annars använd ny.
+        const nextNotes =
+          trimmedNotes == null ? existing.notes ?? null : trimmedNotes;
+
+        const updateResult = await pool.query(
+          `
+          UPDATE gym_equipment
+          SET
+            weights_kg = $1::numeric[],
+            quantity = $2,
+            notes = $3,
+            label = $4
+          WHERE id = $5
+          RETURNING
+            id,
+            gym_id,
+            equipment_type,
+            label,
+            weights_kg,
+            band_level,
+            quantity,
+            notes,
+            weight_unit
+          `,
+          [
+            mergedWeights.length > 0 ? mergedWeights : null,
+            nextQuantity,
+            nextNotes,
+            trimmedLabel,
+            existing.id,
+          ]
+        );
+
+        return NextResponse.json({
+          ok: true,
+          equipment: updateResult.rows[0],
+          merged: true,
+        });
+      }
+    }
+
+    // För övriga typer skapar vi ny rad som tidigare.
     const result = await pool.query(
       `
       INSERT INTO gym_equipment (
@@ -174,6 +275,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       equipment: result.rows[0],
+      merged: false,
     });
   } catch (error) {
     console.error("POST equipment failed:", error);
