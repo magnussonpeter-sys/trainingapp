@@ -1,7 +1,6 @@
-// app/api/goal-review/route.ts
-
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+
 import type { GoalAnalysis, GoalType } from "@/lib/goal-analysis";
 
 type GoalReviewRequest = {
@@ -16,6 +15,23 @@ type GoalReviewResponse = {
   nextFocus: string;
 };
 
+// Enkel måltext för mer naturliga svar.
+function getGoalLabel(goal: GoalType) {
+  switch (goal) {
+    case "strength":
+      return "styrka";
+    case "hypertrophy":
+      return "muskelbyggnad";
+    case "health":
+      return "hälsa och funktion";
+    case "body_composition":
+      return "kroppssammansättning";
+    default:
+      return "träning";
+  }
+}
+
+// Sanerar kort text så UI inte får för långa rubriker.
 function sanitizeShortText(value: unknown, fallback: string, maxLength = 220) {
   if (typeof value !== "string") {
     return fallback;
@@ -34,37 +50,35 @@ function sanitizeShortText(value: unknown, fallback: string, maxLength = 220) {
   return `${cleaned.slice(0, maxLength - 3).trim()}...`;
 }
 
-/**
- * Enkel fallback om AI-anropet inte fungerar.
- * Då får användaren fortfarande något användbart i UI.
- */
-function buildFallbackResponse(goal: GoalType, analysis: GoalAnalysis): GoalReviewResponse {
-  const status = analysis.evaluation.status;
-
-  const goalLabelMap: Record<GoalType, string> = {
-    strength: "styrka",
-    hypertrophy: "hypertrofi",
-    health: "hälsa",
-    body_composition: "kroppskomposition",
-  };
+// Fallback om AI-anropet fallerar.
+function buildFallbackResponse(
+  goal: GoalType,
+  analysis: GoalAnalysis
+): GoalReviewResponse {
+  const goalLabel = getGoalLabel(goal);
+  const firstFocus =
+    analysis.focusAreas[0]?.title ??
+    "fortsätt bygga jämn träning med hållbar progression";
 
   const headline =
-    status === "on_track"
+    analysis.evaluation.status === "on_track"
       ? "Du är på rätt väg"
-      : status === "needs_attention"
-      ? "Det viktigaste nu är regelbundenhet"
-      : "Du har en bra grund att bygga vidare på";
+      : analysis.evaluation.status === "needs_attention"
+      ? "Det viktigaste nu är att justera upplägget"
+      : "Du har en grund att bygga vidare på";
 
-  const nextFocus =
-    analysis.focusAreas[0]?.title ??
-    "Fortsätt med jämn träning och hållbar progression";
+  const nextFocus = sanitizeShortText(
+    firstFocus,
+    "Fortsätt med jämn träning och hållbar progression",
+    120
+  );
 
   const comment =
-    status === "on_track"
-      ? `Din träning ser stabil ut för målet ${goalLabelMap[goal]}. Nästa steg är att fortsätta bygga vidare utan att göra upplägget mer komplicerat än nödvändigt.`
-      : status === "needs_attention"
-      ? `Just nu bör du förenkla och prioritera kontinuitet mot målet ${goalLabelMap[goal]}. När rytmen sitter blir det mycket lättare att förbättra resten.`
-      : `Du har en stabil grund för målet ${goalLabelMap[goal]}, men du kan få bättre effekt genom att fokusera lite tydligare på det viktigaste området just nu.`;
+    analysis.evaluation.status === "on_track"
+      ? `Din träning ser i stora drag tillräckligt bra ut för målet ${goalLabel}. Fortsätt bygga vidare med små steg framåt, utan att tappa kontinuiteten.`
+      : analysis.evaluation.status === "needs_attention"
+      ? `Just nu matchar träningen inte målet ${goalLabel} tillräckligt bra. Det viktigaste är att förbättra det område som ligger längst efter, särskilt om frekvens eller total träningsmängd är för låg.`
+      : `Du har en okej grund för målet ${goalLabel}, men du behöver sannolikt göra träningen lite mer konsekvent eller lite bättre riktad mot målet för att få tydligare resultat.`;
 
   return {
     ok: true,
@@ -74,56 +88,91 @@ function buildFallbackResponse(goal: GoalType, analysis: GoalAnalysis): GoalRevi
   };
 }
 
-export async function POST(req: Request) {
-  try {
-    const body = (await req.json()) as GoalReviewRequest;
-    const { goal, analysis } = body ?? {};
+// Enkel validering av request-body.
+function isGoalReviewRequest(value: unknown): value is GoalReviewRequest {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
 
-    if (!goal || !analysis) {
+  const maybeValue = value as GoalReviewRequest;
+
+  return (
+    typeof maybeValue.goal === "string" &&
+    !!maybeValue.analysis &&
+    typeof maybeValue.analysis === "object"
+  );
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json().catch(() => null)) as unknown;
+
+    if (!isGoalReviewRequest(body)) {
       return NextResponse.json(
         {
           ok: false,
-          error: "Missing goal or analysis",
+          error: "Ogiltigt request-format.",
         },
         { status: 400 }
       );
     }
 
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    const { goal, analysis } = body;
 
-    if (!apiKey) {
+    // Om ingen API-nyckel finns får användaren ändå något användbart.
+    if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(buildFallbackResponse(goal, analysis));
     }
 
-    const client = new OpenAI({ apiKey });
+    const client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
 
+    const goalLabel = getGoalLabel(goal);
+
+    // Vi ber modellen vara väldigt konkret kring vad som behöver ändras.
     const prompt = `
-Du är en erfaren träningscoach.
+Du är en tydlig men pedagogisk träningscoach i en svensk träningsapp.
 
-Skriv en mycket kort coach-kommentar på svenska baserat på en redan strukturerad analys.
-Du ska INTE räkna om något själv. Du ska bara tolka analysen pedagogiskt.
+Användarens mål: ${goalLabel}
 
-Krav:
-- Var konkret, varm och tydlig
-- Skriv för en vanlig användare, inte som en forskningsrapport
-- Undvik fluff
-- Ge inte medicinska råd
-- Fokusera på vad som är viktigast just nu
-- Anpassa tonen till målet
-- Bygg bara på datan nedan
+Analysdata:
+- status: ${analysis.evaluation.status}
+- overallScore: ${analysis.evaluation.overallScore}
+- weeklyFrequency: ${analysis.metrics.weeklyFrequency}
+- completedWorkouts28d: ${analysis.metrics.completedWorkouts28d}
+- totalSets28d: ${analysis.metrics.totalSets28d}
+- uniqueExercises28d: ${analysis.metrics.uniqueExercises28d}
+- averageWorkoutMinutes: ${analysis.metrics.averageWorkoutMinutes}
+- consistencyScore: ${analysis.metrics.consistencyScore}
+- progressionScore: ${analysis.metrics.progressionScore}
+- volumeScore: ${analysis.metrics.volumeScore}
+- recoveryScore: ${analysis.metrics.recoveryScore}
+- exerciseVarietyScore: ${analysis.metrics.exerciseVarietyScore}
+- strengths: ${analysis.evaluation.strengths.join(" | ")}
+- gaps: ${analysis.evaluation.gaps.join(" | ")}
+- focusAreas: ${analysis.focusAreas
+      .map((area) => `${area.title}: ${area.reason}`)
+      .join(" | ")}
+- recommendations: ${analysis.recommendations
+      .map((rec) => `${rec.title}: ${rec.description}`)
+      .join(" | ")}
 
-Returnera ENDAST giltig JSON enligt exakt detta format:
+Svara på svenska som JSON med exakt dessa nycklar:
 {
-  "headline": "kort rubrik, max 10 ord",
-  "nextFocus": "en kort mening om viktigaste fokus just nu, max 18 ord",
-  "comment": "2-3 meningar, max cirka 420 tecken"
+  "headline": "...",
+  "nextFocus": "...",
+  "comment": "..."
 }
 
-Mål:
-${goal}
-
-Analys:
-${JSON.stringify(analysis, null, 2)}
+Regler:
+- Var konkret.
+- Förklara tydligt om användaren tränar för lite, för ojämnt eller med för låg total volym för målet.
+- Om analysen visar brister, säg uttryckligen vad användaren behöver göra för att komma närmare målet.
+- Undvik fluff, tomma peppfraser och vaga formuleringar.
+- headline max 80 tecken.
+- nextFocus max 110 tecken.
+- comment max 500 tecken.
 `.trim();
 
     const response = await client.responses.create({
@@ -131,8 +180,11 @@ ${JSON.stringify(analysis, null, 2)}
       input: prompt,
     });
 
-    const rawText =
-      typeof response.output_text === "string" ? response.output_text : "";
+    const text = response.output_text?.trim() ?? "";
+
+    if (!text) {
+      return NextResponse.json(buildFallbackResponse(goal, analysis));
+    }
 
     let parsed: {
       headline?: unknown;
@@ -141,7 +193,11 @@ ${JSON.stringify(analysis, null, 2)}
     } | null = null;
 
     try {
-      parsed = JSON.parse(rawText);
+      parsed = JSON.parse(text) as {
+        headline?: unknown;
+        nextFocus?: unknown;
+        comment?: unknown;
+      };
     } catch {
       parsed = null;
     }
@@ -152,25 +208,29 @@ ${JSON.stringify(analysis, null, 2)}
 
     return NextResponse.json({
       ok: true,
-      headline: sanitizeShortText(parsed.headline, "Din AI-coach säger"),
+      headline: sanitizeShortText(
+        parsed.headline,
+        buildFallbackResponse(goal, analysis).headline,
+        80
+      ),
       nextFocus: sanitizeShortText(
         parsed.nextFocus,
-        analysis.focusAreas[0]?.title ?? "Fortsätt bygga vidare steg för steg",
-        120
+        buildFallbackResponse(goal, analysis).nextFocus,
+        110
       ),
       comment: sanitizeShortText(
         parsed.comment,
         buildFallbackResponse(goal, analysis).comment,
-        420
+        500
       ),
-    });
+    } satisfies GoalReviewResponse);
   } catch (error) {
-    console.error("Kunde inte skapa goal review:", error);
+    console.error("goal-review POST error:", error);
 
     return NextResponse.json(
       {
         ok: false,
-        error: "Kunde inte skapa AI-utvärdering.",
+        error: "Kunde inte skapa AI-kommentar.",
       },
       { status: 500 }
     );

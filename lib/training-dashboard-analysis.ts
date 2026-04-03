@@ -1,14 +1,13 @@
+import {
+  analyzeTraining,
+  type GoalAnalysis,
+  type GoalType,
+} from "@/lib/goal-analysis";
 import type { WorkoutLog } from "@/lib/workout-log-storage";
 
-// Samma måltyper som redan används i appen.
-export type TrainingGoal =
-  | "strength"
-  | "hypertrophy"
-  | "health"
-  | "body_composition";
-
+// Dashboarden använder samma måltyper som analysmotorn.
 export type DashboardUserSettings = {
-  training_goal?: TrainingGoal | null;
+  training_goal?: GoalType | null;
   experience_level?: string | null;
   age?: number | null;
   weight_kg?: number | null;
@@ -24,6 +23,14 @@ export type DashboardMetric = {
 export type DashboardRecommendation = {
   title: string;
   detail: string;
+  timeframe?: string;
+};
+
+export type DashboardRequirementItem = {
+  label: string;
+  target: string;
+  actual: string;
+  status: "good" | "warning" | "low";
 };
 
 export type DashboardAnalysis = {
@@ -36,325 +43,403 @@ export type DashboardAnalysis = {
   metrics: DashboardMetric[];
   focusAreas: string[];
   recommendations: DashboardRecommendation[];
+  requirementItems: DashboardRequirementItem[];
+  strengths: string[];
+  gaps: string[];
+  structuredAnalysis: GoalAnalysis | null;
 };
 
-const GOAL_LABELS: Record<TrainingGoal, string> = {
-  strength: "Styrka",
-  hypertrophy: "Muskelbyggnad",
-  health: "Hälsa och funktion",
-  body_composition: "Kroppssammansättning",
+type GoalProfile = {
+  label: string;
+  weeklyFrequencyTarget: string;
+  weeklyFrequencyMin: number;
+  weeklyFrequencyGood: number;
+  sets28dTarget: string;
+  sets28dMin: number;
+  sets28dGood: number;
+  varietyTarget: string;
+  varietyMin: number;
+  primaryAdvice: string;
 };
 
-function average(values: number[]) {
-  if (values.length === 0) {
-    return 0;
+const GOAL_PROFILES: Record<GoalType, GoalProfile> = {
+  strength: {
+    label: "Styrka",
+    weeklyFrequencyTarget: "2–4 pass / vecka",
+    weeklyFrequencyMin: 1.75,
+    weeklyFrequencyGood: 2.5,
+    sets28dTarget: "32–64 set / 28 dagar",
+    sets28dMin: 32,
+    sets28dGood: 48,
+    varietyTarget: "måttlig variation",
+    varietyMin: 5,
+    primaryAdvice:
+      "För styrkemål behöver du regelbundna pass, tydliga huvudövningar och tillräcklig återhämtning mellan tyngre belastningar.",
+  },
+  hypertrophy: {
+    label: "Muskelbyggnad",
+    weeklyFrequencyTarget: "3–5 pass / vecka",
+    weeklyFrequencyMin: 2.25,
+    weeklyFrequencyGood: 3,
+    sets28dTarget: "48–96 set / 28 dagar",
+    sets28dMin: 48,
+    sets28dGood: 72,
+    varietyTarget: "god övningsbredd",
+    varietyMin: 7,
+    primaryAdvice:
+      "För hypertrofi behöver du oftast både tillräcklig träningsfrekvens och tillräcklig total veckovolym. För lite pass eller för få set gör att muskelbyggnaden bromsas.",
+  },
+  health: {
+    label: "Hälsa och funktion",
+    weeklyFrequencyTarget: "2–4 pass / vecka",
+    weeklyFrequencyMin: 1.75,
+    weeklyFrequencyGood: 2.5,
+    sets28dTarget: "28–64 set / 28 dagar",
+    sets28dMin: 28,
+    sets28dGood: 44,
+    varietyTarget: "bred helkroppstäckning",
+    varietyMin: 7,
+    primaryAdvice:
+      "För hälsomål är hållbar regelbundenhet och bred helkroppstäckning viktigare än maximal belastning i enskilda pass.",
+  },
+  body_composition: {
+    label: "Kroppssammansättning",
+    weeklyFrequencyTarget: "3–5 pass / vecka",
+    weeklyFrequencyMin: 2.5,
+    weeklyFrequencyGood: 3.25,
+    sets28dTarget: "40–84 set / 28 dagar",
+    sets28dMin: 40,
+    sets28dGood: 60,
+    varietyTarget: "god övningsbredd",
+    varietyMin: 6,
+    primaryAdvice:
+      "För kroppssammansättning behöver du framför allt jämn träningsfrekvens och tillräcklig mängd arbete över tid, inte bara enstaka hårda pass.",
+  },
+};
+
+// Enkel fallback för okänt eller saknat mål.
+function getGoalProfile(goal: GoalType | null | undefined): GoalProfile {
+  return GOAL_PROFILES[goal ?? "health"];
+}
+
+// Hjälper oss att mappa målmotorns etiketter till dashboard-etiketter.
+function mapStatus(status: GoalAnalysis["evaluation"]["status"]) {
+  switch (status) {
+    case "on_track":
+      return {
+        status: "excellent" as const,
+        statusLabel: "På rätt väg",
+      };
+    case "needs_attention":
+      return {
+        status: "needs_attention" as const,
+        statusLabel: "Behöver fokus",
+      };
+    case "steady":
+    default:
+      return {
+        status: "good" as const,
+        statusLabel: "Stabil grund",
+      };
+  }
+}
+
+// Kort etikett för rekommendationens tidshorisont.
+function getTimeframeLabel(timeframe?: string) {
+  switch (timeframe) {
+    case "next_workout":
+      return "Nästa pass";
+    case "next_7_days":
+      return "Nästa 7 dagar";
+    case "next_14_days":
+      return "Nästa 14 dagar";
+    default:
+      return undefined;
+  }
+}
+
+// Bedömer hur nära användaren ligger det som målet vanligtvis kräver.
+function getRequirementStatus(
+  actual: number,
+  min: number,
+  good: number
+): DashboardRequirementItem["status"] {
+  if (actual >= good) {
+    return "good";
   }
 
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+  if (actual >= min) {
+    return "warning";
+  }
+
+  return "low";
 }
 
-function daysBetween(from: Date, to: Date) {
-  const diffMs = to.getTime() - from.getTime();
-  return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+// Text för sektioner där vi tydligt vill säga vad målet kräver.
+function buildRequirementItems(
+  analysis: GoalAnalysis,
+  goalProfile: GoalProfile
+): DashboardRequirementItem[] {
+  const { metrics } = analysis;
+
+  return [
+    {
+      label: "Passfrekvens",
+      target: goalProfile.weeklyFrequencyTarget,
+      actual: `${metrics.weeklyFrequency.toFixed(1)} pass / vecka`,
+      status: getRequirementStatus(
+        metrics.weeklyFrequency,
+        goalProfile.weeklyFrequencyMin,
+        goalProfile.weeklyFrequencyGood
+      ),
+    },
+    {
+      label: "Total träningsvolym",
+      target: goalProfile.sets28dTarget,
+      actual: `${metrics.totalSets28d} set / 28 dagar`,
+      status: getRequirementStatus(
+        metrics.totalSets28d,
+        goalProfile.sets28dMin,
+        goalProfile.sets28dGood
+      ),
+    },
+    {
+      label: "Övningsbredd",
+      target: goalProfile.varietyTarget,
+      actual: `${metrics.uniqueExercises28d} unika övningar / 28 dagar`,
+      status: getRequirementStatus(
+        metrics.uniqueExercises28d,
+        goalProfile.varietyMin,
+        goalProfile.varietyMin + 2
+      ),
+    },
+  ];
 }
 
-function safeDate(value: string) {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
+// Bygger en mer direkt måljämförelse än den gamla dashboard-varianten.
+function buildGoalSpecificSummary(
+  analysis: GoalAnalysis,
+  goalProfile: GoalProfile
+) {
+  const { metrics, evaluation } = analysis;
 
-function getCompletedLogs(logs: WorkoutLog[]) {
-  return [...logs]
-    .filter((log) => log.status === "completed")
-    .sort(
-      (a, b) =>
-        new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()
+  const intro =
+    `${goalProfile.primaryAdvice} ` +
+    `Just nu ligger du på ${metrics.weeklyFrequency.toFixed(
+      1
+    )} pass per vecka, ${metrics.totalSets28d} set senaste 28 dagarna ` +
+    `och ${metrics.uniqueExercises28d} unika övningar under samma period. `;
+
+  if (evaluation.status === "on_track") {
+    return (
+      intro +
+      "Det talar för att du i stora drag tränar på ett sätt som kan föra dig mot målet, så nästa steg är att fortsätta bygga vidare utan att tappa kontinuitet."
     );
+  }
+
+  if (evaluation.status === "needs_attention") {
+    return (
+      intro +
+      "Det här är sannolikt för lite eller för ojämnt i förhållande till målet just nu. För att komma närmare målet behöver du först höja regelbundenheten och därefter säkerställa tillräcklig träningsmängd."
+    );
+  }
+
+  return (
+    intro +
+    "Du har en grund att bygga vidare på, men för att nå målet tydligare behöver träningen bli lite mer konsekvent eller lite bättre matchad mot målets krav."
+  );
 }
 
-function getGoalLabel(goal?: TrainingGoal | null) {
-  return goal ? GOAL_LABELS[goal] : "Allmän träning";
+// Tydligare rubrik för dashboarden.
+function buildTitle(analysis: GoalAnalysis, goalProfile: GoalProfile) {
+  const biggestGap = analysis.focusAreas[0]?.title ?? null;
+
+  if (analysis.evaluation.status === "on_track") {
+    return `Du ligger bra till mot målet ${goalProfile.label.toLowerCase()}`;
+  }
+
+  if (analysis.evaluation.status === "needs_attention") {
+    return biggestGap
+      ? `För att nå ${goalProfile.label.toLowerCase()} behöver du främst förbättra: ${biggestGap.toLowerCase()}`
+      : `Du behöver justera träningen för att nå målet ${goalProfile.label.toLowerCase()}`;
+  }
+
+  return `Du har en stabil grund för ${goalProfile.label.toLowerCase()}, men nästa steg behöver bli tydligare`;
 }
 
-function buildNoDataAnalysis(goal?: TrainingGoal | null): DashboardAnalysis {
-  const goalLabel = getGoalLabel(goal);
+// Mappning till dashboardens egna metric-kort.
+function buildMetrics(
+  analysis: GoalAnalysis,
+  goalProfile: GoalProfile
+): DashboardMetric[] {
+  return [
+    {
+      label: "Pass / vecka",
+      value: analysis.metrics.weeklyFrequency.toFixed(1),
+      hint: `Målbild: ${goalProfile.weeklyFrequencyTarget}`,
+    },
+    {
+      label: "Set senaste 28 dagar",
+      value: String(analysis.metrics.totalSets28d),
+      hint: `Målbild: ${goalProfile.sets28dTarget}`,
+    },
+    {
+      label: "Snittlängd",
+      value: `${analysis.metrics.averageWorkoutMinutes} min`,
+      hint: "Visar om passen blivit väldigt korta eller långa",
+    },
+    {
+      label: "Övningsbredd",
+      value: String(analysis.metrics.uniqueExercises28d),
+      hint: `Målbild: ${goalProfile.varietyTarget}`,
+    },
+  ];
+}
+
+// Samlar fokusområden till ren text för UI.
+function buildFocusAreas(analysis: GoalAnalysis, requirementItems: DashboardRequirementItem[]) {
+  const focusAreas = analysis.focusAreas.map(
+    (area) => `${area.title}: ${area.reason}`
+  );
+
+  // Lägg till extra målgap om användaren ligger under kravbilden.
+  for (const item of requirementItems) {
+    if (item.status === "low") {
+      focusAreas.unshift(
+        `${item.label}: Du ligger på ${item.actual}, men för målet behövs ungefär ${item.target}.`
+      );
+    }
+  }
+
+  return Array.from(new Set(focusAreas)).slice(0, 5);
+}
+
+// Gör rekommendationerna mer dashboard-vänliga.
+function buildRecommendations(
+  analysis: GoalAnalysis
+): DashboardRecommendation[] {
+  return analysis.recommendations.map((recommendation) => ({
+    title: recommendation.title,
+    detail: recommendation.description,
+    timeframe: getTimeframeLabel(recommendation.timeframe),
+  }));
+}
+
+// Fallback när ingen träningshistorik finns ännu.
+function buildNoDataAnalysis(goal: GoalType | null | undefined): DashboardAnalysis {
+  const goalProfile = getGoalProfile(goal);
 
   return {
-    title: "AI-analysen väntar på första passen",
-    summary: `När du har loggat några pass kan dashboarden börja bedöma hur träningen ligger till mot målet ${goalLabel.toLowerCase()}. Just nu är bästa nästa steg att komma igång med regelbundenhet.`,
+    title: `AI-analysen väntar på fler pass`,
+    summary:
+      `För målet ${goalProfile.label.toLowerCase()} behöver appen lite mer träningsdata för att kunna ge träffsäkra råd. ` +
+      `Det viktigaste nu är att börja bygga en stabil rytm och logga dina pass.`,
     status: "no_data",
     statusLabel: "Behöver underlag",
-    goalLabel,
+    goalLabel: goalProfile.label,
     consistencyScore: 0,
     metrics: [
       {
-        label: "Pass senaste 7 dagar",
-        value: "0",
-        hint: "Börja med ett första pass",
+        label: "Pass / vecka",
+        value: "0.0",
+        hint: `Målbild: ${goalProfile.weeklyFrequencyTarget}`,
       },
       {
-        label: "Pass senaste 28 dagar",
+        label: "Set senaste 28 dagar",
         value: "0",
-        hint: "Mer data ger bättre råd",
+        hint: `Målbild: ${goalProfile.sets28dTarget}`,
       },
       {
         label: "Snittlängd",
         value: "0 min",
-        hint: "Kommer efter första genomförda pass",
+        hint: "Kommer när du loggat pass",
       },
       {
-        label: "Snitt set per pass",
+        label: "Övningsbredd",
         value: "0",
-        hint: "Kommer efter första genomförda pass",
+        hint: `Målbild: ${goalProfile.varietyTarget}`,
       },
     ],
     focusAreas: [
-      "Skapa en första träningsrutin med 2 pass per vecka.",
-      "Välj passlängd som känns realistisk att hålla över tid.",
-      "Logga passen så AI-analysen får bättre beslutsunderlag.",
+      "Kom igång med minst 2 pass per vecka.",
+      "Välj passlängd som du realistiskt kan hålla över tid.",
+      "Logga passen så att analysen får bättre beslutsunderlag.",
     ],
     recommendations: [
       {
         title: "Starta enkelt",
-        detail: "Sikta på korta pass som du faktiskt genomför, hellre än perfekta upplägg som blir uppskjutna.",
+        detail:
+          "Satsa hellre på korta pass som faktiskt blir av än på perfekta upplägg som skjuts upp.",
+        timeframe: "Nästa 7 dagar",
       },
       {
-        title: "Bygg vana först",
-        detail: "När du har 2–4 genomförda pass blir rekommendationerna betydligt mer träffsäkra.",
-      },
-      {
-        title: "Sätt rätt mål i inställningar",
-        detail: "Om träningsmålet är sparat kan dashboarden anpassa analysen tydligare.",
+        title: "Bygg regelbundenhet först",
+        detail:
+          "När du har några genomförda pass blir råden betydligt mer personliga och träffsäkra.",
+        timeframe: "Nästa 14 dagar",
       },
     ],
+    requirementItems: [
+      {
+        label: "Passfrekvens",
+        target: goalProfile.weeklyFrequencyTarget,
+        actual: "0.0 pass / vecka",
+        status: "low",
+      },
+      {
+        label: "Total träningsvolym",
+        target: goalProfile.sets28dTarget,
+        actual: "0 set / 28 dagar",
+        status: "low",
+      },
+      {
+        label: "Övningsbredd",
+        target: goalProfile.varietyTarget,
+        actual: "0 unika övningar / 28 dagar",
+        status: "low",
+      },
+    ],
+    strengths: [],
+    gaps: [
+      "Det finns ännu inte tillräckligt med träningsdata för att bedöma om upplägget matchar målet.",
+    ],
+    structuredAnalysis: null,
   };
 }
 
-function getWeeklyTarget(goal?: TrainingGoal | null) {
-  switch (goal) {
-    case "strength":
-      return { min: 2, ideal: 3 };
-    case "hypertrophy":
-      return { min: 2, ideal: 4 };
-    case "health":
-      return { min: 2, ideal: 3 };
-    case "body_composition":
-      return { min: 3, ideal: 4 };
-    default:
-      return { min: 2, ideal: 3 };
-  }
-}
-
+// Publik funktion som dashboarden använder.
 export function buildTrainingDashboardAnalysis(params: {
   logs: WorkoutLog[];
   settings?: DashboardUserSettings | null;
 }): DashboardAnalysis {
-  const goal = params.settings?.training_goal ?? null;
-  const goalLabel = getGoalLabel(goal);
-  const completedLogs = getCompletedLogs(params.logs);
+  const goal = params.settings?.training_goal ?? "health";
+  const completedLogs = params.logs.filter((log) => log.status === "completed");
 
   if (completedLogs.length === 0) {
     return buildNoDataAnalysis(goal);
   }
 
-  const now = new Date();
-  const target = getWeeklyTarget(goal);
-  const lastWorkout = completedLogs[0];
-  const lastWorkoutDate = safeDate(lastWorkout.completedAt);
-  const daysSinceLastWorkout = lastWorkoutDate
-    ? daysBetween(lastWorkoutDate, now)
-    : 999;
-
-  const workoutsLast7Days = completedLogs.filter((log) => {
-    const date = safeDate(log.completedAt);
-    return date ? daysBetween(date, now) <= 7 : false;
-  }).length;
-
-  const workoutsLast28Days = completedLogs.filter((log) => {
-    const date = safeDate(log.completedAt);
-    return date ? daysBetween(date, now) <= 28 : false;
-  }).length;
-
-  const avgDurationMinutes = average(
-    completedLogs.map((log) => Math.max(1, Math.round(log.durationSeconds / 60)))
-  );
-
-  const avgSetsPerWorkout = average(
-    completedLogs.map((log) =>
-      log.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0)
-    )
-  );
-
-  const completedRatio =
-    params.logs.length > 0 ? completedLogs.length / params.logs.length : 1;
-
-  // Enkel poäng som är lätt att bygga vidare på senare.
-  const frequencyScore = Math.min(
-    100,
-    Math.round((workoutsLast7Days / target.ideal) * 45)
-  );
-  const recencyScore =
-    daysSinceLastWorkout <= 2
-      ? 30
-      : daysSinceLastWorkout <= 4
-      ? 22
-      : daysSinceLastWorkout <= 7
-      ? 12
-      : 0;
-  const completionScore = Math.round(completedRatio * 25);
-
-  const consistencyScore = Math.max(
-    0,
-    Math.min(100, frequencyScore + recencyScore + completionScore)
-  );
-
-  let status: DashboardAnalysis["status"] = "building";
-  let statusLabel = "Bygger vana";
-  let title = "Träningen är på väg åt rätt håll";
-
-  if (
-    workoutsLast7Days >= target.ideal &&
-    daysSinceLastWorkout <= 3 &&
-    completedRatio >= 0.85
-  ) {
-    status = "excellent";
-    statusLabel = "Mycket stark trend";
-    title = "Du ligger riktigt bra till just nu";
-  } else if (
-    workoutsLast7Days >= target.min &&
-    daysSinceLastWorkout <= 5 &&
-    completedRatio >= 0.7
-  ) {
-    status = "good";
-    statusLabel = "Stabil trend";
-    title = "Du har en bra träningsrytm";
-  } else if (daysSinceLastWorkout > 8) {
-    status = "needs_attention";
-    statusLabel = "Behöver komma igång igen";
-    title = "Det viktigaste nu är att återfå kontinuiteten";
-  }
-
-  const summaryParts: string[] = [];
-
-  summaryParts.push(
-    `För målet ${goalLabel.toLowerCase()} har du genomfört ${workoutsLast7Days} pass senaste veckan och ${workoutsLast28Days} pass senaste 28 dagarna.`
-  );
-
-  if (daysSinceLastWorkout <= 2) {
-    summaryParts.push("Du har tränat nyligen, vilket talar för god kontinuitet.");
-  } else if (daysSinceLastWorkout <= 7) {
-    summaryParts.push("Du är fortfarande nära senaste passet men bör hålla rytmen uppe.");
-  } else {
-    summaryParts.push("Det var ett tag sedan senaste passet, så nästa steg bör vara att få igång rutinen igen.");
-  }
-
-  if (avgDurationMinutes < 20) {
-    summaryParts.push("Passen är relativt korta, vilket är bra för regelbundenhet men kan behöva kompletteras med lite mer volym över tid.");
-  } else if (avgDurationMinutes > 50) {
-    summaryParts.push("Du lägger in ganska rejäla pass, så återhämtning och jämn belastning blir extra viktiga.");
-  } else {
-    summaryParts.push("Passlängden ser balanserad ut för att bygga kontinuitet.");
-  }
-
-  const focusAreas: string[] = [];
-  const recommendations: DashboardRecommendation[] = [];
-
-  if (workoutsLast7Days < target.min) {
-    focusAreas.push("Öka regelbundenheten till minst 2–3 pass per vecka.");
-    recommendations.push({
-      title: "Prioritera nästa pass tidigt",
-      detail: "Planera nästa pass inom 1–3 dagar för att undvika att avståndet mellan passen blir för långt.",
-    });
-  } else {
-    focusAreas.push("Behåll nuvarande träningsrytm och undvik långa uppehåll.");
-  }
-
-  if (avgSetsPerWorkout < 10) {
-    focusAreas.push("Öka den totala träningsvolymen något när rutinen känns stabil.");
-    recommendations.push({
-      title: "Lägg till lite volym",
-      detail: "Sikta på 1–2 extra arbetsset i något av kommande pass om återhämtningen känns bra.",
-    });
-  } else {
-    focusAreas.push("Volymen ser tillräcklig ut för fortsatt progression.");
-  }
-
-  if (completedRatio < 0.75) {
-    focusAreas.push("Minska risken för avbrutna pass genom mer realistisk passplanering.");
-    recommendations.push({
-      title: "Gör passen lättare att fullfölja",
-      detail: "Kortare pass eller enklare startövningar kan ge fler slutförda pass och bättre total effekt.",
-    });
-  } else {
-    recommendations.push({
-      title: "Bygg vidare på det som fungerar",
-      detail: "Du slutför en stor del av passen. Behåll ungefär samma nivå och höj försiktigt först när det känns stabilt.",
-    });
-  }
-
-  switch (goal) {
-    case "strength":
-      recommendations.push({
-        title: "Styrkefokus framåt",
-        detail: "Prioritera basövningar först i passen och låt minst några pass ha lite längre vila mellan de tyngsta seten.",
-      });
-      break;
-    case "hypertrophy":
-      recommendations.push({
-        title: "Muskelbyggnad framåt",
-        detail: "Fortsätt samla kvalitetsset och se till att större muskelgrupper återkommer regelbundet varje vecka.",
-      });
-      break;
-    case "health":
-      recommendations.push({
-        title: "Hälsospår framåt",
-        detail: "Jämn träning över veckan slår enstaka hårda pass. Satsa på hållbar frekvens och helkroppstänk.",
-      });
-      break;
-    case "body_composition":
-      recommendations.push({
-        title: "Kroppssammansättning framåt",
-        detail: "Behåll styrkeinslagen men låt passen ha tillräcklig täthet och frekvens för att stötta energiomsättning och kontinuitet.",
-      });
-      break;
-    default:
-      recommendations.push({
-        title: "Nästa steg",
-        detail: "Spara träningsmål i inställningar för mer målspecifika rekommendationer på dashboarden.",
-      });
-      break;
-  }
+  // Återanvänd den rikare analysmotorn som redan finns i repo:t.
+  const structuredAnalysis = analyzeTraining(params.logs, goal);
+  const goalProfile = getGoalProfile(goal);
+  const mappedStatus = mapStatus(structuredAnalysis.evaluation.status);
+  const requirementItems = buildRequirementItems(structuredAnalysis, goalProfile);
 
   return {
-    title,
-    summary: summaryParts.join(" "),
-    status,
-    statusLabel,
-    goalLabel,
-    consistencyScore,
-    metrics: [
-      {
-        label: "Pass senaste 7 dagar",
-        value: String(workoutsLast7Days),
-        hint: `Målbild: cirka ${target.min}–${target.ideal}/vecka`,
-      },
-      {
-        label: "Pass senaste 28 dagar",
-        value: String(workoutsLast28Days),
-        hint: "Visar din kontinuitet över tid",
-      },
-      {
-        label: "Snittlängd",
-        value: `${Math.round(avgDurationMinutes)} min`,
-        hint: "Baserat på genomförda pass",
-      },
-      {
-        label: "Snitt set per pass",
-        value: `${Math.round(avgSetsPerWorkout)}`,
-        hint: "Grovt mått på träningsvolym",
-      },
-    ],
-    focusAreas,
-    recommendations,
+    title: buildTitle(structuredAnalysis, goalProfile),
+    summary: buildGoalSpecificSummary(structuredAnalysis, goalProfile),
+    status: mappedStatus.status,
+    statusLabel: mappedStatus.statusLabel,
+    goalLabel: goalProfile.label,
+    consistencyScore: Math.round(
+      structuredAnalysis.evaluation.overallScore * 100
+    ),
+    metrics: buildMetrics(structuredAnalysis, goalProfile),
+    focusAreas: buildFocusAreas(structuredAnalysis, requirementItems),
+    recommendations: buildRecommendations(structuredAnalysis),
+    requirementItems,
+    strengths: structuredAnalysis.evaluation.strengths,
+    gaps: structuredAnalysis.evaluation.gaps,
+    structuredAnalysis,
   };
 }
