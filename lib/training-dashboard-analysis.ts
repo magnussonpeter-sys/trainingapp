@@ -1,6 +1,8 @@
 import {
   analyzeTraining,
+  getGoalBenchmarkProfile,
   type GoalAnalysis,
+  type GoalBenchmarkProfile,
   type GoalType,
 } from "@/lib/goal-analysis";
 import type { WorkoutLog } from "@/lib/workout-log-storage";
@@ -33,6 +35,11 @@ export type DashboardRequirementItem = {
   status: "good" | "warning" | "low";
 };
 
+export type DashboardActionStep = {
+  title: string;
+  detail: string;
+};
+
 export type DashboardAnalysis = {
   title: string;
   summary: string;
@@ -44,82 +51,15 @@ export type DashboardAnalysis = {
   focusAreas: string[];
   recommendations: DashboardRecommendation[];
   requirementItems: DashboardRequirementItem[];
+  actionPlan: DashboardActionStep[];
   strengths: string[];
   gaps: string[];
   structuredAnalysis: GoalAnalysis | null;
 };
 
-type GoalProfile = {
-  label: string;
-  weeklyFrequencyTarget: string;
-  weeklyFrequencyMin: number;
-  weeklyFrequencyGood: number;
-  sets28dTarget: string;
-  sets28dMin: number;
-  sets28dGood: number;
-  varietyTarget: string;
-  varietyMin: number;
-  primaryAdvice: string;
-};
-
-const GOAL_PROFILES: Record<GoalType, GoalProfile> = {
-  strength: {
-    label: "Styrka",
-    weeklyFrequencyTarget: "2–4 pass / vecka",
-    weeklyFrequencyMin: 1.75,
-    weeklyFrequencyGood: 2.5,
-    sets28dTarget: "32–64 set / 28 dagar",
-    sets28dMin: 32,
-    sets28dGood: 48,
-    varietyTarget: "måttlig variation",
-    varietyMin: 5,
-    primaryAdvice:
-      "För styrkemål behöver du regelbundna pass, tydliga huvudövningar och tillräcklig återhämtning mellan tyngre belastningar.",
-  },
-  hypertrophy: {
-    label: "Muskelbyggnad",
-    weeklyFrequencyTarget: "3–5 pass / vecka",
-    weeklyFrequencyMin: 2.25,
-    weeklyFrequencyGood: 3,
-    sets28dTarget: "48–96 set / 28 dagar",
-    sets28dMin: 48,
-    sets28dGood: 72,
-    varietyTarget: "god övningsbredd",
-    varietyMin: 7,
-    primaryAdvice:
-      "För hypertrofi behöver du oftast både tillräcklig träningsfrekvens och tillräcklig total veckovolym. För lite pass eller för få set gör att muskelbyggnaden bromsas.",
-  },
-  health: {
-    label: "Hälsa och funktion",
-    weeklyFrequencyTarget: "2–4 pass / vecka",
-    weeklyFrequencyMin: 1.75,
-    weeklyFrequencyGood: 2.5,
-    sets28dTarget: "28–64 set / 28 dagar",
-    sets28dMin: 28,
-    sets28dGood: 44,
-    varietyTarget: "bred helkroppstäckning",
-    varietyMin: 7,
-    primaryAdvice:
-      "För hälsomål är hållbar regelbundenhet och bred helkroppstäckning viktigare än maximal belastning i enskilda pass.",
-  },
-  body_composition: {
-    label: "Kroppssammansättning",
-    weeklyFrequencyTarget: "3–5 pass / vecka",
-    weeklyFrequencyMin: 2.5,
-    weeklyFrequencyGood: 3.25,
-    sets28dTarget: "40–84 set / 28 dagar",
-    sets28dMin: 40,
-    sets28dGood: 60,
-    varietyTarget: "god övningsbredd",
-    varietyMin: 6,
-    primaryAdvice:
-      "För kroppssammansättning behöver du framför allt jämn träningsfrekvens och tillräcklig mängd arbete över tid, inte bara enstaka hårda pass.",
-  },
-};
-
 // Enkel fallback för okänt eller saknat mål.
-function getGoalProfile(goal: GoalType | null | undefined): GoalProfile {
-  return GOAL_PROFILES[goal ?? "health"];
+function getGoalProfile(goal: GoalType | null | undefined): GoalBenchmarkProfile {
+  return getGoalBenchmarkProfile(goal ?? "health");
 }
 
 // Hjälper oss att mappa målmotorns etiketter till dashboard-etiketter.
@@ -178,39 +118,39 @@ function getRequirementStatus(
 // Text för sektioner där vi tydligt vill säga vad målet kräver.
 function buildRequirementItems(
   analysis: GoalAnalysis,
-  goalProfile: GoalProfile
+  goalProfile: GoalBenchmarkProfile
 ): DashboardRequirementItem[] {
   const { metrics } = analysis;
 
   return [
     {
       label: "Passfrekvens",
-      target: goalProfile.weeklyFrequencyTarget,
+      target: goalProfile.weeklyFrequencyTargetLabel,
       actual: `${metrics.weeklyFrequency.toFixed(1)} pass / vecka`,
       status: getRequirementStatus(
         metrics.weeklyFrequency,
         goalProfile.weeklyFrequencyMin,
-        goalProfile.weeklyFrequencyGood
+        goalProfile.weeklyFrequencyIdeal
       ),
     },
     {
       label: "Total träningsvolym",
-      target: goalProfile.sets28dTarget,
+      target: goalProfile.sets28dTargetLabel,
       actual: `${metrics.totalSets28d} set / 28 dagar`,
       status: getRequirementStatus(
         metrics.totalSets28d,
         goalProfile.sets28dMin,
-        goalProfile.sets28dGood
+        goalProfile.sets28dIdeal
       ),
     },
     {
       label: "Övningsbredd",
-      target: goalProfile.varietyTarget,
+      target: goalProfile.varietyTargetLabel,
       actual: `${metrics.uniqueExercises28d} unika övningar / 28 dagar`,
       status: getRequirementStatus(
         metrics.uniqueExercises28d,
         goalProfile.varietyMin,
-        goalProfile.varietyMin + 2
+        goalProfile.varietyIdeal
       ),
     },
   ];
@@ -219,7 +159,7 @@ function buildRequirementItems(
 // Bygger en mer direkt måljämförelse än den gamla dashboard-varianten.
 function buildGoalSpecificSummary(
   analysis: GoalAnalysis,
-  goalProfile: GoalProfile
+  goalProfile: GoalBenchmarkProfile
 ) {
   const { metrics, evaluation } = analysis;
 
@@ -251,7 +191,7 @@ function buildGoalSpecificSummary(
 }
 
 // Tydligare rubrik för dashboarden.
-function buildTitle(analysis: GoalAnalysis, goalProfile: GoalProfile) {
+function buildTitle(analysis: GoalAnalysis, goalProfile: GoalBenchmarkProfile) {
   const biggestGap = analysis.focusAreas[0]?.title ?? null;
 
   if (analysis.evaluation.status === "on_track") {
@@ -270,18 +210,18 @@ function buildTitle(analysis: GoalAnalysis, goalProfile: GoalProfile) {
 // Mappning till dashboardens egna metric-kort.
 function buildMetrics(
   analysis: GoalAnalysis,
-  goalProfile: GoalProfile
+  goalProfile: GoalBenchmarkProfile
 ): DashboardMetric[] {
   return [
     {
       label: "Pass / vecka",
       value: analysis.metrics.weeklyFrequency.toFixed(1),
-      hint: `Målbild: ${goalProfile.weeklyFrequencyTarget}`,
+      hint: `Målbild: ${goalProfile.weeklyFrequencyTargetLabel}`,
     },
     {
       label: "Set senaste 28 dagar",
       value: String(analysis.metrics.totalSets28d),
-      hint: `Målbild: ${goalProfile.sets28dTarget}`,
+      hint: `Målbild: ${goalProfile.sets28dTargetLabel}`,
     },
     {
       label: "Snittlängd",
@@ -291,13 +231,16 @@ function buildMetrics(
     {
       label: "Övningsbredd",
       value: String(analysis.metrics.uniqueExercises28d),
-      hint: `Målbild: ${goalProfile.varietyTarget}`,
+      hint: `Målbild: ${goalProfile.varietyTargetLabel}`,
     },
   ];
 }
 
 // Samlar fokusområden till ren text för UI.
-function buildFocusAreas(analysis: GoalAnalysis, requirementItems: DashboardRequirementItem[]) {
+function buildFocusAreas(
+  analysis: GoalAnalysis,
+  requirementItems: DashboardRequirementItem[]
+) {
   const focusAreas = analysis.focusAreas.map(
     (area) => `${area.title}: ${area.reason}`
   );
@@ -325,6 +268,51 @@ function buildRecommendations(
   }));
 }
 
+// Direkt handlingsplan för användaren.
+function buildActionPlan(
+  analysis: GoalAnalysis,
+  goalProfile: GoalBenchmarkProfile
+): DashboardActionStep[] {
+  const steps: DashboardActionStep[] = [];
+  const { metrics } = analysis;
+
+  if (metrics.weeklyFrequency < goalProfile.weeklyFrequencyMin) {
+    steps.push({
+      title: "1. Höj frekvensen först",
+      detail: `Du behöver komma närmare minst ${goalProfile.weeklyFrequencyMin} pass per vecka. Börja med att planera in ett extra pass redan denna vecka.`,
+    });
+  }
+
+  if (metrics.totalSets28d < goalProfile.sets28dMin) {
+    steps.push({
+      title: "2. Höj den totala träningsmängden",
+      detail: `Du ligger på ${metrics.totalSets28d} set senaste 28 dagarna. För målet behöver du ungefär minst ${goalProfile.sets28dMin} set på 28 dagar som första nivå.`,
+    });
+  }
+
+  if (metrics.uniqueExercises28d < goalProfile.varietyMin) {
+    steps.push({
+      title: "3. Bredda stimulansen lite",
+      detail: `Lägg till någon kompletterande övning så att du närmar dig ${goalProfile.varietyTargetLabel}. Det ger bättre täckning och bättre chans att nå målet.`,
+    });
+  }
+
+  if (steps.length === 0) {
+    steps.push({
+      title: "1. Behåll rytmen",
+      detail:
+        "Du ligger redan nära målbilden. Nästa steg är att fortsätta träna jämnt och bygga vidare utan onödiga uppehåll.",
+    });
+    steps.push({
+      title: "2. Höj försiktigt",
+      detail:
+        "Öka volym eller svårighetsgrad i små steg när träningen känns stabil, i stället för att ändra för mycket på en gång.",
+    });
+  }
+
+  return steps.slice(0, 3);
+}
+
 // Fallback när ingen träningshistorik finns ännu.
 function buildNoDataAnalysis(goal: GoalType | null | undefined): DashboardAnalysis {
   const goalProfile = getGoalProfile(goal);
@@ -342,12 +330,12 @@ function buildNoDataAnalysis(goal: GoalType | null | undefined): DashboardAnalys
       {
         label: "Pass / vecka",
         value: "0.0",
-        hint: `Målbild: ${goalProfile.weeklyFrequencyTarget}`,
+        hint: `Målbild: ${goalProfile.weeklyFrequencyTargetLabel}`,
       },
       {
         label: "Set senaste 28 dagar",
         value: "0",
-        hint: `Målbild: ${goalProfile.sets28dTarget}`,
+        hint: `Målbild: ${goalProfile.sets28dTargetLabel}`,
       },
       {
         label: "Snittlängd",
@@ -357,7 +345,7 @@ function buildNoDataAnalysis(goal: GoalType | null | undefined): DashboardAnalys
       {
         label: "Övningsbredd",
         value: "0",
-        hint: `Målbild: ${goalProfile.varietyTarget}`,
+        hint: `Målbild: ${goalProfile.varietyTargetLabel}`,
       },
     ],
     focusAreas: [
@@ -382,21 +370,33 @@ function buildNoDataAnalysis(goal: GoalType | null | undefined): DashboardAnalys
     requirementItems: [
       {
         label: "Passfrekvens",
-        target: goalProfile.weeklyFrequencyTarget,
+        target: goalProfile.weeklyFrequencyTargetLabel,
         actual: "0.0 pass / vecka",
         status: "low",
       },
       {
         label: "Total träningsvolym",
-        target: goalProfile.sets28dTarget,
+        target: goalProfile.sets28dTargetLabel,
         actual: "0 set / 28 dagar",
         status: "low",
       },
       {
         label: "Övningsbredd",
-        target: goalProfile.varietyTarget,
+        target: goalProfile.varietyTargetLabel,
         actual: "0 unika övningar / 28 dagar",
         status: "low",
+      },
+    ],
+    actionPlan: [
+      {
+        title: "1. Kom igång med regelbundenhet",
+        detail:
+          "Börja med att få in 2 pass per vecka innan du försöker optimera detaljer.",
+      },
+      {
+        title: "2. Logga passen",
+        detail:
+          "När du har några genomförda pass kan dashboarden börja ge betydligt mer precisa råd.",
       },
     ],
     strengths: [],
@@ -438,6 +438,7 @@ export function buildTrainingDashboardAnalysis(params: {
     focusAreas: buildFocusAreas(structuredAnalysis, requirementItems),
     recommendations: buildRecommendations(structuredAnalysis),
     requirementItems,
+    actionPlan: buildActionPlan(structuredAnalysis, goalProfile),
     strengths: structuredAnalysis.evaluation.strengths,
     gaps: structuredAnalysis.evaluation.gaps,
     structuredAnalysis,
