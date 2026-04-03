@@ -4,11 +4,18 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { getWorkoutLogs, type WorkoutLog } from "@/lib/workout-log-storage";
+import {
+  buildTrainingDashboardAnalysis,
+  type DashboardUserSettings,
+} from "@/lib/training-dashboard-analysis";
+
 type AuthUser = {
   id: number | string;
   email?: string | null;
   username?: string | null;
   name?: string | null;
+  displayName?: string | null;
   role?: "user" | "admin";
   status?: "active" | "disabled";
 };
@@ -17,6 +24,8 @@ type Gym = {
   id: string | number;
   name: string;
 };
+
+type UserSettings = DashboardUserSettings;
 
 const QUICK_DURATION_OPTIONS = [15, 20, 30, 45] as const;
 const BODYWEIGHT_GYM_ID = "bodyweight";
@@ -59,18 +68,80 @@ function getAiSettingsStorageKey(userId: string) {
 }
 
 function clampDuration(value: number) {
-  if (!Number.isFinite(value)) return 30;
+  if (!Number.isFinite(value)) {
+    return 30;
+  }
+
   return Math.min(MAX_DURATION, Math.max(MIN_DURATION, Math.round(value)));
 }
 
 function getDisplayName(user: AuthUser | null) {
-  if (!user) return "Där";
+  if (!user) {
+    return "Där";
+  }
+
   return (
+    user.displayName?.trim() ||
     user.name?.trim() ||
     user.username?.trim() ||
     user.email?.split("@")[0]?.trim() ||
     "Där"
   );
+}
+
+function formatDateTime(value: string) {
+  try {
+    return new Date(value).toLocaleString("sv-SE", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return value;
+  }
+}
+
+function formatDurationMinutes(seconds: number) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  return `${minutes} min`;
+}
+
+function getTotalSets(log: WorkoutLog) {
+  return log.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
+}
+
+function getTotalVolume(log: WorkoutLog) {
+  return log.exercises.reduce((sum, exercise) => {
+    return (
+      sum +
+      exercise.sets.reduce((setSum, set) => {
+        if (set.actualWeight == null || set.actualReps == null) {
+          return setSum;
+        }
+
+        return setSum + set.actualWeight * set.actualReps;
+      }, 0)
+    );
+  }, 0);
+}
+
+function getAnalysisBadgeClasses(
+  status: "excellent" | "good" | "building" | "needs_attention" | "no_data"
+) {
+  switch (status) {
+    case "excellent":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "good":
+      return "border-blue-200 bg-blue-50 text-blue-700";
+    case "needs_attention":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "no_data":
+      return "border-slate-200 bg-slate-100 text-slate-700";
+    default:
+      return "border-violet-200 bg-violet-50 text-violet-700";
+  }
 }
 
 export default function HomePage() {
@@ -80,66 +151,61 @@ export default function HomePage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
-  // Fritt val av passlängd i minuter.
+  // Lokal state för snabbstart av AI-pass.
   const [selectedDuration, setSelectedDuration] = useState(30);
   const [durationInput, setDurationInput] = useState("30");
-
   const [gyms, setGyms] = useState<Gym[]>([]);
   const [selectedGymId, setSelectedGymId] = useState(BODYWEIGHT_GYM_ID);
 
+  // Dashboard-data.
+  const [settings, setSettings] = useState<UserSettings | null>(null);
+  const [workoutLogs, setWorkoutLogs] = useState<WorkoutLog[]>([]);
+  const [logsSource, setLogsSource] = useState<"api" | "local">("api");
+
+  // UI-state.
   const [isLoadingGyms, setIsLoadingGyms] = useState(false);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
-
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
 
-    async function load() {
+    async function loadHome() {
       try {
         setPageError(null);
+        setIsLoadingDashboard(true);
 
-        // Viktigt för Safari/iPhone: skicka alltid med credentials.
+        // Hämta aktuell auth-user först.
         const authRes = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
         });
 
-        let authData: unknown = null;
+        const authData = (await authRes.json().catch(() => null)) as
+          | { ok?: boolean; user?: AuthUser | null }
+          | null;
 
-        try {
-          authData = await authRes.json();
-        } catch {
-          authData = null;
-        }
-
-        // /api/auth/me returnerar { user }.
-        if (
-          !authRes.ok ||
-          !authData ||
-          typeof authData !== "object" ||
-          !("user" in authData) ||
-          !(authData as { user?: unknown }).user
-        ) {
+        if (!authRes.ok || !authData?.user) {
           router.replace("/");
           return;
         }
 
-        const user = (authData as { user: AuthUser }).user;
+        const user = authData.user;
         const userId = String(user.id);
 
-        if (!isMounted) return;
+        if (!isMounted) {
+          return;
+        }
 
         setAuthUser(user);
         setAuthChecked(true);
 
-        // Läs tidigare sparade AI-inställningar för användaren.
+        // Läs tidigare sparade AI-inställningar.
         try {
-          const rawSettings = localStorage.getItem(
-            getAiSettingsStorageKey(userId)
-          );
+          const rawSettings = localStorage.getItem(getAiSettingsStorageKey(userId));
 
           if (rawSettings) {
             const parsed = JSON.parse(rawSettings) as {
@@ -164,24 +230,29 @@ export default function HomePage() {
           console.error("Kunde inte läsa sparade AI-inställningar:", error);
         }
 
+        // Ladda gym, settings och träningshistorik.
         setIsLoadingGyms(true);
         setGymError(null);
 
-        // Behåll credentials även här.
-        const gymsRes = await fetch(`/api/gyms?userId=${user.id}`, {
-          cache: "no-store",
-          credentials: "include",
-        });
+        const [gymsRes, settingsRes] = await Promise.all([
+          fetch(`/api/gyms?userId=${encodeURIComponent(userId)}`, {
+            cache: "no-store",
+            credentials: "include",
+          }),
+          fetch(`/api/user-settings?userId=${encodeURIComponent(userId)}`, {
+            cache: "no-store",
+            credentials: "include",
+          }),
+        ]);
 
-        let gymsData: unknown = null;
+        const gymsData = (await gymsRes.json().catch(() => null)) as unknown;
+        const settingsData = (await settingsRes.json().catch(() => null)) as
+          | { ok?: boolean; settings?: UserSettings | null; error?: string }
+          | null;
 
-        try {
-          gymsData = await gymsRes.json();
-        } catch {
-          gymsData = null;
+        if (!isMounted) {
+          return;
         }
-
-        if (!isMounted) return;
 
         if (!gymsRes.ok) {
           const apiMessage =
@@ -194,38 +265,80 @@ export default function HomePage() {
 
           setGymError(apiMessage);
           setGyms([]);
-          return;
+        } else {
+          const normalizedGyms = normalizeGyms(gymsData);
+          setGyms(normalizedGyms);
+
+          // Fall back till kroppsvikt om tidigare valt gym inte längre finns.
+          setSelectedGymId((prev) => {
+            if (prev === BODYWEIGHT_GYM_ID) {
+              return prev;
+            }
+
+            const gymExists = normalizedGyms.some(
+              (gym) => String(gym.id) === prev
+            );
+
+            return gymExists ? prev : BODYWEIGHT_GYM_ID;
+          });
         }
 
-        const normalizedGyms = normalizeGyms(gymsData);
-        setGyms(normalizedGyms);
+        if (settingsRes.ok && settingsData?.ok) {
+          setSettings(settingsData.settings ?? null);
+        }
 
-        // Om tidigare valt gym inte finns kvar, fall tillbaka till kroppsvikt.
-        setSelectedGymId((prev) => {
-          if (prev === BODYWEIGHT_GYM_ID) return prev;
-
-          const gymExists = normalizedGyms.some(
-            (gym) => String(gym.id) === prev
+        // Försök först med API, annars lokal fallback.
+        try {
+          const logsRes = await fetch(
+            `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=12`,
+            {
+              cache: "no-store",
+              credentials: "include",
+            }
           );
 
-          return gymExists ? prev : BODYWEIGHT_GYM_ID;
-        });
+          const logsData = (await logsRes.json().catch(() => null)) as
+            | { ok?: boolean; logs?: WorkoutLog[]; error?: string }
+            | null;
+
+          if (!logsRes.ok || !logsData?.ok || !Array.isArray(logsData.logs)) {
+            throw new Error(logsData?.error || "Kunde inte hämta träningshistorik");
+          }
+
+          if (!isMounted) {
+            return;
+          }
+
+          setWorkoutLogs(logsData.logs);
+          setLogsSource("api");
+        } catch (error) {
+          console.error("Kunde inte hämta dashboard-loggar från API:", error);
+
+          if (!isMounted) {
+            return;
+          }
+
+          setWorkoutLogs(getWorkoutLogs(userId));
+          setLogsSource("local");
+        }
       } catch (error) {
         console.error("Kunde inte ladda home-sidan:", error);
 
-        if (!isMounted) return;
+        if (!isMounted) {
+          return;
+        }
 
-        setPageError("Kunde inte ladda användardata.");
-        router.replace("/");
+        setPageError("Kunde inte ladda startsidan.");
       } finally {
-        if (!isMounted) return;
-
-        setIsLoadingGyms(false);
-        setAuthChecked(true);
+        if (isMounted) {
+          setIsLoadingGyms(false);
+          setIsLoadingDashboard(false);
+          setAuthChecked(true);
+        }
       }
     }
 
-    void load();
+    void loadHome();
 
     return () => {
       isMounted = false;
@@ -234,7 +347,9 @@ export default function HomePage() {
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (!menuRef.current) return;
+      if (!menuRef.current) {
+        return;
+      }
 
       if (!menuRef.current.contains(event.target as Node)) {
         setIsMenuOpen(false);
@@ -251,9 +366,11 @@ export default function HomePage() {
   }, [isMenuOpen]);
 
   useEffect(() => {
-    if (!authUser) return;
+    if (!authUser) {
+      return;
+    }
 
-    // Spara senast vald passlängd och gym-val per användare.
+    // Spara snabbstartsval per användare.
     try {
       localStorage.setItem(
         getAiSettingsStorageKey(String(authUser.id)),
@@ -267,6 +384,8 @@ export default function HomePage() {
     }
   }, [authUser, selectedDuration, selectedGymId]);
 
+  const displayName = useMemo(() => getDisplayName(authUser), [authUser]);
+
   const selectedGym = useMemo(() => {
     if (selectedGymId === BODYWEIGHT_GYM_ID) {
       return {
@@ -278,27 +397,23 @@ export default function HomePage() {
     return gyms.find((gym) => String(gym.id) === selectedGymId) ?? null;
   }, [gyms, selectedGymId]);
 
-  const canGenerateAiWorkout = authChecked && !!authUser && !isLoadingGyms;
-  const displayName = getDisplayName(authUser);
+  const latestWorkout = useMemo(() => {
+    return [...workoutLogs]
+      .filter((log) => log.status === "completed")
+      .sort(
+        (a, b) =>
+          new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()
+      )[0];
+  }, [workoutLogs]);
 
-  const overviewItems = useMemo(
-    () => [
-      {
-        label: "Vald passlängd",
-        value: `${selectedDuration} min`,
-      },
-      {
-        label: "Gym sparade",
-        value: String(gyms.length),
-      },
-      {
-        label: "Träningsmiljö",
-        value:
-          selectedGymId === BODYWEIGHT_GYM_ID ? "Kroppsvikt" : "Gym valt",
-      },
-    ],
-    [gyms.length, selectedDuration, selectedGymId]
-  );
+  const dashboardAnalysis = useMemo(() => {
+    return buildTrainingDashboardAnalysis({
+      logs: workoutLogs,
+      settings,
+    });
+  }, [workoutLogs, settings]);
+
+  const canGenerateAiWorkout = authChecked && !!authUser && !isLoadingGyms;
 
   function handleQuickDurationSelect(duration: number) {
     const nextDuration = clampDuration(duration);
@@ -307,7 +422,7 @@ export default function HomePage() {
   }
 
   function handleDurationInputChange(value: string) {
-    // Tillåt bara siffror i textfältet.
+    // Tillåt bara siffror.
     const sanitized = value.replace(/[^\d]/g, "");
     setDurationInput(sanitized);
 
@@ -319,15 +434,14 @@ export default function HomePage() {
   }
 
   function handleDurationInputBlur() {
-    // Säkerställ alltid ett giltigt värde.
     const parsed = Number(durationInput);
     const nextDuration = clampDuration(parsed);
+
     setSelectedDuration(nextDuration);
     setDurationInput(String(nextDuration));
   }
 
   function handleGenerateAiWorkout() {
-    // Extra skydd så att användaren inte navigerar innan auth är klar.
     if (!authUser?.id) {
       setPageError("Användaren är inte färdigladdad ännu. Försök igen.");
       return;
@@ -339,7 +453,7 @@ export default function HomePage() {
     params.set("duration", String(selectedDuration));
     params.set("userId", String(authUser.id));
 
-    // Vid kroppsvikt skickas inget vanligt gymId.
+    // Kroppsvikt markeras separat så preview-sidan kan hantera det robust.
     if (selectedGymId === BODYWEIGHT_GYM_ID) {
       params.set("gymMode", "bodyweight");
     } else if (selectedGymId) {
@@ -370,11 +484,17 @@ export default function HomePage() {
 
   if (!authChecked) {
     return (
-      <main className="min-h-screen bg-[var(--app-page-bg)] px-6 py-10">
+      <main className="min-h-screen bg-[var(--app-page,#f4f7fb)] px-4 py-10">
         <div className="mx-auto max-w-6xl">
-          <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] px-6 py-10 shadow-[0_24px_80px_rgba(15,23,42,0.06)]">
-            <p className="text-sm font-medium text-[var(--app-text-muted)]">
-              Laddar...
+          <div className="rounded-[32px] border border-white/70 bg-white/85 p-8 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] backdrop-blur">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
+              Träningsapp
+            </p>
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+              Laddar dashboard...
+            </h1>
+            <p className="mt-3 text-base leading-7 text-slate-600">
+              Hämtar användardata, senaste pass och AI-analys.
             </p>
           </div>
         </div>
@@ -383,415 +503,446 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="overflow-hidden rounded-[32px] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
-          <div className="grid min-h-[calc(100vh-2rem)] lg:grid-cols-[1.2fr_0.8fr]">
-            {/* Vänster del: tydlig dashboard-känsla */}
-            <section className="border-b border-[var(--app-border)] bg-[linear-gradient(180deg,#f8fbff_0%,#f4f7fb_100%)] p-6 sm:p-8 lg:border-b-0 lg:border-r lg:border-[var(--app-border)] lg:p-10">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong)]">
-                    Träningsapp
-                  </p>
-                  <h1 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--app-text-strong)] sm:text-4xl">
-                    Hej {displayName}
-                  </h1>
-                  <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--app-text)]">
-                    Här startar du nästa pass, ser din träningsöversikt och får
-                    en tydlig plats för framtida AI-analys.
-                  </p>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.16),_transparent_28%),linear-gradient(180deg,#f7f9fc_0%,#eef3f9_100%)] px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl">
+        <header className="mb-6 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
+              Träningsapp
+            </p>
+            <p className="mt-2 text-sm text-slate-600">
+              Dashboard för snabbstart, översikt och träningsanalys.
+            </p>
+          </div>
+
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setIsMenuOpen((prev) => !prev)}
+              className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-sm transition hover:shadow-md"
+              aria-label="Öppna meny"
+            >
+              ☰
+            </button>
+
+            {isMenuOpen ? (
+              <div className="absolute right-0 top-14 z-20 w-56 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_24px_60px_-36px_rgba(15,23,42,0.4)]">
+                <Link
+                  href="/settings"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="block px-4 py-3 text-sm font-medium text-slate-900 hover:bg-slate-50"
+                >
+                  Inställningar
+                </Link>
+                <Link
+                  href="/gyms"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="block border-t border-slate-100 px-4 py-3 text-sm font-medium text-slate-900 hover:bg-slate-50"
+                >
+                  Hantera gym
+                </Link>
+                <Link
+                  href="/history"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="block border-t border-slate-100 px-4 py-3 text-sm font-medium text-slate-900 hover:bg-slate-50"
+                >
+                  Träningshistorik
+                </Link>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="block w-full border-t border-slate-100 px-4 py-3 text-left text-sm font-medium text-rose-700 hover:bg-rose-50"
+                >
+                  {isLoggingOut ? "Loggar ut..." : "Logga ut"}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </header>
+
+        <section className="mb-6 overflow-hidden rounded-[32px] border border-white/70 bg-white/85 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] backdrop-blur sm:p-8">
+          <div className="grid gap-6 lg:grid-cols-[1.35fr_0.85fr]">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
+                Välkommen tillbaka
+              </p>
+
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
+                Hej {displayName}
+              </h1>
+
+              <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+                Här startar du nästa pass, ser din träningsstatus och får tydliga
+                rekommendationer framåt baserat på dina genomförda pass.
+              </p>
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700">
+                  AI-status: {dashboardAnalysis.statusLabel}
                 </div>
-
-                <div className="relative shrink-0" ref={menuRef}>
-                  <button
-                    type="button"
-                    onClick={() => setIsMenuOpen((prev) => !prev)}
-                    className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] text-[var(--app-text-strong)] shadow-sm transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    aria-label="Öppna meny"
-                  >
-                    ☰
-                  </button>
-
-                  {isMenuOpen ? (
-                    <div className="absolute right-0 top-14 z-20 w-56 overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[0_18px_60px_rgba(15,23,42,0.12)]">
-                      <Link
-                        href="/settings"
-                        onClick={() => setIsMenuOpen(false)}
-                        className="block px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:bg-[var(--app-surface-muted)]"
-                      >
-                        Inställningar
-                      </Link>
-
-                      <Link
-                        href="/history"
-                        onClick={() => setIsMenuOpen(false)}
-                        className="block border-t border-[var(--app-border)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:bg-[var(--app-surface-muted)]"
-                      >
-                        Träningshistorik
-                      </Link>
-
-                      <Link
-                        href="/gyms"
-                        onClick={() => setIsMenuOpen(false)}
-                        className="block border-t border-[var(--app-border)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:bg-[var(--app-surface-muted)]"
-                      >
-                        Hantera gym
-                      </Link>
-
-                      {authUser?.role === "admin" ? (
-                        <Link
-                          href="/admin/users"
-                          onClick={() => setIsMenuOpen(false)}
-                          className="block border-t border-[var(--app-border)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:bg-[var(--app-surface-muted)]"
-                        >
-                          Admin
-                        </Link>
-                      ) : null}
-
-                      <button
-                        type="button"
-                        onClick={handleLogout}
-                        disabled={isLoggingOut}
-                        className="block w-full border-t border-[var(--app-border)] px-4 py-3 text-left text-sm font-medium text-[var(--app-text-strong)] transition hover:bg-[var(--app-surface-muted)] disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {isLoggingOut ? "Loggar ut..." : "Logga ut"}
-                      </button>
-                    </div>
-                  ) : null}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
+                  Mål: {dashboardAnalysis.goalLabel}
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
+                  Datakälla: {logsSource === "api" ? "Databas" : "Lokal fallback"}
                 </div>
               </div>
+            </div>
 
-              {/* Översiktskort högst upp */}
-              <div className="mt-8 grid gap-4 sm:grid-cols-3">
-                {overviewItems.map((item) => (
-                  <div
-                    key={item.label}
-                    className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm"
-                  >
-                    <p className="text-sm text-[var(--app-text-muted)]">
-                      {item.label}
-                    </p>
-                    <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
-                      {item.value}
-                    </p>
-                  </div>
-                ))}
+            <div className="rounded-[28px] border border-indigo-100 bg-[linear-gradient(180deg,rgba(238,242,255,0.9),rgba(255,255,255,0.95))] p-5">
+              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">
+                AI-överblick
+              </p>
+
+              <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">
+                {dashboardAnalysis.consistencyScore}/100
+              </p>
+
+              <p className="mt-2 text-sm text-slate-600">
+                Samlad kontinuitetspoäng utifrån frekvens, recency och hur stor
+                andel pass du fullföljer.
+              </p>
+
+              <div className="mt-5 h-3 overflow-hidden rounded-full bg-indigo-100">
+                <div
+                  className="h-full rounded-full bg-indigo-600 transition-all"
+                  style={{ width: `${dashboardAnalysis.consistencyScore}%` }}
+                />
               </div>
 
-              {/* Huvudkort för nytt pass */}
-              <div className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-7">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                      Starta nytt pass
+              <p className="mt-4 text-sm leading-6 text-slate-700">
+                {dashboardAnalysis.summary}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+          <div className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
+                  Senaste pass
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                  Din senaste träningsaktivitet
+                </h2>
+              </div>
+
+              <Link
+                href="/history"
+                className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Se historik
+              </Link>
+            </div>
+
+            {latestWorkout ? (
+              <div className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
+                <p className="text-sm font-medium text-slate-500">
+                  {formatDateTime(latestWorkout.completedAt)}
+                </p>
+
+                <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                  {latestWorkout.workoutName}
+                </h3>
+
+                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-2xl bg-white p-4 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Tid
                     </p>
-                    <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                      Inställningar för AI-pass
-                    </h2>
-                    <p className="mt-2 text-sm leading-6 text-[var(--app-text)]">
-                      Välj längd och träningsmiljö. Därefter kan du starta ett
-                      AI-genererat pass eller gå vidare till eget upplägg.
+                    <p className="mt-2 text-lg font-semibold text-slate-900">
+                      {formatDurationMinutes(latestWorkout.durationSeconds)}
                     </p>
                   </div>
 
-                  <div className="rounded-2xl bg-[var(--app-accent-soft)] px-4 py-3 text-sm font-medium text-[var(--app-accent-strong)]">
-                    {selectedDuration} min • {selectedGym?.name ?? "Ingen vald"}
+                  <div className="rounded-2xl bg-white p-4 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Övningar
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-slate-900">
+                      {latestWorkout.exercises.length}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl bg-white p-4 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Set
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-slate-900">
+                      {getTotalSets(latestWorkout)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl bg-white p-4 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Volym
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-slate-900">
+                      {Math.round(getTotalVolume(latestWorkout))} kg
+                    </p>
                   </div>
                 </div>
 
-                <div className="mt-8 grid gap-6 lg:grid-cols-2">
-                  <div>
-                    <label
-                      htmlFor="duration"
-                      className="text-sm font-semibold text-[var(--app-text-strong)]"
-                    >
-                      Passlängd
-                    </label>
-                    <p className="mt-1 text-sm text-[var(--app-text-muted)]">
-                      Ange mellan {MIN_DURATION} och {MAX_DURATION} minuter.
-                    </p>
-
-                    <input
-                      id="duration"
-                      inputMode="numeric"
-                      value={durationInput}
-                      onChange={(e) => handleDurationInputChange(e.target.value)}
-                      onBlur={handleDurationInputBlur}
-                      className="mt-3 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none transition placeholder:text-[var(--app-text-muted)] focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                      placeholder="Antal minuter"
-                    />
-
-                    <div className="mt-4 flex flex-wrap gap-3">
-                      {QUICK_DURATION_OPTIONS.map((duration) => {
-                        const isSelected = selectedDuration === duration;
-
-                        return (
-                          <button
-                            key={duration}
-                            type="button"
-                            onClick={() => handleQuickDurationSelect(duration)}
-                            className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
-                              isSelected
-                                ? "border-[var(--app-accent)] bg-[var(--app-accent)] text-white"
-                                : "border-[var(--app-border-strong)] bg-[var(--app-surface)] text-[var(--app-text-strong)] hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                            }`}
-                          >
-                            {duration} min
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <label
-                          htmlFor="gym"
-                          className="text-sm font-semibold text-[var(--app-text-strong)]"
-                        >
-                          Valt gym
-                        </label>
-                        <p className="mt-1 text-sm text-[var(--app-text-muted)]">
-                          Välj sparat gym eller kör kroppsvikt.
-                        </p>
-                      </div>
-
-                      <Link
-                        href="/gyms"
-                        className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-2 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                      >
-                        Redigera gym
-                      </Link>
-                    </div>
-
-                    {isLoadingGyms ? (
-                      <div className="mt-3 rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-sm text-[var(--app-text-muted)]">
-                        Hämtar gym...
-                      </div>
-                    ) : (
-                      <>
-                        <select
-                          id="gym"
-                          value={selectedGymId}
-                          onChange={(e) => setSelectedGymId(e.target.value)}
-                          className="mt-3 w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none transition focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                        >
-                          <option value={BODYWEIGHT_GYM_ID}>
-                            Kroppsvikt / utan gym
-                          </option>
-
-                          {gyms.map((gym) => (
-                            <option key={gym.id} value={String(gym.id)}>
-                              {gym.name}
-                            </option>
-                          ))}
-                        </select>
-
-                        {selectedGym ? (
-                          <div className="mt-3 rounded-2xl bg-[var(--app-surface-muted)] px-4 py-3 text-sm text-[var(--app-text)]">
-                            Vald träningsmiljö:{" "}
-                            <span className="font-semibold text-[var(--app-text-strong)]">
-                              {selectedGym.name}
-                            </span>
-                          </div>
-                        ) : null}
-
-                        {gymError ? (
-                          <div className="mt-3 rounded-2xl border border-[var(--app-danger-border)] bg-[var(--app-danger-bg)] px-4 py-3 text-sm text-[var(--app-danger-text)]">
-                            {gymError}
-                          </div>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {pageError ? (
-                  <div className="mt-6 rounded-2xl border border-[var(--app-danger-border)] bg-[var(--app-danger-bg)] px-4 py-3 text-sm text-[var(--app-danger-text)]">
-                    {pageError}
-                  </div>
-                ) : null}
-
-                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <Link
+                    href="/history"
+                    className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800 transition hover:bg-white"
+                  >
+                    Visa detaljer
+                  </Link>
                   <button
                     type="button"
                     onClick={handleGenerateAiWorkout}
+                    className="rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                     disabled={!canGenerateAiWorkout}
-                    className="inline-flex items-center justify-center rounded-2xl bg-[var(--app-accent)] px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {canGenerateAiWorkout
-                      ? "Generera AI-pass"
-                      : "Laddar användardata..."}
+                    Generera nytt AI-pass
                   </button>
-
-                  <Link
-                    href="/generate"
-                    className="inline-flex items-center justify-center rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-5 py-3.5 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                  >
-                    Eget pass
-                  </Link>
                 </div>
               </div>
-
-              {/* Förberedd yta för framtida analys */}
-              <div className="mt-8 rounded-[28px] border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface)] p-6 sm:p-7">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                      Kommande funktion
-                    </p>
-                    <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                      AI-analys av din träning
-                    </h2>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--app-text)]">
-                      Här kan nästa steg bli en sammanfattning av senaste pass,
-                      träningsfrekvens, progression och råd utifrån dina mål.
-                    </p>
-                  </div>
-
-                  <div className="text-sm text-[var(--app-text-muted)]">
-                    Förberedd plats i UI
-                  </div>
-                </div>
-
-                <div className="mt-6 grid gap-4 md:grid-cols-3">
-                  <div className="rounded-2xl bg-[var(--app-surface-muted)] px-4 py-4">
-                    <p className="text-sm font-medium text-[var(--app-text-strong)]">
-                      Träningsstatus
-                    </p>
-                    <p className="mt-2 text-sm text-[var(--app-text-muted)]">
-                      Exempel: stabil, ökande eller ojämn träningsbelastning.
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-[var(--app-surface-muted)] px-4 py-4">
-                    <p className="text-sm font-medium text-[var(--app-text-strong)]">
-                      Fokusområden
-                    </p>
-                    <p className="mt-2 text-sm text-[var(--app-text-muted)]">
-                      Exempel: överkropp, ben, återhämtning eller kontinuitet.
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-[var(--app-surface-muted)] px-4 py-4">
-                    <p className="text-sm font-medium text-[var(--app-text-strong)]">
-                      Rekommendation
-                    </p>
-                    <p className="mt-2 text-sm text-[var(--app-text-muted)]">
-                      Exempel: kortare pass oftare eller stegvis ökad volym.
-                    </p>
-                  </div>
-                </div>
+            ) : (
+              <div className="mt-6 rounded-[28px] border border-dashed border-slate-300 bg-slate-50/70 p-6">
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Ingen träningshistorik ännu
+                </h3>
+                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
+                  När du har genomfört ditt första pass kommer dashboarden att visa
+                  senaste pass, status och mer träffsäkra rekommendationer här.
+                </p>
               </div>
-            </section>
-
-            {/* Höger del: snabb översikt och navigation */}
-            <aside className="bg-[var(--app-surface)] p-6 sm:p-8 lg:p-10">
-              <div className="space-y-6">
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                    Idag
-                  </p>
-                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                    Din startvy
-                  </h2>
-                  <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
-                    Använd sidan som en tydlig hubb för att starta pass, gå till
-                    historik och hantera dina sparade gym.
-                  </p>
-                </div>
-
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm">
-                  <h3 className="text-lg font-semibold text-[var(--app-text-strong)]">
-                    Snabböversikt
-                  </h3>
-
-                  <div className="mt-5 space-y-4">
-                    <div className="rounded-2xl border border-[var(--app-border)] px-4 py-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--app-text-muted)]">
-                        Nästa pass
-                      </p>
-                      <p className="mt-2 text-sm text-[var(--app-text-strong)]">
-                        {selectedDuration} minuter
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl border border-[var(--app-border)] px-4 py-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--app-text-muted)]">
-                        Vald miljö
-                      </p>
-                      <p className="mt-2 text-sm text-[var(--app-text-strong)]">
-                        {selectedGym?.name ?? "Kroppsvikt / utan gym"}
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl border border-[var(--app-border)] px-4 py-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--app-text-muted)]">
-                        Konto
-                      </p>
-                      <p className="mt-2 text-sm text-[var(--app-text-strong)]">
-                        {authUser?.email || authUser?.username || "Inloggad"}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm">
-                  <h3 className="text-lg font-semibold text-[var(--app-text-strong)]">
-                    Snabbnavigering
-                  </h3>
-
-                  <div className="mt-5 grid gap-3">
-                    <Link
-                      href="/history"
-                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      Se träningshistorik
-                    </Link>
-
-                    <Link
-                      href="/gyms"
-                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      Hantera gym
-                    </Link>
-
-                    <Link
-                      href="/settings"
-                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      Personliga inställningar
-                    </Link>
-
-                    {authUser?.role === "admin" ? (
-                      <Link
-                        href="/admin/users"
-                        className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                      >
-                        Admin: användare
-                      </Link>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[linear-gradient(180deg,#ecfdf5_0%,#f8fafc_100%)] p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                    Nästa steg
-                  </p>
-                  <h3 className="mt-2 text-lg font-semibold text-[var(--app-text-strong)]">
-                    Bygg vidare härifrån
-                  </h3>
-                  <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
-                    Nästa naturliga steg är att koppla in senaste pass,
-                    träningsfrekvens och faktisk analysdata i denna högerspalt.
-                  </p>
-                </div>
-              </div>
-            </aside>
+            )}
           </div>
-        </div>
+
+          <div className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
+                  Snabbstart
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                  Starta dagens pass
+                </h2>
+              </div>
+
+              <Link
+                href="/gyms"
+                className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Redigera gym
+              </Link>
+            </div>
+
+            <div className="mt-6 space-y-5">
+              <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
+                <label className="text-sm font-semibold text-slate-900">
+                  Passlängd
+                </label>
+                <p className="mt-1 text-sm text-slate-500">
+                  Välj mellan {MIN_DURATION} och {MAX_DURATION} minuter.
+                </p>
+
+                <input
+                  inputMode="numeric"
+                  value={durationInput}
+                  onChange={(e) => handleDurationInputChange(e.target.value)}
+                  onBlur={handleDurationInputBlur}
+                  className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                  placeholder="Antal minuter"
+                />
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {QUICK_DURATION_OPTIONS.map((duration) => {
+                    const isSelected = selectedDuration === duration;
+
+                    return (
+                      <button
+                        key={duration}
+                        type="button"
+                        onClick={() => handleQuickDurationSelect(duration)}
+                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                          isSelected
+                            ? "border-indigo-600 bg-indigo-600 text-white"
+                            : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                        }`}
+                      >
+                        {duration} min
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
+                <label className="text-sm font-semibold text-slate-900">
+                  Valt gym
+                </label>
+                <p className="mt-1 text-sm text-slate-500">
+                  AI-passet anpassas efter vald utrustning.
+                </p>
+
+                {isLoadingGyms ? (
+                  <p className="mt-3 text-sm text-slate-500">Hämtar gym...</p>
+                ) : (
+                  <>
+                    <select
+                      value={selectedGymId}
+                      onChange={(e) => setSelectedGymId(e.target.value)}
+                      className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                    >
+                      <option value={BODYWEIGHT_GYM_ID}>
+                        Kroppsvikt / utan gym
+                      </option>
+                      {gyms.map((gym) => (
+                        <option key={String(gym.id)} value={String(gym.id)}>
+                          {gym.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    <p className="mt-3 text-sm text-slate-600">
+                      Vald träningsmiljö:{" "}
+                      <span className="font-semibold text-slate-900">
+                        {selectedGym?.name ?? "Kroppsvikt / utan gym"}
+                      </span>
+                    </p>
+                  </>
+                )}
+
+                {gymError ? (
+                  <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    {gymError}
+                  </p>
+                ) : null}
+              </div>
+
+              {pageError ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {pageError}
+                </div>
+              ) : null}
+
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={handleGenerateAiWorkout}
+                  disabled={!canGenerateAiWorkout}
+                  className="inline-flex flex-1 items-center justify-center rounded-2xl bg-indigo-600 px-5 py-4 text-base font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {canGenerateAiWorkout ? "Generera AI-pass" : "Laddar användardata..."}
+                </button>
+
+                <Link
+                  href="/custom"
+                  className="inline-flex flex-1 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base font-semibold text-slate-900 transition hover:bg-slate-50"
+                >
+                  Eget pass
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-6 grid gap-6 lg:grid-cols-[1fr_1fr]">
+          <div className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
+                  AI-analys
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                  Träningsstatus just nu
+                </h2>
+              </div>
+
+              <div
+                className={`rounded-2xl border px-4 py-2 text-sm font-semibold ${getAnalysisBadgeClasses(
+                  dashboardAnalysis.status
+                )}`}
+              >
+                {dashboardAnalysis.statusLabel}
+              </div>
+            </div>
+
+            <h3 className="mt-6 text-xl font-semibold text-slate-900">
+              {dashboardAnalysis.title}
+            </h3>
+
+            <p className="mt-3 text-sm leading-7 text-slate-600">
+              {dashboardAnalysis.summary}
+            </p>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              {dashboardAnalysis.metrics.map((metric) => (
+                <div
+                  key={metric.label}
+                  className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4"
+                >
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    {metric.label}
+                  </p>
+                  <p className="mt-2 text-xl font-semibold text-slate-900">
+                    {metric.value}
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    {metric.hint}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            {isLoadingDashboard ? (
+              <p className="mt-5 text-sm text-slate-500">
+                Uppdaterar analysen...
+              </p>
+            ) : null}
+          </div>
+
+          <div className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
+                Rekommendationer framåt
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                Vad du bör fokusera på nu
+              </h2>
+            </div>
+
+            <div className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
+              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Fokusområden
+              </p>
+
+              <div className="mt-4 space-y-3">
+                {dashboardAnalysis.focusAreas.map((focusArea) => (
+                  <div
+                    key={focusArea}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-700"
+                  >
+                    {focusArea}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {dashboardAnalysis.recommendations.map((recommendation) => (
+                <div
+                  key={recommendation.title}
+                  className="rounded-[24px] border border-slate-200 bg-white p-4"
+                >
+                  <h3 className="text-base font-semibold text-slate-900">
+                    {recommendation.title}
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    {recommendation.detail}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   );

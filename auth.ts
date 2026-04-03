@@ -4,226 +4,204 @@ import bcrypt from "bcryptjs";
 
 import { pool } from "@/lib/db";
 
-// Enkel typ för auth-user i appen
+// Små hjälptyper för auth-flödet.
+type AppRole = "user" | "admin";
+type AppStatus = "active" | "disabled";
+
 type AppAuthUser = {
   id: string;
   email: string;
   name: string | null;
-  role: "user" | "admin";
-  status: "active" | "disabled";
+  username: string | null;
+  displayName: string;
+  role: AppRole;
+  status: AppStatus;
 };
 
-// Läs bootstrap-admin från env på servern
-const ENV_ADMIN_USERNAME =
-  process.env.ADMIN_USERNAME?.trim().toLowerCase() ?? "";
+// ENV-admin för bootstrap.
+const ENV_ADMIN_USERNAME = process.env.ADMIN_USERNAME?.trim().toLowerCase() ?? "";
+const ENV_ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH?.trim() ?? "";
 
-const ENV_ADMIN_PASSWORD_HASH =
-  process.env.ADMIN_PASSWORD_HASH?.trim() ?? "";
+// Bygger ett säkert visningsnamn som alltid finns.
+function buildDisplayName(params: {
+  name?: string | null;
+  username?: string | null;
+  email?: string | null;
+}) {
+  const trimmedName = params.name?.trim() ?? "";
+  const trimmedUsername = params.username?.trim() ?? "";
+  const emailPrefix = params.email?.split("@")[0]?.trim() ?? "";
+
+  return trimmedName || trimmedUsername || emailPrefix || "Användare";
+}
+
+// Bygger en auth-user i ett ställe så callbackarna blir enkla.
+function createAppAuthUser(params: {
+  id: string;
+  email: string;
+  name?: string | null;
+  username?: string | null;
+  role?: AppRole | null;
+  status?: AppStatus | null;
+}): AppAuthUser {
+  const name = params.name?.trim() || null;
+  const username = params.username?.trim() || null;
+  const displayName = buildDisplayName({
+    name,
+    username,
+    email: params.email,
+  });
+
+  return {
+    id: params.id,
+    email: params.email,
+    name,
+    // Om separat username inte finns ännu använder vi display fallback.
+    username: username ?? displayName,
+    displayName,
+    role: params.role ?? "user",
+    status: params.status ?? "active",
+  };
+}
 
 export const authOptions: NextAuthOptions = {
   session: {
-    strategy: "jwt", // Vi kör JWT-sessioner
+    strategy: "jwt",
   },
-
   providers: [
     CredentialsProvider({
       name: "Credentials",
       credentials: {
-        identifier: {
-          label: "E-post eller användarnamn",
-          type: "text",
-        },
-        password: {
-          label: "Lösenord",
-          type: "password",
-        },
+        identifier: { label: "E-post", type: "text" },
+        password: { label: "Lösenord", type: "password" },
       },
-
       async authorize(credentials) {
         const identifier = credentials?.identifier?.trim();
         const password = credentials?.password;
 
-        // Tydliga debug-loggar för felsökning i terminalen
-        console.log("=== AUTH AUTHORIZE START ===");
-        console.log("identifier raw:", credentials?.identifier);
-        console.log("identifier trimmed:", identifier);
-        console.log("identifier normalized:", identifier?.toLowerCase());
-        console.log("ENV_ADMIN_USERNAME:", ENV_ADMIN_USERNAME);
-        console.log("HASH FROM ENV:", ENV_ADMIN_PASSWORD_HASH);
-        console.log(
-          "ENV_ADMIN_PASSWORD_HASH exists:",
-          Boolean(ENV_ADMIN_PASSWORD_HASH)
-        );
-
-        // Skydda mot tomma fält
         if (!identifier || !password) {
-          console.log("AUTH FAILED: missing identifier or password");
-          console.log("=== AUTH AUTHORIZE END ===");
           return null;
         }
 
-        const normalizedIdentifier = identifier.toLowerCase();
+        const normalized = identifier.toLowerCase();
 
-        // 1) Först: tillåt bootstrap-admin från env
-        // Detta är en reserv/admin-ingång och inte huvudspåret långsiktigt.
+        // 1) ENV-admin för bootstrap.
         if (ENV_ADMIN_USERNAME && ENV_ADMIN_PASSWORD_HASH) {
-          const isEnvAdminUser = normalizedIdentifier === ENV_ADMIN_USERNAME;
+          if (normalized === ENV_ADMIN_USERNAME) {
+            const ok = await bcrypt.compare(password, ENV_ADMIN_PASSWORD_HASH);
 
-          console.log("Checking env admin...");
-          console.log("isEnvAdminUser:", isEnvAdminUser);
-
-          if (isEnvAdminUser) {
-            const isValidEnvPassword = await bcrypt.compare(
-              password,
-              ENV_ADMIN_PASSWORD_HASH
-            );
-
-            console.log("isValidEnvPassword:", isValidEnvPassword);
-
-            if (isValidEnvPassword) {
-              console.log("AUTH SUCCESS: env admin matched");
-              console.log("=== AUTH AUTHORIZE END ===");
-
-              return {
-                id: "env-admin", // Syntetiskt id för bootstrap-admin
-                email: `${ENV_ADMIN_USERNAME}@local.admin`,
-                name: "Bootstrap Admin",
+            if (ok) {
+              return createAppAuthUser({
+                id: "env-admin",
+                email: `${ENV_ADMIN_USERNAME}@local`,
+                name: "Admin",
+                username: ENV_ADMIN_USERNAME,
                 role: "admin",
                 status: "active",
-              } satisfies AppAuthUser;
+              });
             }
-
-            console.log("AUTH FAILED: env admin password mismatch");
           }
-        } else {
-          console.log("Env admin not configured");
         }
 
-        // 2) Annars: vanlig login mot databasen
-        // Tillåt login med e-post eller nuvarande name-fält
-        // På sikt bör detta ersättas av ett separat username-fält
-        console.log("Falling through to DB login...");
-
+        // 2) Vanlig användare i DB.
+        // Vi läser fortsatt från nuvarande name-fält för maximal kompatibilitet.
         const result = await pool.query(
           `
-          SELECT id, email, name, password_hash, role, status
-          FROM app_users
-          WHERE LOWER(email) = LOWER($1)
-             OR LOWER(name) = LOWER($1)
-          LIMIT 1
+            SELECT id, email, name, password_hash, role, status
+            FROM app_users
+            WHERE LOWER(email) = LOWER($1)
+               OR LOWER(name) = LOWER($1)
+            LIMIT 1
           `,
           [identifier]
         );
 
         const user = result.rows[0];
 
-        console.log("DB user found:", Boolean(user));
-
         if (!user) {
-          console.log("AUTH FAILED: no DB user found");
-          console.log("=== AUTH AUTHORIZE END ===");
           return null;
         }
 
-        console.log("DB user status:", user.status ?? "active");
-        console.log("DB user role:", user.role ?? "user");
-
-        // Blockera inaktiverade användare
         if ((user.status ?? "active") !== "active") {
-          console.log("AUTH FAILED: DB user is not active");
-          console.log("=== AUTH AUTHORIZE END ===");
           return null;
         }
 
-        // Kontrollera lösenord mot hash
         const isValid = await bcrypt.compare(password, user.password_hash);
 
-        console.log("DB password valid:", isValid);
-
         if (!isValid) {
-          console.log("AUTH FAILED: DB password mismatch");
-          console.log("=== AUTH AUTHORIZE END ===");
           return null;
         }
 
-        // Uppdatera senaste inloggning
+        // Uppdatera senaste inloggning.
         await pool.query(
           `
-          UPDATE app_users
-          SET last_login_at = NOW(), updated_at = NOW()
-          WHERE id = $1
+            UPDATE app_users
+            SET last_login_at = NOW()
+            WHERE id = $1
           `,
           [user.id]
         );
 
-        console.log("AUTH SUCCESS: DB user matched");
-        console.log("=== AUTH AUTHORIZE END ===");
-
-        return {
+        return createAppAuthUser({
           id: String(user.id),
           email: String(user.email),
-          name: user.name ? String(user.name) : null,
-          role: (user.role ?? "user") as "user" | "admin",
-          status: (user.status ?? "active") as "active" | "disabled",
-        } satisfies AppAuthUser;
+          name: typeof user.name === "string" ? user.name : null,
+          // Tills separat username-kolumn används fullt ut låter vi username följa name/display.
+          username: typeof user.name === "string" ? user.name : null,
+          role: (user.role ?? "user") as AppRole,
+          status: (user.status ?? "active") as AppStatus,
+        });
       },
     }),
   ],
-
   callbacks: {
-    // Lägg extra data i JWT
     async jwt({ token, user }) {
       if (user) {
         const authUser = user as AppAuthUser;
 
-        console.log("JWT callback user:", {
-          id: authUser.id,
-          email: authUser.email,
-          role: authUser.role,
-          status: authUser.status,
-        });
-
-        token.id = authUser.id;
-        token.role = authUser.role;
-        token.status = authUser.status;
-        token.name = authUser.name;
-        token.email = authUser.email;
+        // Små extrafält på token för resten av appen.
+        (token as any).id = authUser.id;
+        (token as any).role = authUser.role;
+        (token as any).status = authUser.status;
+        (token as any).email = authUser.email;
+        (token as any).name = authUser.name;
+        (token as any).username = authUser.username;
+        (token as any).displayName = authUser.displayName;
       }
 
       return token;
     },
 
-    // Exponera samma data i session.user
     async session({ session, token }) {
       if (session.user) {
-        (session.user as { id?: string }).id = String(token.id ?? "");
-        (session.user as { role?: "user" | "admin" }).role =
-          (token.role as "user" | "admin" | undefined) ?? "user";
-        (session.user as { status?: "active" | "disabled" }).status =
-          (token.status as "active" | "disabled" | undefined) ?? "active";
+        // Lägg in samma data i session.user så server-auth kan läsa dem vidare.
+        (session.user as any).id = String((token as any).id ?? "");
+        (session.user as any).role = ((token as any).role ?? "user") as AppRole;
+        (session.user as any).status = ((token as any).status ?? "active") as AppStatus;
+        (session.user as any).username =
+          typeof (token as any).username === "string" ? (token as any).username : null;
+        (session.user as any).displayName =
+          typeof (token as any).displayName === "string"
+            ? (token as any).displayName
+            : buildDisplayName({
+                name: typeof token.name === "string" ? token.name : null,
+                username:
+                  typeof (token as any).username === "string"
+                    ? (token as any).username
+                    : null,
+                email: typeof token.email === "string" ? token.email : null,
+              });
 
-        session.user.name =
-          typeof token.name === "string" ? token.name : null;
-
-        session.user.email =
-          typeof token.email === "string" ? token.email : null;
+        session.user.email = typeof token.email === "string" ? token.email : null;
+        session.user.name = typeof token.name === "string" ? token.name : null;
       }
-
-      console.log("SESSION callback:", {
-        id: token.id,
-        email: token.email,
-        role: token.role,
-        status: token.status,
-      });
 
       return session;
     },
   },
-
   pages: {
-    signIn: "/", // Startsidan är login-sida
+    signIn: "/",
   },
-
   secret: process.env.NEXTAUTH_SECRET,
 };
 
