@@ -60,6 +60,8 @@ type GymEquipment = {
   equipment_type: string;
   label: string;
   weights_kg?: number[] | null;
+  specific_weights?: number[] | null;
+  specificWeights?: number[] | null;
 };
 
 type Gym = {
@@ -92,7 +94,7 @@ const TIMED_EFFORT_OPTIONS: Array<{
   {
     value: "just_right",
     label: "Lagom",
-    description: "Bra nivå för setet.",
+    description: "Bra nivå för övningen.",
   },
   {
     value: "tough",
@@ -187,70 +189,6 @@ function normalizeRating(
     : null;
 }
 
-function playTone(params: {
-  frequency: number;
-  durationSeconds: number;
-  gain?: number;
-  type?: OscillatorType;
-}) {
-  try {
-    const AudioContextClass =
-      window.AudioContext ||
-      // @ts-expect-error Safari fallback
-      window.webkitAudioContext;
-
-    if (!AudioContextClass) return;
-
-    const audioContext = new AudioContextClass();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-
-    oscillator.type = params.type ?? "sine";
-    oscillator.frequency.value = params.frequency;
-    gainNode.gain.value = params.gain ?? 0.09;
-
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-
-    const now = audioContext.currentTime;
-    oscillator.start(now);
-    oscillator.stop(now + params.durationSeconds);
-
-    window.setTimeout(() => {
-      void audioContext.close();
-    }, Math.max(700, Math.round(params.durationSeconds * 1000) + 300));
-  } catch (error) {
-    console.error("Could not play timer sound", error);
-  }
-}
-
-function playCountdownBeep() {
-  playTone({
-    frequency: 900,
-    durationSeconds: 0.12,
-    gain: 0.12,
-    type: "square",
-  });
-}
-
-function playFinishBeep() {
-  playTone({
-    frequency: 760,
-    durationSeconds: 0.55,
-    gain: 0.14,
-    type: "square",
-  });
-}
-
-function playRestFinishedBeep() {
-  playTone({
-    frequency: 640,
-    durationSeconds: 0.3,
-    gain: 0.12,
-    type: "triangle",
-  });
-}
-
 function getDisplayName(user: AuthUser | null) {
   if (!user) return "där";
 
@@ -276,15 +214,23 @@ function getBadgeClasses(variant: "accent" | "neutral" | "warning" | "danger") {
   }
 }
 
-// Enkel heuristik för vilken viktgrupp som passar övningen bäst.
+// Enkel heuristik för vilken typ av vikt som oftast hör till övningen.
 function inferPreferredWeightType(exercise: Exercise): EquipmentType | null {
   const haystack = `${exercise.name} ${exercise.description ?? ""}`.toLowerCase();
 
-  if (haystack.includes("dumbbell") || haystack.includes("hantel")) {
+  if (
+    haystack.includes("dumbbell") ||
+    haystack.includes("hantel") ||
+    haystack.includes("hantel")
+  ) {
     return "dumbbell";
   }
 
-  if (haystack.includes("kettlebell") || haystack.includes("kb ")) {
+  if (
+    haystack.includes("kettlebell") ||
+    haystack.includes("kb ") ||
+    haystack.includes("kettlebell")
+  ) {
     return "kettlebell";
   }
 
@@ -299,6 +245,7 @@ function inferPreferredWeightType(exercise: Exercise): EquipmentType | null {
   return null;
 }
 
+// Läser ut vikter från flera möjliga fältnamn för att minska risken att chips försvinner.
 function extractWeightOptionsFromGym(gym: Gym | null) {
   const grouped: Record<EquipmentType, number[]> = {
     dumbbell: [],
@@ -316,9 +263,17 @@ function extractWeightOptionsFromGym(gym: Gym | null) {
       item.equipment_type === "barbell" ||
       item.equipment_type === "kettlebell"
     ) {
-      const weights = Array.isArray(item.weights_kg)
-        ? item.weights_kg.filter((value) => Number.isFinite(Number(value)))
+      const rawWeights = Array.isArray(item.weights_kg)
+        ? item.weights_kg
+        : Array.isArray(item.specific_weights)
+        ? item.specific_weights
+        : Array.isArray(item.specificWeights)
+        ? item.specificWeights
         : [];
+
+      const weights = rawWeights.filter((value) =>
+        Number.isFinite(Number(value))
+      );
 
       grouped[item.equipment_type] = [
         ...new Set([
@@ -356,6 +311,11 @@ function getSavedWeightForExercise(
 ): string {
   if (!userId) return "";
   return getLastWeightForExercise(userId, exerciseId);
+}
+
+// Hjälper till att jämföra vikter även om de skrivs med komma/punkt.
+function normalizeWeightString(value: string) {
+  return value.trim().replace(",", ".");
 }
 
 export default function WorkoutRunPage() {
@@ -421,7 +381,12 @@ export default function WorkoutRunPage() {
   // Visas när backup återställts.
   const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
 
+  // Håller koll på sista nedräkningspipet.
   const lastCountdownSecondRef = useRef<number | null>(null);
+
+  // Delad audio context gör Safari/iPhone stabilare.
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioPrimedRef = useRef(false);
 
   const userId = authUser ? String(authUser.id) : null;
 
@@ -452,6 +417,12 @@ export default function WorkoutRunPage() {
     return weightOptionsByType[preferredWeightType];
   }, [preferredWeightType, weightOptionsByType]);
 
+  // "AI-liknande" viktförslag baseras här på tidigare resultat för samma övning.
+  const suggestedWeightValue = useMemo(() => {
+    if (!exercise) return "";
+    return lastWeightByExercise[exercise.id] || "";
+  }, [exercise, lastWeightByExercise]);
+
   const totalCompletedSets = useMemo(() => {
     return completedExercises.reduce((sum, item) => sum + item.sets.length, 0);
   }, [completedExercises]);
@@ -468,6 +439,103 @@ export default function WorkoutRunPage() {
       );
     }, 0);
   }, [completedExercises]);
+
+  // Försöker "låsa upp" ljud tidigt för iPhone/Safari.
+  async function ensureAudioReady() {
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        // @ts-expect-error Safari fallback
+        window.webkitAudioContext;
+
+      if (!AudioContextClass) return null;
+
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContextClass();
+      }
+
+      if (audioContextRef.current.state === "suspended") {
+        await audioContextRef.current.resume();
+      }
+
+      audioPrimedRef.current = true;
+      return audioContextRef.current;
+    } catch (error) {
+      console.error("Could not initialize audio context", error);
+      return null;
+    }
+  }
+
+  function playTone(params: {
+    frequency: number;
+    durationSeconds: number;
+    gain?: number;
+    type?: OscillatorType;
+  }) {
+    void (async () => {
+      try {
+        const audioContext = await ensureAudioReady();
+        if (!audioContext) return;
+
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+
+        oscillator.type = params.type ?? "sine";
+        oscillator.frequency.value = params.frequency;
+        gainNode.gain.value = params.gain ?? 0.09;
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+
+        const now = audioContext.currentTime;
+        oscillator.start(now);
+        oscillator.stop(now + params.durationSeconds);
+      } catch (error) {
+        console.error("Could not play timer sound", error);
+      }
+    })();
+  }
+
+  function playCountdownBeep() {
+    playTone({
+      frequency: 900,
+      durationSeconds: 0.12,
+      gain: 0.12,
+      type: "square",
+    });
+  }
+
+  function playFinishBeep() {
+    playTone({
+      frequency: 760,
+      durationSeconds: 0.55,
+      gain: 0.16,
+      type: "square",
+    });
+  }
+
+  function playRestFinishedBeep() {
+    playTone({
+      frequency: 640,
+      durationSeconds: 0.3,
+      gain: 0.14,
+      type: "triangle",
+    });
+  }
+
+  useEffect(() => {
+    function primeFromGesture() {
+      void ensureAudioReady();
+    }
+
+    window.addEventListener("touchstart", primeFromGesture, { passive: true });
+    window.addEventListener("pointerdown", primeFromGesture, { passive: true });
+
+    return () => {
+      window.removeEventListener("touchstart", primeFromGesture);
+      window.removeEventListener("pointerdown", primeFromGesture);
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -696,6 +764,32 @@ export default function WorkoutRunPage() {
     restRemainingSeconds,
   ]);
 
+  // Om en övning har tidigare sparad vikt fylls den in som föreslagen vikt.
+  useEffect(() => {
+    if (!exercise || showExerciseFeedback) return;
+
+    const preferredWeight =
+      lastWeightByExercise[exercise.id] ||
+      getSavedWeightForExercise(userId, exercise.id);
+
+    if (!preferredWeight) return;
+
+    setSetLog((prev) => {
+      if (prev.weight.trim()) return prev;
+      return {
+        ...prev,
+        weight: preferredWeight,
+      };
+    });
+  }, [
+    exercise,
+    showExerciseFeedback,
+    lastWeightByExercise,
+    userId,
+    currentExerciseIndex,
+    currentSet,
+  ]);
+
   // Timer för tidsstyrt set.
   useEffect(() => {
     if (timedSetPhase !== "running") return;
@@ -830,6 +924,8 @@ export default function WorkoutRunPage() {
   }
 
   function startTimedSet() {
+    void ensureAudioReady();
+
     if (!exercise || !timedExercise) return;
 
     hideRestTimer();
@@ -840,6 +936,8 @@ export default function WorkoutRunPage() {
   }
 
   function stopTimedSet() {
+    void ensureAudioReady();
+
     if (timedSetPhase !== "running") return;
     setTimedSetPhase("ready_to_save");
   }
@@ -983,6 +1081,8 @@ export default function WorkoutRunPage() {
   }
 
   function completeSet() {
+    void ensureAudioReady();
+
     if (!exercise) return;
 
     if (timedExercise) {
@@ -1148,6 +1248,45 @@ export default function WorkoutRunPage() {
     if (!workout) return "";
     return `Övning ${currentExerciseIndex + 1} av ${workout.exercises.length}`;
   }
+
+  function renderSetDots() {
+    if (!exercise) return null;
+
+    return (
+      <div className="flex items-center gap-2">
+        {Array.from({ length: exercise.sets }).map((_, index) => {
+          const setNumber = index + 1;
+          const isCurrent = setNumber === currentSet;
+          const isCompleted = setNumber < currentSet;
+
+          return (
+            <span
+              key={setNumber}
+              className={`h-3 w-3 rounded-full border ${
+                isCurrent
+                  ? "border-blue-600 bg-blue-600"
+                  : isCompleted
+                  ? "border-emerald-600 bg-emerald-600"
+                  : "border-slate-300 bg-white"
+              }`}
+              aria-hidden="true"
+            />
+          );
+        })}
+      </div>
+    );
+  }
+
+  const setProgressLabel = exercise
+    ? `Set ${currentSet} av ${exercise.sets}`
+    : "";
+
+  const saveButtonLabel = exercise
+    ? `Spara set ${currentSet}/${exercise.sets}`
+    : "Spara set";
+
+  const normalizedCurrentWeight = normalizeWeightString(setLog.weight);
+  const normalizedSuggestedWeight = normalizeWeightString(suggestedWeightValue);
 
   if (!authChecked) {
     return (
@@ -1343,6 +1482,24 @@ export default function WorkoutRunPage() {
         {exercise && !showExerciseFeedback ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="grid gap-4">
+              {/* Tydlig visualisering av vilket set som loggas just nu */}
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-medium uppercase tracking-wide text-blue-700">
+                      Aktuellt set
+                    </div>
+                    <div className="mt-1 text-2xl font-bold text-blue-900">
+                      {setProgressLabel}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {renderSetDots()}
+                  </div>
+                </div>
+              </div>
+
               {timedExercise ? (
                 <>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-center">
@@ -1405,15 +1562,59 @@ export default function WorkoutRunPage() {
                         }
                         className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none ring-0 focus:border-blue-500"
                       />
+                      {suggestedWeightValue ? (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Föreslagen vikt från tidigare resultat:{" "}
+                          <span className="font-semibold text-slate-700">
+                            {suggestedWeightValue} kg
+                          </span>
+                        </p>
+                      ) : null}
                     </div>
                   </div>
+
+                  {suggestedWeightOptions.length > 0 ? (
+                    <div>
+                      <div className="mb-2 text-sm font-medium text-slate-700">
+                        Snabbval vikter
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {suggestedWeightOptions.map((weight) => {
+                          const chipValue = formatWeightValue(weight);
+                          const isSelected =
+                            normalizeWeightString(chipValue) ===
+                            normalizedCurrentWeight;
+                          const isSuggested =
+                            normalizeWeightString(chipValue) ===
+                            normalizedSuggestedWeight;
+
+                          return (
+                            <button
+                              key={weight}
+                              onClick={() => updateSetField("weight", chipValue)}
+                              className={`rounded-full border px-3 py-2 text-sm font-medium ${
+                                isSelected
+                                  ? "border-blue-600 bg-blue-600 text-white"
+                                  : isSuggested
+                                  ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                                  : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              {chipValue} kg
+                              {isSuggested ? " · förslag" : ""}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <button
                     onClick={completeSet}
                     disabled={timedSetPhase !== "ready_to_save"}
                     className="rounded-2xl bg-blue-600 px-4 py-3 font-semibold text-white disabled:opacity-50"
                   >
-                    Spara set
+                    {saveButtonLabel}
                   </button>
                 </>
               ) : (
@@ -1448,6 +1649,14 @@ export default function WorkoutRunPage() {
                         }
                         className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none ring-0 focus:border-blue-500"
                       />
+                      {suggestedWeightValue ? (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Föreslagen vikt från tidigare resultat:{" "}
+                          <span className="font-semibold text-slate-700">
+                            {suggestedWeightValue} kg
+                          </span>
+                        </p>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1457,17 +1666,32 @@ export default function WorkoutRunPage() {
                         Snabbval vikter
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {suggestedWeightOptions.map((weight) => (
-                          <button
-                            key={weight}
-                            onClick={() =>
-                              updateSetField("weight", formatWeightValue(weight))
-                            }
-                            className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-                          >
-                            {formatWeightValue(weight)} kg
-                          </button>
-                        ))}
+                        {suggestedWeightOptions.map((weight) => {
+                          const chipValue = formatWeightValue(weight);
+                          const isSelected =
+                            normalizeWeightString(chipValue) ===
+                            normalizedCurrentWeight;
+                          const isSuggested =
+                            normalizeWeightString(chipValue) ===
+                            normalizedSuggestedWeight;
+
+                          return (
+                            <button
+                              key={weight}
+                              onClick={() => updateSetField("weight", chipValue)}
+                              className={`rounded-full border px-3 py-2 text-sm font-medium ${
+                                isSelected
+                                  ? "border-blue-600 bg-blue-600 text-white"
+                                  : isSuggested
+                                  ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                                  : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              {chipValue} kg
+                              {isSuggested ? " · förslag" : ""}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   ) : null}
@@ -1476,7 +1700,7 @@ export default function WorkoutRunPage() {
                     onClick={completeSet}
                     className="rounded-2xl bg-blue-600 px-4 py-3 font-semibold text-white"
                   >
-                    Spara set
+                    {saveButtonLabel}
                   </button>
                 </>
               )}
@@ -1592,7 +1816,10 @@ export default function WorkoutRunPage() {
 
               <div className="flex flex-wrap gap-2">
                 <button
-                  onClick={() => setRestTimerRunning((prev) => !prev)}
+                  onClick={() => {
+                    void ensureAudioReady();
+                    setRestTimerRunning((prev) => !prev);
+                  }}
                   className="rounded-2xl border border-slate-300 bg-white px-4 py-3 font-semibold text-slate-700"
                 >
                   {restTimerRunning ? "Pausa" : "Starta"}
