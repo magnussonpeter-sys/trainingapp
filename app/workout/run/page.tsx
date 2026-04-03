@@ -36,6 +36,7 @@ type AuthUser = {
   email: string | null;
   username?: string | null;
   name?: string | null;
+  displayName?: string | null;
 };
 
 type LoggedSet = {
@@ -229,12 +230,28 @@ function playRestFinishedBeep() {
 
 function getDisplayName(user: AuthUser | null) {
   if (!user) return "där";
+
   return (
+    user.displayName?.trim() ||
     user.name?.trim() ||
     user.username?.trim() ||
     user.email?.split("@")[0]?.trim() ||
     "där"
   );
+}
+
+// Enkel badge-styling för små informationschips.
+function getBadgeClasses(variant: "accent" | "neutral" | "warning" | "danger") {
+  switch (variant) {
+    case "accent":
+      return "border-indigo-100 bg-indigo-50 text-indigo-700";
+    case "warning":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "danger":
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-700";
+  }
 }
 
 export default function WorkoutRunPage() {
@@ -832,20 +849,20 @@ export default function WorkoutRunPage() {
       })
     );
 
-if (userId) {
-  const entry: ExerciseFeedbackEntry = {
-    exerciseId: exercise.id,
-    exerciseName: exercise.name,
-    completedAt: new Date().toISOString(),
-    extraReps: timedExercise ? undefined : selectedExtraReps ?? undefined,
-    timedEffort: timedExercise
-      ? selectedTimedEffort ?? undefined
-      : undefined,
-    rating: ratingToSave ?? undefined,
-  };
+    if (userId) {
+      const entry: ExerciseFeedbackEntry = {
+        exerciseId: exercise.id,
+        exerciseName: exercise.name,
+        completedAt: new Date().toISOString(),
+        extraReps: timedExercise ? undefined : selectedExtraReps ?? undefined,
+        timedEffort: timedExercise
+          ? selectedTimedEffort ?? undefined
+          : undefined,
+        rating: ratingToSave ?? undefined,
+      };
 
-  saveExerciseFeedbackEntry(userId, entry);
-}
+      saveExerciseFeedbackEntry(userId, entry);
+    }
 
     setShowExerciseFeedback(false);
     setSelectedExtraReps(null);
@@ -896,11 +913,19 @@ if (userId) {
 
   if (!authChecked) {
     return (
-      <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-6xl rounded-[32px] border border-[var(--app-border)] bg-[var(--app-surface)] p-8 shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
-          <p className="text-sm font-medium text-[var(--app-text-muted)]">
-            Kontrollerar inloggning...
-          </p>
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.16),_transparent_28%),linear-gradient(180deg,#f7f9fc_0%,#eef3f9_100%)] px-4 py-10 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl">
+          <div className="rounded-[32px] border border-white/70 bg-white/85 p-8 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] backdrop-blur">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+              Träningsapp
+            </p>
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+              Laddar aktivt pass...
+            </h1>
+            <p className="mt-3 text-base leading-7 text-slate-600">
+              Kontrollerar inloggning och hämtar ditt pågående pass.
+            </p>
+          </div>
         </div>
       </main>
     );
@@ -908,20 +933,23 @@ if (userId) {
 
   if (!workout || !userId) {
     return (
-      <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-3xl rounded-[32px] border border-[var(--app-border)] bg-[var(--app-surface)] p-8 shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
-          <h1 className="text-3xl font-semibold tracking-tight text-[var(--app-text-strong)]">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.16),_transparent_28%),linear-gradient(180deg,#f7f9fc_0%,#eef3f9_100%)] px-4 py-10 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-3xl rounded-[32px] border border-white/70 bg-white/90 p-8 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+            Aktivt pass
+          </p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
             Inget aktivt pass
           </h1>
-          <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
+          <p className="mt-3 text-base leading-7 text-slate-600">
             Det finns inget pass att köra just nu.
           </p>
           <button
             type="button"
             onClick={() => router.push("/home")}
-            className="mt-6 inline-flex rounded-2xl bg-[var(--app-accent)] px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-[var(--app-accent-strong)]"
+            className="mt-6 inline-flex rounded-2xl bg-indigo-600 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-indigo-700"
           >
-            Till startsidan
+            Till dashboard
           </button>
         </div>
       </main>
@@ -930,96 +958,115 @@ if (userId) {
 
   if (workoutFinished && savedWorkoutLog) {
     return (
-      <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-5xl">
-          <div className="overflow-hidden rounded-[32px] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
-            <div className="grid lg:grid-cols-[1.15fr_0.85fr]">
-              <section className="border-b border-[var(--app-border)] bg-[linear-gradient(180deg,#f8fbff_0%,#f4f7fb_100%)] p-6 sm:p-8 lg:border-b-0 lg:border-r lg:p-10">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong)]">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.16),_transparent_28%),linear-gradient(180deg,#f7f9fc_0%,#eef3f9_100%)] px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl">
+          <section className="overflow-hidden rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] backdrop-blur sm:p-8">
+            <div className="grid gap-6 lg:grid-cols-[1.35fr_0.85fr]">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
                   Pass slutfört
                 </p>
-                <h1 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--app-text-strong)] sm:text-4xl">
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
                   Bra jobbat
                 </h1>
-                <p className="mt-3 text-base leading-7 text-[var(--app-text)]">
+                <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
                   Ditt pass har sparats. Här ser du en snabb sammanfattning av
                   resultatet.
                 </p>
 
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <div
+                    className={`rounded-2xl border px-4 py-3 text-sm font-medium ${getBadgeClasses(
+                      "accent"
+                    )}`}
+                  >
+                    Sparat
+                  </div>
+                  <div
+                    className={`rounded-2xl border px-4 py-3 text-sm font-medium ${getBadgeClasses(
+                      "neutral"
+                    )}`}
+                  >
+                    {savedWorkoutLog.exercises.length} övningar
+                  </div>
+                  <div
+                    className={`rounded-2xl border px-4 py-3 text-sm font-medium ${getBadgeClasses(
+                      "neutral"
+                    )}`}
+                  >
+                    {totalSetsCompleted} set
+                  </div>
+                </div>
+
                 <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                    <p className="text-sm text-[var(--app-text-muted)]">Tid</p>
-                    <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
+                  <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-5">
+                    <p className="text-sm text-slate-500">Tid</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-900">
                       {formatDuration(savedWorkoutLog.durationSeconds)}
                     </p>
                   </div>
 
-                  <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                    <p className="text-sm text-[var(--app-text-muted)]">Övningar</p>
-                    <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
+                  <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-5">
+                    <p className="text-sm text-slate-500">Övningar</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-900">
                       {savedWorkoutLog.exercises.length}
                     </p>
                   </div>
 
-                  <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                    <p className="text-sm text-[var(--app-text-muted)]">Set</p>
-                    <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
+                  <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-5">
+                    <p className="text-sm text-slate-500">Set</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-900">
                       {totalSetsCompleted}
                     </p>
                   </div>
 
-                  <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                    <p className="text-sm text-[var(--app-text-muted)]">Volym</p>
-                    <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
+                  <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-5">
+                    <p className="text-sm text-slate-500">Volym</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-900">
                       {Math.round(totalVolume)} kg
                     </p>
                   </div>
                 </div>
 
-                <div className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm">
-                  <p className="text-sm font-medium text-[var(--app-text-muted)]">
-                    Slutfört
-                  </p>
-                  <p className="mt-2 text-lg font-semibold text-[var(--app-text-strong)]">
+                <div className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
+                  <p className="text-sm text-slate-500">Slutfört</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-900">
                     {formatDateTime(savedWorkoutLog.completedAt)}
                   </p>
                 </div>
-              </section>
+              </div>
 
-              <aside className="bg-[var(--app-surface)] p-6 sm:p-8 lg:p-10">
-                <div className="space-y-6">
-                  <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-6">
-                    <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                      Klar
-                    </p>
-                    <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                      Passet är sparat
-                    </h2>
-                    <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
-                      Du kan nu gå tillbaka till hem, se historik eller starta ett
-                      nytt pass.
-                    </p>
-                  </div>
+              <div className="rounded-[28px] border border-indigo-100 bg-[linear-gradient(180deg,rgba(238,242,255,0.9),rgba(255,255,255,0.95))] p-5">
+                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">
+                  Nästa steg
+                </p>
+                <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">
+                  Passet är sparat
+                </h2>
+                <p className="mt-3 text-sm leading-7 text-slate-600">
+                  Du kan nu gå tillbaka till dashboarden eller se träningshistorik.
+                </p>
 
+                <div className="mt-6 flex flex-col gap-3">
                   <button
                     type="button"
                     onClick={() => router.push("/home")}
-                    className="w-full rounded-2xl bg-[var(--app-accent)] px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-[var(--app-accent-strong)]"
+                    className="w-full rounded-2xl bg-indigo-600 px-5 py-4 text-base font-semibold text-white transition hover:bg-indigo-700"
                   >
-                    Till startsidan
+                    Till dashboard
                   </button>
 
                   <button
                     type="button"
                     onClick={() => router.push("/history")}
-                    className="w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-5 py-3.5 text-sm font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base font-semibold text-slate-900 transition hover:bg-slate-50"
                   >
                     Se historik
                   </button>
                 </div>
-              </aside>
+              </div>
             </div>
-          </div>
+          </section>
         </div>
       </main>
     );
@@ -1028,542 +1075,544 @@ if (userId) {
   const displayName = getDisplayName(authUser);
 
   return (
-    <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="overflow-hidden rounded-[32px] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
-          <div className="grid lg:grid-cols-[1.15fr_0.85fr]">
-            <section className="border-b border-[var(--app-border)] bg-[linear-gradient(180deg,#f8fbff_0%,#f4f7fb_100%)] p-6 sm:p-8 lg:border-b-0 lg:border-r lg:p-10">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong)]">
-                    Aktivt pass
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.16),_transparent_28%),linear-gradient(180deg,#f7f9fc_0%,#eef3f9_100%)] px-4 py-4 pb-28 sm:px-6 sm:py-6 lg:px-8">
+      <div className="mx-auto max-w-6xl">
+        <section className="mb-6 overflow-hidden rounded-[32px] border border-white/70 bg-white/85 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] backdrop-blur sm:p-8">
+          <div className="grid gap-6 lg:grid-cols-[1.35fr_0.85fr]">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                Aktivt pass
+              </p>
+
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
+                {exercise.name}
+              </h1>
+
+              <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+                Hej {displayName}. Följ passet steg för steg och logga seten direkt
+                här.
+              </p>
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <div
+                  className={`rounded-2xl border px-4 py-3 text-sm font-medium ${getBadgeClasses(
+                    "accent"
+                  )}`}
+                >
+                  Övning {currentExerciseIndex + 1}/{exercises.length}
+                </div>
+
+                <div
+                  className={`rounded-2xl border px-4 py-3 text-sm font-medium ${getBadgeClasses(
+                    "neutral"
+                  )}`}
+                >
+                  Set {currentSet}/{exercise.sets}
+                </div>
+
+                <div
+                  className={`rounded-2xl border px-4 py-3 text-sm font-medium ${getBadgeClasses(
+                    timedExercise ? "warning" : "neutral"
+                  )}`}
+                >
+                  {timedExercise ? "Tidsstyrd övning" : "Repsbaserad övning"}
+                </div>
+              </div>
+
+              {pageError ? (
+                <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {pageError}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-[28px] border border-indigo-100 bg-[linear-gradient(180deg,rgba(238,242,255,0.9),rgba(255,255,255,0.95))] p-5">
+              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">
+                Passöverblick
+              </p>
+
+              <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">
+                {workout.name}
+              </p>
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="rounded-2xl bg-white p-4 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    Klara set
                   </p>
-                  <h1 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--app-text-strong)] sm:text-4xl">
-                    {exercise.name}
-                  </h1>
-                  <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--app-text)]">
-                    Hej {displayName}. Följ passet steg för steg och logga seten
-                    direkt här.
+                  <p className="mt-2 text-lg font-semibold text-slate-900">
+                    {completedSetsForCurrentExercise}
                   </p>
                 </div>
 
+                <div className="rounded-2xl bg-white p-4 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    Totalt klara set
+                  </p>
+                  <p className="mt-2 text-lg font-semibold text-slate-900">
+                    {totalSetsCompleted}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-col gap-3">
                 <button
                   type="button"
                   onClick={() => void finishWorkout("aborted")}
                   disabled={isFinishingWorkout}
-                  className="inline-flex rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="w-full rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-base font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isFinishingWorkout ? "Avslutar..." : "Avsluta pass"}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => router.push("/home")}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base font-semibold text-slate-900 transition hover:bg-slate-50"
+                >
+                  Till dashboard
+                </button>
               </div>
+            </div>
+          </div>
+        </section>
 
-              {pageError ? (
-                <div className="mt-6 rounded-2xl border border-[var(--app-danger-border)] bg-[var(--app-danger-bg)] px-4 py-3 text-sm text-[var(--app-danger-text)]">
-                  {pageError}
-                </div>
-              ) : null}
+        <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="space-y-6">
+            {exercise.description ? (
+              <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+                <button
+                  type="button"
+                  onClick={() => setShowExerciseDescription((prev) => !prev)}
+                  className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+                >
+                  {showExerciseDescription ? "Dölj beskrivning" : "Visa beskrivning"}
+                </button>
 
-              <div className="mt-8 grid gap-4 sm:grid-cols-3">
-                <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                  <p className="text-sm text-[var(--app-text-muted)]">Övning</p>
-                  <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
-                    {currentExerciseIndex + 1}/{exercises.length}
+                {showExerciseDescription ? (
+                  <p className="mt-4 text-base leading-7 text-slate-600">
+                    {exercise.description}
                   </p>
-                </div>
-
-                <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                  <p className="text-sm text-[var(--app-text-muted)]">Set</p>
-                  <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
-                    {currentSet}/{exercise.sets}
-                  </p>
-                </div>
-
-                <div className="rounded-[24px] border border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-5 shadow-sm">
-                  <p className="text-sm text-[var(--app-text-muted)]">Klara set</p>
-                  <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
-                    {completedSetsForCurrentExercise}
-                  </p>
-                </div>
-              </div>
-
-              {exercise.description ? (
-                <div className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm">
-                  <button
-                    type="button"
-                    onClick={() => setShowExerciseDescription((prev) => !prev)}
-                    className="text-sm font-semibold text-[var(--app-text-strong)]"
-                  >
-                    {showExerciseDescription
-                      ? "Dölj beskrivning"
-                      : "Visa beskrivning"}
-                  </button>
-
-                  {showExerciseDescription ? (
-                    <p className="mt-4 text-sm leading-6 text-[var(--app-text)]">
-                      {exercise.description}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-
-              <section className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-7">
-                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                  Pågående set
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                  {timedExercise ? "Tidsstyrd övning" : "Reps och vikt"}
-                </h2>
-
-                {timedExercise ? (
-                  <>
-                    <div className="mt-6 rounded-[24px] bg-[var(--app-surface-muted)] px-5 py-5">
-                      <p className="text-sm text-[var(--app-text-muted)]">
-                        Måltid
-                      </p>
-                      <p className="mt-2 text-2xl font-semibold text-[var(--app-text-strong)]">
-                        {targetDurationSeconds} sekunder
-                      </p>
-
-                      <p className="mt-5 text-5xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                        {formatTimerClock(exerciseTimerElapsedSeconds)}
-                      </p>
-
-                      {targetDurationSeconds > 0 ? (
-                        <div className="mt-4 space-y-1 text-sm">
-                          <p className="text-[var(--app-text)]">
-                            Kvar: {formatTimerClock(timedSecondsRemaining)}
-                          </p>
-
-                          {timedSecondsOver > 0 ? (
-                            <p className="text-amber-700">
-                              Övertid: {formatTimerClock(timedSecondsOver)}
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                      <button
-                        type="button"
-                        onClick={startTimedSet}
-                        disabled={timedSetPhase === "running"}
-                        className="rounded-2xl bg-green-600 px-4 py-3.5 text-base font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Starta
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={stopTimedSet}
-                        disabled={timedSetPhase !== "running"}
-                        className="rounded-2xl bg-red-600 px-4 py-3.5 text-base font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Stoppa
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-2 block text-sm font-semibold text-[var(--app-text-strong)]">
-                        Reps
-                      </label>
-                      <input
-                        value={setLog.reps}
-                        onChange={(e) =>
-                          setSetLog((prev) => ({ ...prev, reps: e.target.value }))
-                        }
-                        inputMode="numeric"
-                        className="w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none transition focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-2 block text-sm font-semibold text-[var(--app-text-strong)]">
-                        Vikt (kg)
-                      </label>
-                      <input
-                        value={setLog.weight}
-                        onChange={(e) =>
-                          setSetLog((prev) => ({ ...prev, weight: e.target.value }))
-                        }
-                        inputMode="decimal"
-                        className="w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none transition focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {timedExercise ? (
-                  <div className="mt-6">
-                    <label className="mb-2 block text-sm font-semibold text-[var(--app-text-strong)]">
-                      Utförd tid (sek)
-                    </label>
-                    <input
-                      value={setLog.durationSeconds}
-                      onChange={(e) =>
-                        setSetLog((prev) => ({
-                          ...prev,
-                          durationSeconds: e.target.value,
-                        }))
-                      }
-                      inputMode="numeric"
-                      className="w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-text-strong)] outline-none transition focus:border-[var(--app-accent)] focus:ring-4 focus:ring-[var(--app-accent-ring)]"
-                    />
-                  </div>
                 ) : null}
-
-                {!showExerciseFeedback ? (
-                  <div className="mt-8 grid gap-3 sm:grid-cols-2">
-                    {timedExercise ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={completeSet}
-                          disabled={!canSaveTimedSet}
-                          className="rounded-2xl bg-[var(--app-accent)] px-4 py-3.5 text-base font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Spara set
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={skipExercise}
-                          className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3.5 text-base font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                        >
-                          Hoppa över övning
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        {!setLog.completed ? (
-                          <button
-                            type="button"
-                            onClick={completeSet}
-                            disabled={!canSaveRepSet}
-                            className="rounded-2xl bg-[var(--app-accent)] px-4 py-3.5 text-base font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Spara set
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={continueAfterSavedRepSet}
-                            className="rounded-2xl bg-[var(--app-accent)] px-4 py-3.5 text-base font-semibold text-white transition hover:bg-[var(--app-accent-strong)]"
-                          >
-                            {isLastSet ? "Avsluta övning" : "Nästa set"}
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={skipExercise}
-                          className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3.5 text-base font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                        >
-                          Hoppa över övning
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <div className="mt-8 grid gap-3 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowExerciseFeedback(false);
-                        setSelectedExtraReps(null);
-                        setSelectedTimedEffort(null);
-                        setSelectedRating(null);
-                      }}
-                      className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3.5 text-base font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      Tillbaka
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void completeExerciseFeedback();
-                      }}
-                      disabled={disableFeedbackContinue}
-                      className="rounded-2xl bg-[var(--app-accent)] px-4 py-3.5 text-base font-semibold text-white transition hover:bg-[var(--app-accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isLastExercise ? "Avsluta pass" : "Nästa övning"}
-                    </button>
-                  </div>
-                )}
               </section>
+            ) : null}
 
-              {/* Vilotimern visas inte medan tidsstyrt arbetsset pågår */}
-              {showRestTimer && timedSetPhase !== "running" ? (
-                <section className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-7">
-                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                    Vila
-                  </p>
-                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                    Vilotimer
-                  </h2>
+            <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] sm:p-8">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                Pågående set
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                {timedExercise ? "Tidsstyrd övning" : "Reps och vikt"}
+              </h2>
 
-                  <p className="mt-5 text-5xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                    {formatTimerClock(restRemainingSeconds)}
-                  </p>
+              {timedExercise ? (
+                <>
+                  <div className="mt-6 rounded-[28px] border border-indigo-100 bg-indigo-50/70 px-5 py-6 text-center">
+                    <p className="text-sm font-medium text-slate-600">Måltid</p>
+                    <p className="mt-2 text-xl font-semibold text-slate-900">
+                      {targetDurationSeconds} sekunder
+                    </p>
+
+                    <p className="mt-5 text-6xl font-semibold tracking-tight text-slate-900 sm:text-7xl">
+                      {formatTimerClock(exerciseTimerElapsedSeconds)}
+                    </p>
+
+                    {targetDurationSeconds > 0 ? (
+                      <div className="mt-5 space-y-2 text-base">
+                        <p className="text-slate-700">
+                          Kvar: {formatTimerClock(timedSecondsRemaining)}
+                        </p>
+
+                        {timedSecondsOver > 0 ? (
+                          <p className="font-medium text-amber-700">
+                            Övertid: {formatTimerClock(timedSecondsOver)}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
 
                   <div className="mt-6 grid gap-3 sm:grid-cols-2">
                     <button
                       type="button"
-                      onClick={toggleRestTimer}
-                      className="rounded-2xl bg-[var(--app-accent)] px-4 py-3.5 font-semibold text-white transition hover:bg-[var(--app-accent-strong)]"
+                      onClick={startTimedSet}
+                      disabled={timedSetPhase === "running"}
+                      className="rounded-2xl bg-green-600 px-5 py-5 text-lg font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {restTimerRunning ? "Pausa" : "Starta"}
+                      Starta
                     </button>
 
                     <button
                       type="button"
-                      onClick={resetRestTimerToPreferred}
-                      className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3.5 font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
+                      onClick={stopTimedSet}
+                      disabled={timedSetPhase !== "running"}
+                      className="rounded-2xl bg-red-600 px-5 py-5 text-lg font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Återställ
+                      Stoppa
                     </button>
                   </div>
-
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      onClick={() => adjustRestTimer(-15)}
-                      className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3.5 font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      -15 s
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => adjustRestTimer(15)}
-                      className="rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-4 py-3.5 font-semibold text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      +15 s
-                    </button>
+                </>
+              ) : (
+                <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-900">
+                      Reps
+                    </label>
+                    <input
+                      value={setLog.reps}
+                      onChange={(e) =>
+                        setSetLog((prev) => ({ ...prev, reps: e.target.value }))
+                      }
+                      inputMode="numeric"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-xl font-semibold text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                    />
                   </div>
-                </section>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-900">
+                      Vikt (kg)
+                    </label>
+                    <input
+                      value={setLog.weight}
+                      onChange={(e) =>
+                        setSetLog((prev) => ({ ...prev, weight: e.target.value }))
+                      }
+                      inputMode="decimal"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-xl font-semibold text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {timedExercise ? (
+                <div className="mt-6">
+                  <label className="mb-2 block text-sm font-semibold text-slate-900">
+                    Utförd tid (sek)
+                  </label>
+                  <input
+                    value={setLog.durationSeconds}
+                    onChange={(e) =>
+                      setSetLog((prev) => ({
+                        ...prev,
+                        durationSeconds: e.target.value,
+                      }))
+                    }
+                    inputMode="numeric"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-xl font-semibold text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                  />
+                </div>
               ) : null}
 
-              <section className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-7">
-                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                  Logg
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                  Loggade set för övningen
-                </h2>
-
-                {currentExerciseSummary?.sets?.length ? (
-                  <div className="mt-5 space-y-3">
-                    {currentExerciseSummary.sets.map((set) => (
-                      <div
-                        key={`${set.setNumber}-${set.completedAt}`}
-                        className="rounded-2xl bg-[var(--app-surface-muted)] px-4 py-4 text-sm text-[var(--app-text-strong)]"
-                      >
-                        Set {set.setNumber}
-                        {set.actualReps !== null ? ` • ${set.actualReps} reps` : ""}
-                        {set.actualDuration !== null
-                          ? ` • ${set.actualDuration} sek`
-                          : ""}
-                        {set.actualWeight !== null ? ` • ${set.actualWeight} kg` : ""}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-4 text-sm text-[var(--app-text)]">
-                    Inga set sparade ännu.
-                  </p>
-                )}
-
-                <p className="mt-4 text-sm text-[var(--app-text-muted)]">
-                  Klara set i denna övning: {completedSetsForCurrentExercise} /{" "}
-                  {exercise.sets}
-                </p>
-              </section>
-
-              {showExerciseFeedback ? (
-                <section className="mt-8 rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm sm:p-7">
-                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                    Utvärdering
-                  </p>
-                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                    Hur gick övningen?
-                  </h2>
-
+              {!showExerciseFeedback ? (
+                <div className="mt-8 grid gap-3 sm:grid-cols-2">
                   {timedExercise ? (
-                    <div className="mt-5">
-                      <p className="text-sm font-semibold text-[var(--app-text-strong)]">
-                        Ansträngning
-                      </p>
-                      <div className="mt-3 grid gap-3">
-                        {TIMED_EFFORT_OPTIONS.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => setSelectedTimedEffort(option.value)}
-                            className={`rounded-2xl border px-4 py-4 text-left transition ${
-                              selectedTimedEffort === option.value
-                                ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent-strong)]"
-                                : "border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-strong)] hover:border-[var(--app-accent)]"
-                            }`}
-                          >
-                            <div className="font-semibold">{option.label}</div>
-                            <div className="mt-1 text-sm">{option.description}</div>
-                          </button>
-                        ))}
-                      </div>
+                    <>
+                      <button
+                        type="button"
+                        onClick={completeSet}
+                        disabled={!canSaveTimedSet}
+                        className="rounded-2xl bg-indigo-600 px-5 py-5 text-lg font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Spara set
+                      </button>
 
-                      {selectedTimedEffort ? (
-                        <p className="mt-3 text-sm text-[var(--app-text-muted)]">
-                          Vald nivå: {getTimedEffortLabel(selectedTimedEffort)}
-                        </p>
-                      ) : null}
-                    </div>
+                      <button
+                        type="button"
+                        onClick={skipExercise}
+                        className="rounded-2xl border border-slate-200 bg-white px-5 py-5 text-lg font-semibold text-slate-900 transition hover:bg-slate-50"
+                      >
+                        Hoppa över övning
+                      </button>
+                    </>
                   ) : (
-                    <div className="mt-5">
-                      <p className="text-sm font-semibold text-[var(--app-text-strong)]">
-                        Extra reps
-                      </p>
-                      <div className="mt-3 grid gap-3">
-                        {EXTRA_REP_OPTIONS.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => setSelectedExtraReps(option.value)}
-                            className={`rounded-2xl border px-4 py-4 text-left transition ${
-                              selectedExtraReps === option.value
-                                ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent-strong)]"
-                                : "border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-strong)] hover:border-[var(--app-accent)]"
-                            }`}
-                          >
-                            <div className="font-semibold">{option.label}</div>
-                            <div className="mt-1 text-sm">{option.description}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                    <>
+                      {!setLog.completed ? (
+                        <button
+                          type="button"
+                          onClick={completeSet}
+                          disabled={!canSaveRepSet}
+                          className="rounded-2xl bg-indigo-600 px-5 py-5 text-lg font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Spara set
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={continueAfterSavedRepSet}
+                          className="rounded-2xl bg-indigo-600 px-5 py-5 text-lg font-semibold text-white transition hover:bg-indigo-700"
+                        >
+                          {isLastSet ? "Avsluta övning" : "Nästa set"}
+                        </button>
+                      )}
 
-                  {isNewExerciseForRating ? (
-                    <div className="mt-6">
-                      <p className="text-sm font-semibold text-[var(--app-text-strong)]">
-                        Betyg
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {RATING_OPTIONS.map((option) => (
-                          <button
-                            key={option}
-                            type="button"
-                            onClick={() => setSelectedRating(option)}
-                            className={`rounded-2xl border px-4 py-2.5 text-sm font-semibold transition ${
-                              selectedRating === option
-                                ? "border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent-strong)]"
-                                : "border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-strong)] hover:border-[var(--app-accent)]"
-                            }`}
-                          >
-                            {option}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </section>
-              ) : null}
+                      <button
+                        type="button"
+                        onClick={skipExercise}
+                        className="rounded-2xl border border-slate-200 bg-white px-5 py-5 text-lg font-semibold text-slate-900 transition hover:bg-slate-50"
+                      >
+                        Hoppa över övning
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-8 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowExerciseFeedback(false);
+                      setSelectedExtraReps(null);
+                      setSelectedTimedEffort(null);
+                      setSelectedRating(null);
+                    }}
+                    className="rounded-2xl border border-slate-200 bg-white px-5 py-5 text-lg font-semibold text-slate-900 transition hover:bg-slate-50"
+                  >
+                    Tillbaka
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void completeExerciseFeedback();
+                    }}
+                    disabled={disableFeedbackContinue}
+                    className="rounded-2xl bg-indigo-600 px-5 py-5 text-lg font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isLastExercise ? "Avsluta pass" : "Nästa övning"}
+                  </button>
+                </div>
+              )}
             </section>
 
-            <aside className="bg-[var(--app-surface)] p-6 sm:p-8 lg:p-10">
-              <div className="space-y-6">
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                    Passöversikt
-                  </p>
-                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--app-text-strong)]">
-                    {workout.name}
-                  </h2>
-                  <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
-                    Total övningar: {exercises.length}. Nu kör du{" "}
-                    <span className="font-semibold">{exercise.name}</span>.
+            {/* Vilotimern visas inte medan tidsstyrt arbetsset pågår */}
+            {showRestTimer && timedSetPhase !== "running" ? (
+              <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] sm:p-8">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                  Vila
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                  Vilotimer
+                </h2>
+
+                <div className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50/80 px-5 py-6 text-center">
+                  <p className="text-6xl font-semibold tracking-tight text-slate-900 sm:text-7xl">
+                    {formatTimerClock(restRemainingSeconds)}
                   </p>
                 </div>
 
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm">
-                  <h3 className="text-lg font-semibold text-[var(--app-text-strong)]">
-                    Just nu
-                  </h3>
+                <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={toggleRestTimer}
+                    className="rounded-2xl bg-indigo-600 px-5 py-5 text-lg font-semibold text-white transition hover:bg-indigo-700"
+                  >
+                    {restTimerRunning ? "Pausa" : "Starta"}
+                  </button>
 
-                  <div className="mt-5 space-y-4">
-                    <div className="rounded-2xl border border-[var(--app-border)] px-4 py-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--app-text-muted)]">
-                        Övning
-                      </p>
-                      <p className="mt-2 text-sm font-medium text-[var(--app-text-strong)]">
-                        {exercise.name}
-                      </p>
+                  <button
+                    type="button"
+                    onClick={resetRestTimerToPreferred}
+                    className="rounded-2xl border border-slate-200 bg-white px-5 py-5 text-lg font-semibold text-slate-900 transition hover:bg-slate-50"
+                  >
+                    Återställ
+                  </button>
+                </div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => adjustRestTimer(-15)}
+                    className="rounded-2xl border border-slate-200 bg-white px-5 py-5 text-lg font-semibold text-slate-900 transition hover:bg-slate-50"
+                  >
+                    -15 s
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => adjustRestTimer(15)}
+                    className="rounded-2xl border border-slate-200 bg-white px-5 py-5 text-lg font-semibold text-slate-900 transition hover:bg-slate-50"
+                  >
+                    +15 s
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {showExerciseFeedback ? (
+              <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] sm:p-8">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                  Utvärdering
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                  Hur gick övningen?
+                </h2>
+
+                {timedExercise ? (
+                  <div className="mt-6">
+                    <p className="text-sm font-semibold text-slate-900">
+                      Ansträngning
+                    </p>
+                    <div className="mt-3 grid gap-3">
+                      {TIMED_EFFORT_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setSelectedTimedEffort(option.value)}
+                          className={`rounded-2xl border px-5 py-5 text-left transition ${
+                            selectedTimedEffort === option.value
+                              ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                              : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="text-lg font-semibold">{option.label}</div>
+                          <div className="mt-1 text-sm">{option.description}</div>
+                        </button>
+                      ))}
                     </div>
 
-                    <div className="rounded-2xl border border-[var(--app-border)] px-4 py-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--app-text-muted)]">
-                        Setstatus
+                    {selectedTimedEffort ? (
+                      <p className="mt-3 text-sm text-slate-500">
+                        Vald nivå: {getTimedEffortLabel(selectedTimedEffort)}
                       </p>
-                      <p className="mt-2 text-sm font-medium text-[var(--app-text-strong)]">
-                        Set {currentSet} av {exercise.sets}
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl border border-[var(--app-border)] px-4 py-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--app-text-muted)]">
-                        Typ
-                      </p>
-                      <p className="mt-2 text-sm font-medium text-[var(--app-text-strong)]">
-                        {timedExercise ? "Tidsstyrd övning" : "Repsbaserad övning"}
-                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="mt-6">
+                    <p className="text-sm font-semibold text-slate-900">
+                      Extra reps
+                    </p>
+                    <div className="mt-3 grid gap-3">
+                      {EXTRA_REP_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setSelectedExtraReps(option.value)}
+                          className={`rounded-2xl border px-5 py-5 text-left transition ${
+                            selectedExtraReps === option.value
+                              ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                              : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="text-lg font-semibold">{option.label}</div>
+                          <div className="mt-1 text-sm">{option.description}</div>
+                        </button>
+                      ))}
                     </div>
                   </div>
-                </div>
+                )}
 
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-sm">
-                  <h3 className="text-lg font-semibold text-[var(--app-text-strong)]">
-                    Snabbnavigering
-                  </h3>
-
-                  <div className="mt-5 grid gap-3">
-                    <button
-                      type="button"
-                      onClick={() => router.push("/home")}
-                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      Till hem
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => router.push("/history")}
-                      className="rounded-2xl border border-[var(--app-border-strong)] px-4 py-3 text-sm font-medium text-[var(--app-text-strong)] transition hover:border-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]"
-                    >
-                      Historik
-                    </button>
+                {isNewExerciseForRating ? (
+                  <div className="mt-6">
+                    <p className="text-sm font-semibold text-slate-900">Betyg</p>
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      {RATING_OPTIONS.map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => setSelectedRating(option)}
+                          className={`rounded-2xl border px-5 py-3 text-base font-semibold transition ${
+                            selectedRating === option
+                              ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                              : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                          }`}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                ) : null}
+              </section>
+            ) : null}
+          </div>
+
+          <div className="space-y-6">
+            <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                Just nu
+              </p>
+
+              <div className="mt-5 space-y-3">
+                <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    Övning
+                  </p>
+                  <p className="mt-2 text-base font-semibold text-slate-900">
+                    {exercise.name}
+                  </p>
                 </div>
 
-                <div className="rounded-[28px] border border-[var(--app-border)] bg-[linear-gradient(180deg,#ecfdf5_0%,#f8fafc_100%)] p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--app-accent-strong)]">
-                    Tips
+                <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    Setstatus
                   </p>
-                  <h3 className="mt-2 text-lg font-semibold text-[var(--app-text-strong)]">
-                    Arbetsflöde
-                  </h3>
-                  <p className="mt-3 text-sm leading-6 text-[var(--app-text)]">
-                    Spara set direkt efter utförande. För tidsövningar: starta,
-                    stoppa och spara. För repsövningar: logga reps och vikt innan
-                    du går vidare.
+                  <p className="mt-2 text-base font-semibold text-slate-900">
+                    Set {currentSet} av {exercise.sets}
+                  </p>
+                </div>
+
+                <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    Typ
+                  </p>
+                  <p className="mt-2 text-base font-semibold text-slate-900">
+                    {timedExercise ? "Tidsstyrd övning" : "Repsbaserad övning"}
                   </p>
                 </div>
               </div>
-            </aside>
+            </section>
+
+            <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                Logg
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                Loggade set
+              </h2>
+
+              {currentExerciseSummary?.sets?.length ? (
+                <div className="mt-5 space-y-3">
+                  {currentExerciseSummary.sets.map((set) => (
+                    <div
+                      key={`${set.setNumber}-${set.completedAt}`}
+                      className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-4 py-4 text-sm text-slate-900"
+                    >
+                      <span className="font-semibold">Set {set.setNumber}</span>
+                      {set.actualReps !== null ? ` • ${set.actualReps} reps` : ""}
+                      {set.actualDuration !== null
+                        ? ` • ${set.actualDuration} sek`
+                        : ""}
+                      {set.actualWeight !== null ? ` • ${set.actualWeight} kg` : ""}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-slate-600">
+                  Inga set sparade ännu.
+                </p>
+              )}
+
+              <p className="mt-4 text-sm text-slate-500">
+                Klara set i denna övning: {completedSetsForCurrentExercise} /{" "}
+                {exercise.sets}
+              </p>
+            </section>
+
+            <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                Tips
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                Arbetsflöde
+              </h2>
+              <p className="mt-3 text-sm leading-7 text-slate-600">
+                Spara set direkt efter utförande. För tidsövningar: starta,
+                stoppa och spara. För repsövningar: logga reps och vikt innan du går
+                vidare.
+              </p>
+            </section>
           </div>
-        </div>
+        </section>
       </div>
     </main>
   );
