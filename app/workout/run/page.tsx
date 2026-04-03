@@ -48,6 +48,21 @@ type LoggedSet = {
 
 type TimedSetPhase = "idle" | "running" | "ready_to_save";
 
+type EquipmentType = "dumbbell" | "barbell" | "kettlebell";
+
+type GymEquipment = {
+  id: string;
+  equipment_type: string;
+  label: string;
+  weights_kg?: number[] | null;
+};
+
+type Gym = {
+  id: string;
+  name: string;
+  equipment: GymEquipment[];
+};
+
 const EXTRA_REP_OPTIONS: Array<{
   value: ExtraRepsOption;
   label: string;
@@ -136,6 +151,10 @@ function formatTimerClock(totalSeconds: number) {
   )}`;
 }
 
+function formatWeightValue(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 function isTimedExercise(exercise: { duration?: number; reps?: number }) {
   return (
     typeof exercise.duration === "number" &&
@@ -151,7 +170,6 @@ function getTimedEffortLabel(value: TimedEffortOption | null | undefined) {
   return null;
 }
 
-// Säkerställ exakt union-typ för rating så TypeScript blir nöjd.
 function normalizeRating(
   value: number | null | undefined
 ): 1 | 2 | 3 | 4 | 5 | null {
@@ -240,7 +258,6 @@ function getDisplayName(user: AuthUser | null) {
   );
 }
 
-// Enkel badge-styling för små informationschips.
 function getBadgeClasses(variant: "accent" | "neutral" | "warning" | "danger") {
   switch (variant) {
     case "accent":
@@ -252,6 +269,69 @@ function getBadgeClasses(variant: "accent" | "neutral" | "warning" | "danger") {
     default:
       return "border-slate-200 bg-slate-50 text-slate-700";
   }
+}
+
+// Enkel heuristik för vilken viktgrupp som är mest relevant för övningen.
+function inferPreferredWeightType(exercise: Exercise): EquipmentType | null {
+  const haystack = `${exercise.name} ${exercise.description ?? ""}`.toLowerCase();
+
+  if (
+    haystack.includes("dumbbell") ||
+    haystack.includes("hantel") ||
+    haystack.includes("hantel")
+  ) {
+    return "dumbbell";
+  }
+
+  if (
+    haystack.includes("kettlebell") ||
+    haystack.includes("kb ")
+  ) {
+    return "kettlebell";
+  }
+
+  if (
+    haystack.includes("barbell") ||
+    haystack.includes("skivstång") ||
+    haystack.includes("skivstang")
+  ) {
+    return "barbell";
+  }
+
+  return null;
+}
+
+function extractWeightOptionsFromGym(gym: Gym | null) {
+  const grouped: Record<EquipmentType, number[]> = {
+    dumbbell: [],
+    barbell: [],
+    kettlebell: [],
+  };
+
+  if (!gym) {
+    return grouped;
+  }
+
+  for (const item of gym.equipment) {
+    if (
+      item.equipment_type === "dumbbell" ||
+      item.equipment_type === "barbell" ||
+      item.equipment_type === "kettlebell"
+    ) {
+      const weights = Array.isArray(item.weights_kg)
+        ? item.weights_kg.filter((value) => Number.isFinite(Number(value)))
+        : [];
+
+      grouped[item.equipment_type] = [
+        ...new Set([
+          ...grouped[item.equipment_type],
+          ...weights.map((value) => Number(value)),
+        ]),
+      ].sort((a, b) => a - b);
+    }
+  }
+
+  return grouped;
 }
 
 export default function WorkoutRunPage() {
@@ -268,6 +348,8 @@ export default function WorkoutRunPage() {
   const [lastWeightByExercise, setLastWeightByExercise] = useState<
     Record<string, string>
   >({});
+
+  const [matchedGym, setMatchedGym] = useState<Gym | null>(null);
 
   const [setLog, setSetLog] = useState<LoggedSet>({
     reps: "",
@@ -296,20 +378,17 @@ export default function WorkoutRunPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [isFinishingWorkout, setIsFinishingWorkout] = useState(false);
 
-  // Timer för tidsstyrda övningar.
   const [exerciseTimerElapsedSeconds, setExerciseTimerElapsedSeconds] =
     useState(0);
   const [exerciseTimerAlarmPlayed, setExerciseTimerAlarmPlayed] =
     useState(false);
   const [timedSetPhase, setTimedSetPhase] = useState<TimedSetPhase>("idle");
 
-  // Vilotimer mellan set.
   const [showRestTimer, setShowRestTimer] = useState(false);
   const [restTimerRunning, setRestTimerRunning] = useState(false);
   const [restDurationSeconds, setRestDurationSeconds] = useState(0);
   const [restRemainingSeconds, setRestRemainingSeconds] = useState(0);
 
-  // Hindrar upprepade countdown-pip.
   const lastCountdownSecondRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -358,7 +437,6 @@ export default function WorkoutRunPage() {
 
         setWorkout(activeWorkout);
 
-        // Hämta sparade vikter för alla övningar i passet.
         const initialWeights: Record<string, string> = {};
         activeWorkout.exercises.forEach((exerciseItem) => {
           const savedWeight = getLastWeightForExercise(nextUserId, exerciseItem.id);
@@ -387,6 +465,34 @@ export default function WorkoutRunPage() {
         setExerciseTimerAlarmPlayed(false);
         setTimedSetPhase("idle");
         lastCountdownSecondRef.current = null;
+
+        // För snabbval i /run försöker vi matcha gymnamnet mot användarens sparade gym.
+        if (activeWorkout.gym?.trim()) {
+          try {
+            const gymsRes = await fetch(
+              `/api/gyms?userId=${encodeURIComponent(nextUserId)}`,
+              {
+                cache: "no-store",
+                credentials: "include",
+              }
+            );
+
+            const gymsData = await gymsRes.json().catch(() => null);
+
+            if (gymsRes.ok && gymsData?.ok && Array.isArray(gymsData.gyms)) {
+              const foundGym =
+                (gymsData.gyms as Gym[]).find(
+                  (gym) => gym.name.trim() === activeWorkout.gym?.trim()
+                ) ?? null;
+
+              if (isMounted) {
+                setMatchedGym(foundGym);
+              }
+            }
+          } catch (error) {
+            console.error("Could not load gym weights for /run", error);
+          }
+        }
       } catch (error) {
         console.error("Could not load run page", error);
         router.replace("/");
@@ -464,6 +570,48 @@ export default function WorkoutRunPage() {
     timedExercise && targetDurationSeconds > 0
       ? Math.max(0, exerciseTimerElapsedSeconds - targetDurationSeconds)
       : 0;
+
+  const groupedWeightOptions = useMemo(() => {
+    return extractWeightOptionsFromGym(matchedGym);
+  }, [matchedGym]);
+
+  const preferredWeightType = useMemo(() => {
+    return inferPreferredWeightType(exercise);
+  }, [exercise]);
+
+  const visibleWeightGroups = useMemo(() => {
+    if (timedExercise) {
+      return [];
+    }
+
+    if (preferredWeightType && groupedWeightOptions[preferredWeightType].length > 0) {
+      return [
+        {
+          type: preferredWeightType,
+          label:
+            preferredWeightType === "dumbbell"
+              ? "Hantlar"
+              : preferredWeightType === "barbell"
+              ? "Skivstång"
+              : "Kettlebells",
+          weights: groupedWeightOptions[preferredWeightType],
+        },
+      ];
+    }
+
+    return (Object.entries(groupedWeightOptions) as Array<[EquipmentType, number[]]>)
+      .filter(([, weights]) => weights.length > 0)
+      .map(([type, weights]) => ({
+        type,
+        label:
+          type === "dumbbell"
+            ? "Hantlar"
+            : type === "barbell"
+            ? "Skivstång"
+            : "Kettlebells",
+        weights,
+      }));
+  }, [groupedWeightOptions, preferredWeightType, timedExercise]);
 
   useEffect(() => {
     if (
@@ -771,7 +919,6 @@ export default function WorkoutRunPage() {
       completed: true,
     }));
 
-    // Tidsstyrda övningar går direkt vidare när setet sparas.
     if (timedExercise) {
       if (isLastSet) {
         openFeedbackFromSummary(updatedExerciseLog);
@@ -787,7 +934,6 @@ export default function WorkoutRunPage() {
       return;
     }
 
-    // Reps-övningar visar vila men väntar på nästa klick.
     if (!isLastSet) {
       const preferredRest = getPreferredRestSeconds(exercise.id, exercise.rest);
       startRestTimer(preferredRest, exercise.id);
@@ -877,7 +1023,6 @@ export default function WorkoutRunPage() {
   async function handleAbortWorkout() {
     if (!workout || !userId || isFinishingWorkout) return;
 
-    // Bekräftelse om passet inte är färdigt ännu.
     if (!workoutFinished) {
       const confirmed = window.confirm(
         "Är du säker på att du vill avsluta passet? Det aktuella passet är inte färdigt ännu."
@@ -1270,6 +1415,40 @@ export default function WorkoutRunPage() {
                       inputMode="decimal"
                       className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-xl font-semibold text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
                     />
+
+                    {visibleWeightGroups.length > 0 ? (
+                      <div className="mt-4 space-y-3">
+                        {visibleWeightGroups.map((group) => (
+                          <div key={group.type}>
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                              Registrerade vikter • {group.label}
+                            </p>
+
+                            <div className="flex flex-wrap gap-2">
+                              {group.weights.map((weight) => (
+                                <button
+                                  key={`${group.type}-${weight}`}
+                                  type="button"
+                                  onClick={() =>
+                                    setSetLog((prev) => ({
+                                      ...prev,
+                                      weight: formatWeightValue(weight),
+                                    }))
+                                  }
+                                  className={`rounded-full border px-3 py-2 text-sm font-semibold transition ${
+                                    setLog.weight === formatWeightValue(weight)
+                                      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                                      : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  {formatWeightValue(weight)} kg
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               )}
@@ -1374,7 +1553,6 @@ export default function WorkoutRunPage() {
               )}
             </section>
 
-            {/* Vilotimern visas inte medan tidsstyrt arbetsset pågår */}
             {showRestTimer && timedSetPhase !== "running" ? (
               <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] sm:p-8">
                 <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">

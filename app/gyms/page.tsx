@@ -51,7 +51,8 @@ type EquipmentDraft = {
   label: string;
   quantity: string;
   notes: string;
-  weightInput: string;
+  selectedWeights: number[];
+  manualWeightInput: string;
   bandLevel: BandLevel;
 };
 
@@ -83,7 +84,6 @@ const DEFAULT_LABELS: Record<EquipmentType, string> = {
   other: "Namn på utrustning",
 };
 
-// Skapar ett tomt draft-objekt för vald utrustningstyp.
 function createDefaultEquipmentDraft(
   equipmentType: EquipmentType = "dumbbell"
 ): EquipmentDraft {
@@ -92,7 +92,8 @@ function createDefaultEquipmentDraft(
     label: DEFAULT_LABELS[equipmentType],
     quantity: "",
     notes: "",
-    weightInput: "",
+    selectedWeights: [],
+    manualWeightInput: "",
     bandLevel: "medium",
   };
 }
@@ -107,16 +108,18 @@ function getEquipmentTypeLabel(type: EquipmentType) {
   );
 }
 
-// Visar vikter i sorterad lista.
+function formatWeightValue(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 function formatWeights(weights?: number[] | null) {
   if (!weights || weights.length === 0) {
     return "Alla vikter / ej specificerat";
   }
 
-  return `${[...weights].sort((a, b) => a - b).join(", ")} kg`;
+  return `${[...weights].sort((a, b) => a - b).map(formatWeightValue).join(", ")} kg`;
 }
 
-// Samlar metadata för varje utrustningsrad.
 function formatEquipmentMeta(item: GymEquipment) {
   const parts: string[] = [];
 
@@ -149,6 +152,48 @@ function getGymDisplayCount(gym: Gym) {
   return gym.equipment.length;
 }
 
+// Snabbval för hantlar: 0,5 kg-steg upp till 20 kg.
+function getDumbbellQuickWeights() {
+  const weights: number[] = [];
+
+  for (let weight = 0.5; weight <= 20; weight += 0.5) {
+    weights.push(Number(weight.toFixed(1)));
+  }
+
+  return weights;
+}
+
+// Snabbval för skivstång/kettlebell: helt kilo upp till 20 kg.
+function getWholeKiloQuickWeights() {
+  return Array.from({ length: 20 }, (_, index) => index + 1);
+}
+
+function getQuickWeightsForType(type: EquipmentType) {
+  if (type === "dumbbell") {
+    return getDumbbellQuickWeights();
+  }
+
+  if (type === "barbell" || type === "kettlebell") {
+    return getWholeKiloQuickWeights();
+  }
+
+  return [];
+}
+
+// Tillåt flera vikter i samma manuella input.
+function parseManualWeightsInput(value: string) {
+  return value
+    .split(/[\s,;]+/)
+    .map((item) => item.trim().replace(",", "."))
+    .filter(Boolean)
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item > 0);
+}
+
+function sortUniqueWeights(weights: number[]) {
+  return [...new Set(weights)].sort((a, b) => a - b);
+}
+
 export default function GymsPage() {
   const router = useRouter();
 
@@ -165,13 +210,12 @@ export default function GymsPage() {
   const [newGymDescription, setNewGymDescription] = useState("");
   const [isSavingGym, setIsSavingGym] = useState(false);
 
-  // Endast ett gym i redigeringsläge åt gången för enklare UI.
   const [editingGymId, setEditingGymId] = useState<string | null>(null);
   const [editingGymName, setEditingGymName] = useState("");
   const [editingGymDescription, setEditingGymDescription] = useState("");
   const [isUpdatingGym, setIsUpdatingGym] = useState(false);
 
-  // Draft per gym när man lägger till utrustning.
+  // Ett draft-formulär per gym i edit-läge.
   const [equipmentDrafts, setEquipmentDrafts] = useState<
     Record<string, EquipmentDraft>
   >({});
@@ -186,7 +230,6 @@ export default function GymsPage() {
   const userId = authUser?.id ? String(authUser.id) : "";
 
   const sortedGyms = useMemo(() => {
-    // Sortera alfabetiskt för lite lugnare UI.
     return [...gyms].sort((a, b) => a.name.localeCompare(b.name, "sv"));
   }, [gyms]);
 
@@ -221,12 +264,53 @@ export default function GymsPage() {
     }));
   }, []);
 
+  const addQuickWeightToDraft = useCallback(
+    (gymId: string, weight: number) => {
+      const current = getDraftForGym(gymId);
+
+      updateDraftForGym(gymId, {
+        selectedWeights: sortUniqueWeights([...current.selectedWeights, weight]),
+      });
+    },
+    [getDraftForGym, updateDraftForGym]
+  );
+
+  const removeWeightFromDraft = useCallback(
+    (gymId: string, weight: number) => {
+      const current = getDraftForGym(gymId);
+
+      updateDraftForGym(gymId, {
+        selectedWeights: current.selectedWeights.filter((item) => item !== weight),
+      });
+    },
+    [getDraftForGym, updateDraftForGym]
+  );
+
+  const applyManualWeightsToDraft = useCallback(
+    (gymId: string) => {
+      const current = getDraftForGym(gymId);
+      const parsed = parseManualWeightsInput(current.manualWeightInput);
+
+      if (parsed.length === 0) {
+        return;
+      }
+
+      updateDraftForGym(gymId, {
+        selectedWeights: sortUniqueWeights([
+          ...current.selectedWeights,
+          ...parsed,
+        ]),
+        manualWeightInput: "",
+      });
+    },
+    [getDraftForGym, updateDraftForGym]
+  );
+
   const fetchGyms = useCallback(async (currentUserId: string) => {
     setIsLoading(true);
     setPageError(null);
 
     try {
-      // Viktigt: skicka med credentials så session-cookie följer med.
       const res = await fetch(
         `/api/gyms?userId=${encodeURIComponent(currentUserId)}`,
         {
@@ -244,7 +328,6 @@ export default function GymsPage() {
       const nextGyms = Array.isArray(data.gyms) ? (data.gyms as Gym[]) : [];
       setGyms(nextGyms);
 
-      // Om redigerat gym inte längre finns kvar, lämna edit-läge.
       setEditingGymId((prev) => {
         if (!prev) return null;
         return nextGyms.some((gym) => gym.id === prev) ? prev : null;
@@ -267,7 +350,6 @@ export default function GymsPage() {
       try {
         setPageError(null);
 
-        // Samma auth-mönster som på /home.
         const res = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
@@ -494,10 +576,12 @@ export default function GymsPage() {
     setSuccessMessage(null);
 
     try {
-      const weights =
-        isWeightBasedType(draft.equipmentType) && draft.weightInput.trim()
-          ? [draft.weightInput.trim()]
-          : null;
+      const weights = isWeightBasedType(draft.equipmentType)
+        ? sortUniqueWeights([
+            ...draft.selectedWeights,
+            ...parseManualWeightsInput(draft.manualWeightInput),
+          ])
+        : null;
 
       const res = await fetch("/api/gym-equipment", {
         method: "POST",
@@ -692,6 +776,7 @@ export default function GymsPage() {
               {sortedGyms.map((gym) => {
                 const isEditing = editingGymId === gym.id;
                 const draft = getDraftForGym(gym.id);
+                const quickWeights = getQuickWeightsForType(draft.equipmentType);
 
                 return (
                   <div
@@ -893,7 +978,8 @@ export default function GymsPage() {
                                     label: DEFAULT_LABELS[nextType],
                                     bandLevel:
                                       nextType === "bands" ? "medium" : draft.bandLevel,
-                                    weightInput: "",
+                                    selectedWeights: [],
+                                    manualWeightInput: "",
                                   });
                                 }}
                                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
@@ -922,26 +1008,119 @@ export default function GymsPage() {
                             </div>
 
                             {isWeightBasedType(draft.equipmentType) ? (
-                              <div>
-                                <label className="mb-2 block text-sm font-semibold text-slate-900">
-                                  Vikt att lägga till (kg)
-                                </label>
-                                <input
-                                  value={draft.weightInput}
-                                  onChange={(e) =>
-                                    updateDraftForGym(gym.id, {
-                                      weightInput: e.target.value,
-                                    })
-                                  }
-                                  inputMode="decimal"
-                                  placeholder="Till exempel 4"
-                                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
-                                />
-                                <p className="mt-2 text-xs text-slate-500">
-                                  Lägg till en vikt i taget. Samma utrustning slås ihop
-                                  och får en gemensam viktlista.
-                                </p>
-                              </div>
+                              <>
+                                <div className="md:col-span-2">
+                                  <label className="mb-2 block text-sm font-semibold text-slate-900">
+                                    Snabbval av vikter
+                                  </label>
+
+                                  <div className="max-h-56 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3">
+                                    <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10">
+                                      {quickWeights.map((weight) => {
+                                        const isSelected = draft.selectedWeights.includes(
+                                          weight
+                                        );
+
+                                        return (
+                                          <button
+                                            key={`${draft.equipmentType}-${weight}`}
+                                            type="button"
+                                            onClick={() => {
+                                              if (isSelected) {
+                                                removeWeightFromDraft(gym.id, weight);
+                                              } else {
+                                                addQuickWeightToDraft(gym.id, weight);
+                                              }
+                                            }}
+                                            className={`rounded-xl border px-2 py-2 text-sm font-semibold transition ${
+                                              isSelected
+                                                ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                                                : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                                            }`}
+                                          >
+                                            {formatWeightValue(weight)}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <p className="mt-2 text-xs text-slate-500">
+                                    {draft.equipmentType === "dumbbell"
+                                      ? "Hantlar visas med 0,5 kg-steg upp till 20 kg."
+                                      : "Skivstång och kettlebells visas med hela kilo upp till 20 kg."}
+                                  </p>
+                                </div>
+
+                                <div className="md:col-span-2">
+                                  <label className="mb-2 block text-sm font-semibold text-slate-900">
+                                    Lägg till egna vikter
+                                  </label>
+
+                                  <div className="flex flex-col gap-3 sm:flex-row">
+                                    <input
+                                      value={draft.manualWeightInput}
+                                      onChange={(e) =>
+                                        updateDraftForGym(gym.id, {
+                                          manualWeightInput: e.target.value,
+                                        })
+                                      }
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          e.preventDefault();
+                                          applyManualWeightsToDraft(gym.id);
+                                        }
+                                      }}
+                                      inputMode="decimal"
+                                      placeholder="Till exempel 22 eller 22, 24, 26"
+                                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                                    />
+
+                                    <button
+                                      type="button"
+                                      onClick={() => applyManualWeightsToDraft(gym.id)}
+                                      className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+                                    >
+                                      Lägg till
+                                    </button>
+                                  </div>
+
+                                  <p className="mt-2 text-xs text-slate-500">
+                                    Över 20 kg skriver du in manuellt. Du kan lägga till
+                                    flera vikter samtidigt med komma eller mellanslag.
+                                  </p>
+                                </div>
+
+                                <div className="md:col-span-2">
+                                  <label className="mb-2 block text-sm font-semibold text-slate-900">
+                                    Valda vikter
+                                  </label>
+
+                                  {draft.selectedWeights.length > 0 ? (
+                                    <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-3">
+                                      {draft.selectedWeights
+                                        .slice()
+                                        .sort((a, b) => a - b)
+                                        .map((weight) => (
+                                          <button
+                                            key={`selected-${weight}`}
+                                            type="button"
+                                            onClick={() =>
+                                              removeWeightFromDraft(gym.id, weight)
+                                            }
+                                            className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100"
+                                          >
+                                            {formatWeightValue(weight)} kg ×
+                                          </button>
+                                        ))}
+                                    </div>
+                                  ) : (
+                                    <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">
+                                      Inga vikter valda ännu.
+                                    </div>
+                                  )}
+                                </div>
+                              </>
                             ) : null}
 
                             {draft.equipmentType === "bands" ? (
