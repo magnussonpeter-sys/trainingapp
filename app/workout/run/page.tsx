@@ -292,7 +292,6 @@ export default function WorkoutRunPage() {
   const [selectedRating, setSelectedRating] = useState<
     1 | 2 | 3 | 4 | 5 | null
   >(null);
-  const [showExerciseDescription, setShowExerciseDescription] = useState(false);
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [isFinishingWorkout, setIsFinishingWorkout] = useState(false);
@@ -655,7 +654,6 @@ export default function WorkoutRunPage() {
     setTimedSetPhase("idle");
     lastCountdownSecondRef.current = null;
     stopRestTimer();
-    setShowExerciseDescription(false);
   }
 
   function goToNextExercise() {
@@ -685,7 +683,6 @@ export default function WorkoutRunPage() {
     setTimedSetPhase("idle");
     lastCountdownSecondRef.current = null;
     stopRestTimer();
-    setShowExerciseDescription(false);
   }
 
   function openFeedbackFromSummary(summary: CompletedExercise) {
@@ -875,6 +872,23 @@ export default function WorkoutRunPage() {
     }
 
     goToNextExercise();
+  }
+
+  async function handleAbortWorkout() {
+    if (!workout || !userId || isFinishingWorkout) return;
+
+    // Bekräftelse om passet inte är färdigt ännu.
+    if (!workoutFinished) {
+      const confirmed = window.confirm(
+        "Är du säker på att du vill avsluta passet? Det aktuella passet är inte färdigt ännu."
+      );
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    await finishWorkout("aborted");
   }
 
   async function finishWorkout(status: "completed" | "aborted") {
@@ -1155,22 +1169,16 @@ export default function WorkoutRunPage() {
                 </div>
               </div>
 
-              <div className="mt-5 flex flex-col gap-3">
+              <div className="mt-5">
                 <button
                   type="button"
-                  onClick={() => void finishWorkout("aborted")}
+                  onClick={() => {
+                    void handleAbortWorkout();
+                  }}
                   disabled={isFinishingWorkout}
                   className="w-full rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-base font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isFinishingWorkout ? "Avslutar..." : "Avsluta pass"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => router.push("/home")}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base font-semibold text-slate-900 transition hover:bg-slate-50"
-                >
-                  Till dashboard
                 </button>
               </div>
             </div>
@@ -1179,30 +1187,12 @@ export default function WorkoutRunPage() {
 
         <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
           <div className="space-y-6">
-            {exercise.description ? (
-              <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
-                <button
-                  type="button"
-                  onClick={() => setShowExerciseDescription((prev) => !prev)}
-                  className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
-                >
-                  {showExerciseDescription ? "Dölj beskrivning" : "Visa beskrivning"}
-                </button>
-
-                {showExerciseDescription ? (
-                  <p className="mt-4 text-base leading-7 text-slate-600">
-                    {exercise.description}
-                  </p>
-                ) : null}
-              </section>
-            ) : null}
-
             <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] sm:p-8">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
                 Pågående set
               </p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-                {timedExercise ? "Tidsstyrd övning" : "Reps och vikt"}
+                {exercise.name}
               </h2>
 
               {timedExercise ? (
@@ -1378,7 +1368,7 @@ export default function WorkoutRunPage() {
                     disabled={disableFeedbackContinue}
                     className="rounded-2xl bg-indigo-600 px-5 py-5 text-lg font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {isLastExercise ? "Avsluta pass" : "Nästa övning"}
+                    {isLastExercise ? "Avsluta pass" : "Till nästa övning"}
                   </button>
                 </div>
               )}
@@ -1503,7 +1493,9 @@ export default function WorkoutRunPage() {
 
                 {isNewExerciseForRating ? (
                   <div className="mt-6">
-                    <p className="text-sm font-semibold text-slate-900">Betyg</p>
+                    <p className="text-sm font-semibold text-slate-900">
+                      Vad tyckte du om övningen?
+                    </p>
                     <div className="mt-3 flex flex-wrap gap-3">
                       {RATING_OPTIONS.map((option) => (
                         <button
@@ -1522,6 +1514,32 @@ export default function WorkoutRunPage() {
                     </div>
                   </div>
                 ) : null}
+
+                <div className="mt-8 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowExerciseFeedback(false);
+                      setSelectedExtraReps(null);
+                      setSelectedTimedEffort(null);
+                      setSelectedRating(null);
+                    }}
+                    className="rounded-2xl border border-slate-200 bg-white px-5 py-5 text-lg font-semibold text-slate-900 transition hover:bg-slate-50"
+                  >
+                    Tillbaka
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void completeExerciseFeedback();
+                    }}
+                    disabled={disableFeedbackContinue}
+                    className="rounded-2xl bg-indigo-600 px-5 py-5 text-lg font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isLastExercise ? "Avsluta pass" : "Till nästa övning"}
+                  </button>
+                </div>
               </section>
             ) : null}
           </div>
@@ -1600,15 +1618,16 @@ export default function WorkoutRunPage() {
 
             <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-indigo-700">
-                Tips
+                Beskrivning
               </p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-                Arbetsflöde
+                Aktuell övning
               </h2>
+
               <p className="mt-3 text-sm leading-7 text-slate-600">
-                Spara set direkt efter utförande. För tidsövningar: starta,
-                stoppa och spara. För repsövningar: logga reps och vikt innan du går
-                vidare.
+                {exercise.description?.trim()
+                  ? exercise.description
+                  : "Ingen beskrivning finns för den här övningen ännu."}
               </p>
             </section>
           </div>
