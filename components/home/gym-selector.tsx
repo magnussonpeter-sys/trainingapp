@@ -16,7 +16,7 @@ type GymSelectorProps = {
   onChange: (value: string) => void;
 };
 
-// Gymvalet hålls nära startknappen.
+// Enkel väljare för gym/utrustning.
 export default function GymSelector({
   gyms,
   value,
