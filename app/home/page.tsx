@@ -4,17 +4,17 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import AppTopBar from "@/components/navigation/AppTopBar";
-import BottomNav from "@/components/navigation/BottomNav";
+import AppLayout from "@/components/layout/AppLayout";
+import { generateWorkout } from "@/lib/workout-generator";
 import {
   getWorkoutLogs,
+  saveActiveWorkout,
+  saveGeneratedWorkout,
   type WorkoutLog,
 } from "@/lib/workout-log-storage";
-import {
-  buildTrainingDashboardAnalysis,
-  type DashboardAnalysis,
-  type DashboardUserSettings,
-} from "@/lib/training-dashboard-analysis";
+import type { Exercise, Workout } from "@/types/workout";
+
+type Goal = "strength" | "hypertrophy" | "health" | "body_composition";
 
 type AuthUser = {
   id: number | string;
@@ -31,20 +31,36 @@ type Gym = {
   name: string;
 };
 
-type GoalReview = {
-  headline: string;
-  nextFocus: string;
-  comment: string;
+type UserSettings = {
+  training_goal?: Goal | null;
 };
 
-type UserSettings = DashboardUserSettings;
+type GymEquipmentItem = {
+  equipment_type?: string | null;
+  equipmentType?: string | null;
+  label?: string | null;
+  name?: string | null;
+  type?: string | null;
+};
+
+type GymDetail = {
+  id: string | number;
+  name: string;
+  equipment: string[];
+};
+
+type HomeStatus = {
+  title: string;
+  detail: string;
+};
 
 const QUICK_DURATION_OPTIONS = [15, 20, 30, 45] as const;
 const BODYWEIGHT_GYM_ID = "bodyweight";
+const BODYWEIGHT_LABEL = "Kroppsvikt / utan gym";
 const MIN_DURATION = 5;
 const MAX_DURATION = 180;
 
-// Hjälper oss att hålla gym-svaret robust även om API-formatet varierar lite.
+// Håller gym-listan robust även om API-formatet varierar lite.
 function normalizeGyms(data: unknown): Gym[] {
   if (Array.isArray(data)) {
     return data
@@ -76,12 +92,89 @@ function normalizeGyms(data: unknown): Gym[] {
   return [];
 }
 
-// Per användare vill vi komma ihåg vald passlängd och gym.
+// Normaliserar ett enskilt gym med utrustning.
+function normalizeGymDetail(data: unknown): GymDetail | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  if (
+    "id" in data &&
+    "name" in data &&
+    (typeof (data as { id: unknown }).id === "string" ||
+      typeof (data as { id: unknown }).id === "number") &&
+    typeof (data as { name: unknown }).name === "string"
+  ) {
+    const gym = data as {
+      id: string | number;
+      name: string;
+      equipment?: unknown;
+    };
+
+    return {
+      id: gym.id,
+      name: gym.name,
+      equipment: extractEquipmentStrings(gym.equipment),
+    };
+  }
+
+  if ("gym" in data) {
+    return normalizeGymDetail((data as { gym?: unknown }).gym);
+  }
+
+  return null;
+}
+
+// Plockar ut användbara utrustningssträngar från olika API-format.
+function extractEquipmentStrings(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const values = new Set<string>();
+
+  for (const item of input) {
+    if (typeof item === "string") {
+      const trimmed = item.trim();
+
+      if (trimmed) {
+        values.add(trimmed);
+      }
+
+      continue;
+    }
+
+    if (typeof item === "object" && item !== null) {
+      const equipmentItem = item as GymEquipmentItem;
+      const candidates = [
+        equipmentItem.equipment_type,
+        equipmentItem.equipmentType,
+        equipmentItem.label,
+        equipmentItem.name,
+        equipmentItem.type,
+      ];
+
+      for (const candidate of candidates) {
+        if (typeof candidate === "string") {
+          const trimmed = candidate.trim();
+
+          if (trimmed) {
+            values.add(trimmed);
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(values);
+}
+
+// Sparar senaste val per användare.
 function getAiSettingsStorageKey(userId: string) {
   return `ai-workout-settings:${userId}`;
 }
 
-// Skyddar duration så användaren inte får konstiga värden.
+// Håller tid inom rimliga gränser.
 function clampDuration(value: number) {
   if (!Number.isFinite(value)) {
     return 30;
@@ -90,7 +183,7 @@ function clampDuration(value: number) {
   return Math.min(MAX_DURATION, Math.max(MIN_DURATION, Math.round(value)));
 }
 
-// Fallback för visningsnamn om något auth-fält saknas.
+// Fallback för namn i hälsningen.
 function getDisplayName(user: AuthUser | null) {
   if (!user) {
     return "Där";
@@ -105,7 +198,7 @@ function getDisplayName(user: AuthUser | null) {
   );
 }
 
-// Hjälper senaste-pass-kortet.
+// Fina datum för senaste pass.
 function formatDateTime(value: string) {
   try {
     return new Date(value).toLocaleString("sv-SE", {
@@ -120,60 +213,140 @@ function formatDateTime(value: string) {
   }
 }
 
-// Visar passlängd snyggt i UI.
+// Kort visning av träningslängd.
 function formatDurationMinutes(seconds: number) {
   const minutes = Math.max(1, Math.round(seconds / 60));
+
   return `${minutes} min`;
 }
 
-// Summerar set för ett loggat pass.
+// Summerar set i senaste passet.
 function getTotalSets(log: WorkoutLog) {
   return log.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
 }
 
-// Enkel volymproxy för senaste-pass-kortet.
-function getTotalVolume(log: WorkoutLog) {
-  return log.exercises.reduce((sum, exercise) => {
-    return (
-      sum +
-      exercise.sets.reduce((setSum, set) => {
-        if (set.actualWeight == null || set.actualReps == null) {
-          return setSum;
-        }
-
-        return setSum + set.actualWeight * set.actualReps;
-      }, 0)
-    );
-  }, 0);
-}
-
-// Dashboard-badge beroende på analysstatus.
-function getAnalysisBadgeClasses(status: DashboardAnalysis["status"]) {
-  switch (status) {
-    case "excellent":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    case "good":
-      return "border-blue-200 bg-blue-50 text-blue-700";
-    case "needs_attention":
-      return "border-amber-200 bg-amber-50 text-amber-700";
-    case "no_data":
-      return "border-slate-200 bg-slate-100 text-slate-700";
+// En enkel, användbar etikett för målet.
+function getGoalLabel(goal: Goal | null | undefined) {
+  switch (goal) {
+    case "strength":
+      return "Styrka";
+    case "hypertrophy":
+      return "Muskelvolym";
+    case "health":
+      return "Hälsa";
+    case "body_composition":
+      return "Kroppskomposition";
     default:
-      return "border-violet-200 bg-violet-50 text-violet-700";
+      return "Ej valt";
   }
 }
 
-// Färg på kravkort beroende på hur väl användaren möter målet.
-function getRequirementClasses(status: "good" | "warning" | "low") {
-  switch (status) {
-    case "good":
-      return "border-emerald-200 bg-emerald-50";
-    case "warning":
-      return "border-amber-200 bg-amber-50";
-    case "low":
-    default:
-      return "border-rose-200 bg-rose-50";
+// Skapar id för nytt pass och egna övningsrader.
+function createId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
   }
+
+  return Math.random().toString(36).slice(2);
+}
+
+// Ser till att passet alltid får ett format som run-sidan klarar.
+function normalizeWorkout(params: {
+  workout: Workout;
+  duration: number;
+  gymLabel: string;
+}): Workout {
+  const { workout, duration, gymLabel } = params;
+
+  return {
+    id: workout.id ?? createId(),
+    name: workout.name?.trim() || "AI-genererat pass",
+    duration,
+    goal: workout.goal,
+    gym: gymLabel,
+    aiComment:
+      typeof workout.aiComment === "string" && workout.aiComment.trim()
+        ? workout.aiComment.trim()
+        : undefined,
+    createdAt: workout.createdAt ?? new Date().toISOString(),
+    exercises: Array.isArray(workout.exercises)
+      ? workout.exercises.map((exercise, index) => {
+          const hasDuration =
+            typeof exercise.duration === "number" && exercise.duration > 0;
+          const hasReps =
+            typeof exercise.reps === "number" && exercise.reps > 0;
+
+          return {
+            id:
+              typeof exercise.id === "string" && exercise.id.trim()
+                ? exercise.id
+                : `exercise-${index + 1}-${createId()}`,
+            name:
+              typeof exercise.name === "string" && exercise.name.trim()
+                ? exercise.name.trim()
+                : `Övning ${index + 1}`,
+            sets:
+              typeof exercise.sets === "number" && exercise.sets > 0
+                ? exercise.sets
+                : 3,
+            reps: hasDuration ? undefined : hasReps ? exercise.reps : 10,
+            duration: hasDuration ? exercise.duration : undefined,
+            rest:
+              typeof exercise.rest === "number" && exercise.rest >= 0
+                ? exercise.rest
+                : 60,
+            description:
+              typeof exercise.description === "string" &&
+              exercise.description.trim()
+                ? exercise.description.trim()
+                : undefined,
+          } satisfies Exercise;
+        })
+      : [],
+  };
+}
+
+// Enkel statusrad på home i stället för tung dashboard.
+function buildHomeStatus(params: {
+  logs: WorkoutLog[];
+  goal: Goal | null | undefined;
+}): HomeStatus {
+  const { logs, goal } = params;
+
+  const completedLogs = logs.filter((log) => log.status === "completed");
+
+  if (completedLogs.length === 0) {
+    return {
+      title: "Redo att börja",
+      detail: "Starta första passet så lär sig appen dina vanor snabbare.",
+    };
+  }
+
+  const now = Date.now();
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+  const recentCount = completedLogs.filter(
+    (log) => new Date(log.completedAt).getTime() >= sevenDaysAgo,
+  ).length;
+
+  if (recentCount >= 3) {
+    return {
+      title: "Bra rytm",
+      detail: `Du har tränat ${recentCount} pass senaste veckan. Fortsätt så för ${getGoalLabel(goal).toLowerCase()}.`,
+    };
+  }
+
+  if (recentCount >= 1) {
+    return {
+      title: "På gång",
+      detail: "Du är igång. Ett till pass snart ger bättre kontinuitet.",
+    };
+  }
+
+  return {
+    title: "Dags att återstarta",
+    detail: "Det var ett tag sedan senaste passet. Börja med ett kort pass idag.",
+  };
 }
 
 export default function HomePage() {
@@ -182,28 +355,25 @@ export default function HomePage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
-  // Lokal state för snabbstart av AI-pass.
+  // Home ska främst hålla koll på senaste val för snabbstart.
   const [selectedDuration, setSelectedDuration] = useState(30);
   const [durationInput, setDurationInput] = useState("30");
   const [gyms, setGyms] = useState<Gym[]>([]);
   const [selectedGymId, setSelectedGymId] = useState(BODYWEIGHT_GYM_ID);
 
-  // Dashboard-data.
+  // Vi behåller bara den data som verkligen behövs för /home.
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [workoutLogs, setWorkoutLogs] = useState<WorkoutLog[]>([]);
   const [logsSource, setLogsSource] = useState<"api" | "local">("api");
 
-  // AI-coach ovanpå den strukturerade analysen.
-  const [goalReview, setGoalReview] = useState<GoalReview | null>(null);
-  const [isLoadingGoalReview, setIsLoadingGoalReview] = useState(false);
-  const [goalReviewError, setGoalReviewError] = useState<string | null>(null);
-
-  // UI-state.
+  // Separata busy-lägen gör knapparna tydligare.
   const [isLoadingGyms, setIsLoadingGyms] = useState(false);
-  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
+  const [isStartingWorkout, setIsStartingWorkout] = useState(false);
+  const [isOpeningPreview, setIsOpeningPreview] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -211,9 +381,8 @@ export default function HomePage() {
     async function loadHome() {
       try {
         setPageError(null);
-        setIsLoadingDashboard(true);
 
-        // Hämta aktuell auth-user först.
+        // Börja alltid med att hämta användaren.
         const authRes = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
@@ -238,7 +407,7 @@ export default function HomePage() {
         setAuthUser(user);
         setAuthChecked(true);
 
-        // Läs tidigare sparade AI-inställningar.
+        // Läs tidigare snabbstartsval.
         try {
           const rawSettings = localStorage.getItem(getAiSettingsStorageKey(userId));
 
@@ -262,13 +431,13 @@ export default function HomePage() {
             }
           }
         } catch (error) {
-          console.error("Kunde inte läsa sparade AI-inställningar:", error);
+          console.error("Kunde inte läsa sparade home-val:", error);
         }
 
-        // Ladda gym och settings parallellt.
         setIsLoadingGyms(true);
         setGymError(null);
 
+        // Home behöver bara gym, settings och senaste loggar.
         const [gymsRes, settingsRes] = await Promise.all([
           fetch(`/api/gyms?userId=${encodeURIComponent(userId)}`, {
             cache: "no-store",
@@ -304,7 +473,7 @@ export default function HomePage() {
           const normalizedGyms = normalizeGyms(gymsData);
           setGyms(normalizedGyms);
 
-          // Om tidigare valt gym inte längre finns kvar, fall tillbaka till kroppsvikt.
+          // Om senaste gym saknas längre, gå tillbaka till kroppsvikt.
           setSelectedGymId((prev) => {
             if (prev === BODYWEIGHT_GYM_ID) {
               return prev;
@@ -322,10 +491,10 @@ export default function HomePage() {
           setSettings(settingsData.settings ?? null);
         }
 
-        // Försök först med API, annars lokal fallback.
+        // Läs historik från API, annars lokal fallback.
         try {
           const logsRes = await fetch(
-            `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=24`,
+            `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=12`,
             {
               cache: "no-store",
               credentials: "include",
@@ -347,7 +516,7 @@ export default function HomePage() {
           setWorkoutLogs(logsData.logs);
           setLogsSource("api");
         } catch (error) {
-          console.error("Kunde inte hämta dashboard-loggar från API:", error);
+          console.error("Kunde inte hämta loggar från API:", error);
 
           if (!isMounted) {
             return;
@@ -357,7 +526,7 @@ export default function HomePage() {
           setLogsSource("local");
         }
       } catch (error) {
-        console.error("Kunde inte ladda home-sidan:", error);
+        console.error("Kunde inte ladda home:", error);
 
         if (!isMounted) {
           return;
@@ -367,7 +536,6 @@ export default function HomePage() {
       } finally {
         if (isMounted) {
           setIsLoadingGyms(false);
-          setIsLoadingDashboard(false);
           setAuthChecked(true);
         }
       }
@@ -385,7 +553,7 @@ export default function HomePage() {
       return;
     }
 
-    // Spara snabbstartsval per användare.
+    // Spara val direkt så /home känns personlig och snabb.
     try {
       localStorage.setItem(
         getAiSettingsStorageKey(String(authUser.id)),
@@ -395,7 +563,7 @@ export default function HomePage() {
         }),
       );
     } catch (error) {
-      console.error("Kunde inte spara AI-inställningar:", error);
+      console.error("Kunde inte spara home-val:", error);
     }
   }, [authUser, selectedDuration, selectedGymId]);
 
@@ -405,7 +573,7 @@ export default function HomePage() {
     if (selectedGymId === BODYWEIGHT_GYM_ID) {
       return {
         id: BODYWEIGHT_GYM_ID,
-        name: "Kroppsvikt / utan gym",
+        name: BODYWEIGHT_LABEL,
       };
     }
 
@@ -421,69 +589,30 @@ export default function HomePage() {
       )[0];
   }, [workoutLogs]);
 
-  const dashboardAnalysis = useMemo(() => {
-    return buildTrainingDashboardAnalysis({
+  const statusSummary = useMemo(() => {
+    return buildHomeStatus({
       logs: workoutLogs,
-      settings,
+      goal: settings?.training_goal,
     });
   }, [workoutLogs, settings]);
 
-  useEffect(() => {
-    async function loadGoalReview() {
-      if (!dashboardAnalysis.structuredAnalysis) {
-        setGoalReview(null);
-        setGoalReviewError(null);
-        return;
-      }
+  const recentWeekCount = useMemo(() => {
+    const now = Date.now();
+    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
 
-      try {
-        setIsLoadingGoalReview(true);
-        setGoalReviewError(null);
+    return workoutLogs.filter(
+      (log) =>
+        log.status === "completed" &&
+        new Date(log.completedAt).getTime() >= sevenDaysAgo,
+    ).length;
+  }, [workoutLogs]);
 
-        const response = await fetch("/api/goal-review", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            goal: dashboardAnalysis.structuredAnalysis.goal,
-            analysis: dashboardAnalysis.structuredAnalysis,
-          }),
-        });
-
-        const data = (await response.json().catch(() => null)) as
-          | {
-              ok?: boolean;
-              headline?: string;
-              nextFocus?: string;
-              comment?: string;
-              error?: string;
-            }
-          | null;
-
-        if (!response.ok || !data?.ok) {
-          throw new Error(data?.error ?? "Kunde inte hämta AI-kommentar.");
-        }
-
-        setGoalReview({
-          headline: data.headline ?? "Din AI-coach säger",
-          nextFocus: data.nextFocus ?? "Fortsätt bygga steg för steg",
-          comment: data.comment ?? "Ingen AI-kommentar kunde visas just nu.",
-        });
-      } catch (error) {
-        console.error("Kunde inte hämta AI-coach-kommentar:", error);
-        setGoalReview(null);
-        setGoalReviewError("Kunde inte hämta AI-coach-kommentar.");
-      } finally {
-        setIsLoadingGoalReview(false);
-      }
-    }
-
-    void loadGoalReview();
-  }, [dashboardAnalysis]);
-
-  const canGenerateAiWorkout =
-    authChecked && !!authUser && !isLoadingGyms && !isLoadingDashboard;
+  const canUseStartActions =
+    authChecked &&
+    !!authUser &&
+    !isLoadingGyms &&
+    !isStartingWorkout &&
+    !isOpeningPreview;
 
   function handleQuickDurationSelect(duration: number) {
     const nextDuration = clampDuration(duration);
@@ -492,44 +621,146 @@ export default function HomePage() {
   }
 
   function handleDurationInputChange(value: string) {
-    // Tillåt bara siffror i textfältet.
+    // Tillåt bara siffror i fältet.
     const sanitized = value.replace(/[^\d]/g, "");
     setDurationInput(sanitized);
 
     const parsed = Number(sanitized);
+
     if (Number.isFinite(parsed) && sanitized !== "") {
       setSelectedDuration(clampDuration(parsed));
     }
   }
 
   function handleDurationInputBlur() {
-    // Vid blur säkerställer vi ett giltigt värde.
+    // Säkerställ alltid ett rimligt värde.
     const parsed = Number(durationInput);
     const nextDuration = clampDuration(parsed);
     setSelectedDuration(nextDuration);
     setDurationInput(String(nextDuration));
   }
 
-  function handleGenerateAiWorkout() {
+  async function loadSelectedGymDetail(params: {
+    userId: string;
+    gymId: string;
+  }) {
+    const { userId, gymId } = params;
+
+    const response = await fetch(
+      `/api/gyms/${encodeURIComponent(gymId)}?userId=${encodeURIComponent(userId)}`,
+      {
+        cache: "no-store",
+        credentials: "include",
+      },
+    );
+
+    const data = (await response.json().catch(() => null)) as unknown;
+
+    if (!response.ok) {
+      throw new Error("Kunde inte hämta valt gym.");
+    }
+
+    return normalizeGymDetail(data);
+  }
+
+  async function buildWorkoutInput() {
     if (!authUser?.id) {
-      setPageError("Användaren är inte färdigladdad ännu. Försök igen.");
+      throw new Error("Användaren är inte färdigladdad ännu.");
+    }
+
+    const userId = String(authUser.id);
+    const goal = settings?.training_goal ?? "strength";
+
+    if (selectedGymId === BODYWEIGHT_GYM_ID) {
+      return {
+        userId,
+        goal,
+        equipment: ["bodyweight"],
+        gymLabel: BODYWEIGHT_LABEL,
+      };
+    }
+
+    const gymDetail = await loadSelectedGymDetail({
+      userId,
+      gymId: selectedGymId,
+    });
+
+    return {
+      userId,
+      goal,
+      equipment:
+        gymDetail && gymDetail.equipment.length > 0
+          ? gymDetail.equipment
+          : ["bodyweight"],
+      gymLabel: gymDetail?.name?.trim() || selectedGym?.name || BODYWEIGHT_LABEL,
+    };
+  }
+
+  async function handleStartWorkout() {
+    try {
+      setIsStartingWorkout(true);
+      setPageError(null);
+
+      // Bygg underlaget direkt från användare, mål, tid och gym.
+      const input = await buildWorkoutInput();
+
+      const result = await generateWorkout({
+        userId: input.userId,
+        goal: input.goal,
+        durationMinutes: selectedDuration,
+        equipment: input.equipment,
+      });
+
+      const normalizedWorkout = normalizeWorkout({
+        workout: result.workout,
+        duration: selectedDuration,
+        gymLabel: input.gymLabel,
+      });
+
+      // Spara både preview- och active-version så resten av flödet fungerar.
+      saveGeneratedWorkout(input.userId, normalizedWorkout);
+      saveActiveWorkout(input.userId, normalizedWorkout);
+
+      router.push("/workout/run");
+    } catch (error) {
+      console.error("Kunde inte starta AI-pass direkt:", error);
+
+      setPageError(
+        error instanceof Error
+          ? error.message
+          : "Kunde inte starta passet just nu.",
+      );
+    } finally {
+      setIsStartingWorkout(false);
+    }
+  }
+
+  function handleReviewFirst() {
+    if (!authUser?.id) {
+      setPageError("Användaren är inte färdigladdad ännu.");
       return;
     }
 
-    setPageError(null);
+    try {
+      setIsOpeningPreview(true);
+      setPageError(null);
 
-    const params = new URLSearchParams();
-    params.set("duration", String(selectedDuration));
-    params.set("userId", String(authUser.id));
+      const params = new URLSearchParams();
+      params.set("duration", String(selectedDuration));
+      params.set("userId", String(authUser.id));
 
-    // Vid kroppsvikt skickar vi ingen vanlig gymId, utan markerar kroppsviktsläge.
-    if (selectedGymId === BODYWEIGHT_GYM_ID) {
-      params.set("gymMode", "bodyweight");
-    } else if (selectedGymId) {
-      params.set("gymId", selectedGymId);
+      // Bodyweight-läge skickas separat.
+      if (selectedGymId === BODYWEIGHT_GYM_ID) {
+        params.set("gymMode", "bodyweight");
+      } else if (selectedGymId) {
+        params.set("gymId", selectedGymId);
+      }
+
+      router.push(`/workout/preview?${params.toString()}`);
+    } finally {
+      // Vi återställer snabbt eftersom navigation sker direkt.
+      setIsOpeningPreview(false);
     }
-
-    router.push(`/workout/preview?${params.toString()}`);
   }
 
   async function handleLogout() {
@@ -554,21 +785,16 @@ export default function HomePage() {
   if (!authChecked) {
     return (
       <main className="min-h-screen bg-slate-50 text-slate-950">
-        <AppTopBar
-          title="Träningsapp"
-          subtitle="Dashboard för snabbstart, översikt och målstyrd träningsanalys."
-        />
-
         <div className="mx-auto flex min-h-[60vh] w-full max-w-3xl items-center justify-center px-4 py-8 sm:px-6">
           <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
               Träningsapp
             </p>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-              Laddar dashboard...
+              Laddar hem...
             </h1>
             <p className="mt-3 text-sm leading-6 text-slate-600">
-              Hämtar användardata, senaste pass och AI-analys.
+              Hämtar dina snabbval och senaste pass.
             </p>
           </section>
         </div>
@@ -577,520 +803,266 @@ export default function HomePage() {
   }
 
   return (
-    <>
-      <main className="min-h-screen bg-slate-50 pb-28 text-slate-950">
-        <AppTopBar
-          title="Träningsapp"
-          subtitle="Dashboard för snabbstart, översikt och målstyrd träningsanalys."
-          onLogout={handleLogout}
-          isLoggingOut={isLoggingOut}
-        />
+    <AppLayout
+      title="Träningsapp"
+      subtitle="Snabbstart för dagens pass."
+      onLogout={handleLogout}
+      isLoggingOut={isLoggingOut}
+      isAdmin={authUser?.role === "admin"}
+    >
+      <div className="flex flex-col gap-5">
+        {/* Kort och tydlig toppdel. */}
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+            Hej igen
+          </p>
 
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 pb-10 sm:px-6">
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
-              Välkommen tillbaka
-            </p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+            {displayName}
+          </h1>
 
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-              Hej {displayName}
-            </h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            Starta pass direkt eller granska först. Senaste tid och gym sparas
+            automatiskt.
+          </p>
 
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-              Här startar du nästa pass, ser hur väl träningen matchar ditt mål och
-              får tydliga råd om vad du behöver göra för att komma vidare.
-            </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+              Mål: {getGoalLabel(settings?.training_goal)}
+            </span>
 
-            <div className="mt-5 flex flex-wrap gap-2">
-              <span
-                className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${getAnalysisBadgeClasses(
-                  dashboardAnalysis.status,
-                )}`}
-              >
-                AI-status: {dashboardAnalysis.statusLabel}
-              </span>
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+              Pass senaste 7 dagar: {recentWeekCount}
+            </span>
 
-              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-                Mål: {dashboardAnalysis.goalLabel}
-              </span>
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+              Källa: {logsSource === "api" ? "Databas" : "Lokal fallback"}
+            </span>
+          </div>
+        </section>
 
-              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-                Datakälla: {logsSource === "api" ? "Databas" : "Lokal fallback"}
-              </span>
-            </div>
-          </section>
-
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
-                  AI-överblick
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                  {dashboardAnalysis.consistencyScore}/100
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Samlad målmatchning utifrån frekvens, volym, kontinuitet,
-                  progression, återhämtning och övningsbredd.
-                </p>
-              </div>
-
-              <span
-                className={`inline-flex shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${getAnalysisBadgeClasses(
-                  dashboardAnalysis.status,
-                )}`}
-              >
-                {dashboardAnalysis.statusLabel}
-              </span>
+        {/* Huvudytan enligt docs: startkort med tid + gym + tydlig CTA. */}
+        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+                Starta pass
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                Dagens träning
+              </h2>
             </div>
 
-            <p className="mt-4 text-sm leading-6 text-slate-700">
-              {dashboardAnalysis.summary}
-            </p>
-          </section>
+            <Link
+              href="/gyms"
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+            >
+              Redigera gym
+            </Link>
+          </div>
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
-                  Senaste pass
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                  Din senaste träningsaktivitet
-                </h2>
-              </div>
-
-              <Link
-                href="/history"
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+          <div className="mt-6 grid gap-5">
+            {/* Tidsval hålls snabbt med chips och enkel input. */}
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <label
+                htmlFor="duration"
+                className="text-sm font-semibold text-slate-900"
               >
-                Se historik
-              </Link>
-            </div>
+                Tid
+              </label>
 
-            {latestWorkout ? (
-              <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-sm text-slate-500">
-                  {formatDateTime(latestWorkout.completedAt)}
-                </p>
+              <p className="mt-1 text-sm text-slate-600">
+                Välj hur långt pass du vill ha idag.
+              </p>
 
-                <h3 className="mt-2 text-xl font-semibold text-slate-950">
-                  {latestWorkout.workoutName}
-                </h3>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {QUICK_DURATION_OPTIONS.map((duration) => {
+                  const isSelected = selectedDuration === duration;
 
-                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                      Tid
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-slate-950">
-                      {formatDurationMinutes(latestWorkout.durationSeconds)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                      Övningar
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-slate-950">
-                      {latestWorkout.exercises.length}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                      Set
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-slate-950">
-                      {getTotalSets(latestWorkout)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                      Volym
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-slate-950">
-                      {Math.round(getTotalVolume(latestWorkout))} kg
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-                  <Link
-                    href="/history"
-                    className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
-                  >
-                    Visa detaljer
-                  </Link>
-
-                  <button
-                    type="button"
-                    onClick={handleGenerateAiWorkout}
-                    disabled={!canGenerateAiWorkout}
-                    className="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Generera nytt AI-pass
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5">
-                <h3 className="text-lg font-semibold text-slate-950">
-                  Ingen träningshistorik ännu
-                </h3>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  När du har genomfört ditt första pass kommer dashboarden att visa
-                  senaste pass, målmatchning och mer träffsäkra råd här.
-                </p>
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
-                  Snabbstart
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                  Starta dagens pass
-                </h2>
-              </div>
-
-              <Link
-                href="/gyms"
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
-              >
-                Redigera gym
-              </Link>
-            </div>
-
-            <div className="mt-6 grid gap-5">
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                <label
-                  htmlFor="duration"
-                  className="text-sm font-semibold text-slate-900"
-                >
-                  Passlängd
-                </label>
-
-                <p className="mt-1 text-sm text-slate-600">
-                  Välj mellan {MIN_DURATION} och {MAX_DURATION} minuter.
-                </p>
-
-                <input
-                  id="duration"
-                  inputMode="numeric"
-                  value={durationInput}
-                  onChange={(e) => handleDurationInputChange(e.target.value)}
-                  onBlur={handleDurationInputBlur}
-                  className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
-                  placeholder="Antal minuter"
-                />
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {QUICK_DURATION_OPTIONS.map((duration) => {
-                    const isSelected = selectedDuration === duration;
-
-                    return (
-                      <button
-                        key={duration}
-                        type="button"
-                        onClick={() => handleQuickDurationSelect(duration)}
-                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
-                          isSelected
-                            ? "border-indigo-600 bg-indigo-600 text-white"
-                            : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
-                        }`}
-                      >
-                        {duration} min
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                <label
-                  htmlFor="gym"
-                  className="text-sm font-semibold text-slate-900"
-                >
-                  Valt gym
-                </label>
-
-                <p className="mt-1 text-sm text-slate-600">
-                  AI-passet anpassas efter vald utrustning.
-                </p>
-
-                {isLoadingGyms ? (
-                  <p className="mt-3 text-sm text-slate-500">Hämtar gym...</p>
-                ) : (
-                  <>
-                    <select
-                      id="gym"
-                      value={selectedGymId}
-                      onChange={(e) => setSelectedGymId(e.target.value)}
-                      className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                  return (
+                    <button
+                      key={duration}
+                      type="button"
+                      onClick={() => handleQuickDurationSelect(duration)}
+                      className={`min-h-[44px] rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                        isSelected
+                          ? "border-indigo-600 bg-indigo-600 text-white"
+                          : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                      }`}
                     >
-                      <option value={BODYWEIGHT_GYM_ID}>
-                        Kroppsvikt / utan gym
-                      </option>
-
-                      {gyms.map((gym) => (
-                        <option key={String(gym.id)} value={String(gym.id)}>
-                          {gym.name}
-                        </option>
-                      ))}
-                    </select>
-
-                    <p className="mt-3 text-sm text-slate-600">
-                      Vald träningsmiljö:{" "}
-                      <span className="font-medium text-slate-900">
-                        {selectedGym?.name ?? "Kroppsvikt / utan gym"}
-                      </span>
-                    </p>
-                  </>
-                )}
-
-                {gymError ? (
-                  <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                    {gymError}
-                  </p>
-                ) : null}
+                      {duration} min
+                    </button>
+                  );
+                })}
               </div>
 
-              {pageError ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {pageError}
-                </div>
+              <input
+                id="duration"
+                inputMode="numeric"
+                value={durationInput}
+                onChange={(e) => handleDurationInputChange(e.target.value)}
+                onBlur={handleDurationInputBlur}
+                className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                placeholder="Annan tid i minuter"
+              />
+            </div>
+
+            {/* Gym-val hålls enkelt och nära startknappen. */}
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <label
+                htmlFor="gym"
+                className="text-sm font-semibold text-slate-900"
+              >
+                Gym
+              </label>
+
+              <p className="mt-1 text-sm text-slate-600">
+                Passet anpassas efter vald utrustning.
+              </p>
+
+              {isLoadingGyms ? (
+                <p className="mt-3 text-sm text-slate-500">Hämtar gym...</p>
+              ) : (
+                <>
+                  <select
+                    id="gym"
+                    value={selectedGymId}
+                    onChange={(e) => setSelectedGymId(e.target.value)}
+                    className="mt-3 min-h-[48px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                  >
+                    <option value={BODYWEIGHT_GYM_ID}>
+                      {BODYWEIGHT_LABEL}
+                    </option>
+
+                    {gyms.map((gym) => (
+                      <option key={String(gym.id)} value={String(gym.id)}>
+                        {gym.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <p className="mt-3 text-sm text-slate-600">
+                    Val idag:{" "}
+                    <span className="font-medium text-slate-900">
+                      {selectedGym?.name ?? BODYWEIGHT_LABEL}
+                    </span>
+                  </p>
+                </>
+              )}
+
+              {gymError ? (
+                <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {gymError}
+                </p>
               ) : null}
+            </div>
+
+            {pageError ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {pageError}
+              </div>
+            ) : null}
+
+            {/* En tydlig primär handling och valfria sidospår. */}
+            <div className="grid gap-3">
+              <button
+                type="button"
+                onClick={handleStartWorkout}
+                disabled={!canUseStartActions}
+                className="inline-flex min-h-[56px] items-center justify-center rounded-2xl bg-indigo-600 px-5 py-4 text-base font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isStartingWorkout ? "Startar pass..." : "Starta pass"}
+              </button>
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <button
                   type="button"
-                  onClick={handleGenerateAiWorkout}
-                  disabled={!canGenerateAiWorkout}
-                  className="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-5 py-4 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={handleReviewFirst}
+                  disabled={!canUseStartActions}
+                  className="inline-flex min-h-[48px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {canGenerateAiWorkout
-                    ? "Generera AI-pass"
-                    : "Laddar användardata..."}
+                  {isOpeningPreview ? "Öppnar..." : "Granska först"}
                 </button>
 
                 <Link
                   href="/workout/custom"
-                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+                  className="inline-flex min-h-[48px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
                 >
                   Eget pass
                 </Link>
               </div>
             </div>
-          </section>
+          </div>
+        </section>
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
-                  AI-analys
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                  Matchar träningen ditt mål?
-                </h2>
-              </div>
+        {/* Kort status i liten skala, inte full dashboard. */}
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+            Kort status
+          </p>
 
-              <span
-                className={`inline-flex shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${getAnalysisBadgeClasses(
-                  dashboardAnalysis.status,
-                )}`}
-              >
-                {dashboardAnalysis.statusLabel}
-              </span>
+          <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
+            {statusSummary.title}
+          </h2>
+
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {statusSummary.detail}
+          </p>
+        </section>
+
+        {/* Senaste pass finns kvar, men kompakt. */}
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+                Senaste pass
+              </p>
+              <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
+                Senast genomfört
+              </h2>
             </div>
 
-            <h3 className="mt-5 text-xl font-semibold text-slate-950">
-              {dashboardAnalysis.title}
-            </h3>
+            <Link
+              href="/history"
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+            >
+              Historik
+            </Link>
+          </div>
 
-            <p className="mt-3 text-sm leading-6 text-slate-700">
-              {dashboardAnalysis.summary}
-            </p>
+          {latestWorkout ? (
+            <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">
+                {formatDateTime(latestWorkout.completedAt)}
+              </p>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {dashboardAnalysis.metrics.map((metric) => (
-                <div
-                  key={metric.label}
-                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                >
-                  <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                    {metric.label}
-                  </p>
-                  <p className="mt-2 text-lg font-semibold text-slate-950">
-                    {metric.value}
-                  </p>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    {metric.hint}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6">
-              <h3 className="text-lg font-semibold text-slate-950">
-                Vad målet brukar kräva
+              <h3 className="mt-2 text-lg font-semibold text-slate-950">
+                {latestWorkout.workoutName}
               </h3>
 
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                {dashboardAnalysis.requirementItems.map((item) => (
-                  <div
-                    key={item.label}
-                    className={`rounded-2xl border p-4 ${getRequirementClasses(
-                      item.status,
-                    )}`}
-                  >
-                    <h4 className="text-base font-semibold text-slate-950">
-                      {item.label}
-                    </h4>
-                    <p className="mt-2 text-sm text-slate-700">
-                      <span className="font-medium">Målbild:</span> {item.target}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-700">
-                      <span className="font-medium">Din nivå:</span> {item.actual}
-                    </p>
-                  </div>
-                ))}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                  {formatDurationMinutes(latestWorkout.durationSeconds)}
+                </span>
+
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                  {latestWorkout.exercises.length} övningar
+                </span>
+
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                  {getTotalSets(latestWorkout)} set
+                </span>
               </div>
             </div>
-
-            {goalReview ? (
-              <div className="mt-6 rounded-3xl border border-violet-200 bg-violet-50 p-5">
-                <p className="text-sm font-medium uppercase tracking-[0.16em] text-violet-500">
-                  AI-coach
-                </p>
-                <h3 className="mt-2 text-xl font-semibold text-slate-950">
-                  {goalReview.headline}
-                </h3>
-                <p className="mt-3 text-sm text-slate-700">
-                  <span className="font-medium">Fokus nu:</span>{" "}
-                  {goalReview.nextFocus}
-                </p>
-                <p className="mt-2 text-sm leading-6 text-slate-700">
-                  {goalReview.comment}
-                </p>
-              </div>
-            ) : null}
-
-            {isLoadingGoalReview ? (
-              <p className="mt-4 text-sm text-slate-500">
-                Hämtar AI-coachens kommentar...
+          ) : (
+            <div className="mt-4 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-4">
+              <p className="text-sm leading-6 text-slate-600">
+                Inget genomfört pass ännu. Börja med ett kort pass idag.
               </p>
-            ) : null}
-
-            {goalReviewError ? (
-              <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                {goalReviewError}
-              </p>
-            ) : null}
-          </section>
-
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
-              Rekommendationer framåt
-            </p>
-
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-              Vad du bör fokusera på nu
-            </h2>
-
-            <p className="mt-3 text-sm font-medium text-slate-700">
-              För att nå målet nu
-            </p>
-
-            <div className="mt-4 grid gap-3">
-              {dashboardAnalysis.actionPlan.map((step) => (
-                <div
-                  key={step.title}
-                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                >
-                  <h3 className="text-base font-semibold text-slate-950">
-                    {step.title}
-                  </h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-700">
-                    {step.detail}
-                  </p>
-                </div>
-              ))}
             </div>
-
-            <div className="mt-6 grid gap-6 lg:grid-cols-2">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-950">
-                  Fokusområden
-                </h3>
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {dashboardAnalysis.focusAreas.map((focusArea) => (
-                    <span
-                      key={focusArea}
-                      className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700"
-                    >
-                      {focusArea}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold text-slate-950">
-                  Det som ser bra ut
-                </h3>
-
-                <div className="mt-3 grid gap-2">
-                  {dashboardAnalysis.strengths.length > 0 ? (
-                    dashboardAnalysis.strengths.map((strength) => (
-                      <div
-                        key={strength}
-                        className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
-                      >
-                        {strength}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                      Fler styrkor blir tydliga när du samlat mer träningsdata.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <h3 className="text-lg font-semibold text-slate-950">
-                Det som bromsar målet
-              </h3>
-
-              <div className="mt-3 grid gap-2">
-                {dashboardAnalysis.gaps.length > 0 ? (
-                  dashboardAnalysis.gaps.map((gap) => (
-                    <div
-                      key={gap}
-                      className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"
-                    >
-                      {gap}
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                    Inga tydliga bromsklossar identifierade just nu.
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-        </div>
-      </main>
-
-      <BottomNav isAdmin={authUser?.role === "admin"} />
-    </>
+          )}
+        </section>
+      </div>
+    </AppLayout>
   );
 }
