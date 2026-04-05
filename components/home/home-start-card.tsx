@@ -3,6 +3,8 @@
 import Link from "next/link";
 import DurationSelector from "@/components/home/duration-selector";
 import GymSelector from "@/components/home/gym-selector";
+import PrimaryButton from "@/components/shared/primary-button";
+import SecondaryButton from "@/components/shared/secondary-button";
 
 type GymOption = {
   id: string | number;
@@ -103,31 +105,18 @@ export default function HomeStartCard({
         ) : null}
 
         <div className="grid gap-3">
-          <button
-            type="button"
-            onClick={onStartWorkout}
-            disabled={isDisabled}
-            className="inline-flex min-h-[56px] items-center justify-center rounded-2xl bg-indigo-600 px-5 py-4 text-base font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <PrimaryButton onClick={onStartWorkout} disabled={isDisabled}>
             {isStartingWorkout ? "Startar pass..." : "Starta pass"}
-          </button>
+          </PrimaryButton>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={onReviewFirst}
-              disabled={isDisabled}
-              className="inline-flex min-h-[48px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
+            <SecondaryButton onClick={onReviewFirst} disabled={isDisabled}>
               {isOpeningPreview ? "Öppnar..." : "Granska först"}
-            </button>
+            </SecondaryButton>
 
-            <Link
-              href="/workout/custom"
-              className="inline-flex min-h-[48px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
-            >
+            <SecondaryButton href="/workout/custom">
               Eget pass
-            </Link>
+            </SecondaryButton>
           </div>
         </div>
       </div>
