@@ -1,13 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import HomeStartCard from "@/components/home/home-start-card";
-import LastWorkoutCard from "@/components/home/last-workout-card";
-import StatusSummaryCard from "@/components/home/status-summary-card";
 import AppLayout from "@/components/layout/AppLayout";
-import { useHomePreferences } from "@/hooks/use-home-preferences";
 import { generateWorkout } from "@/lib/workout-generator";
 import {
   getWorkoutLogs,
@@ -62,6 +59,8 @@ type HomeStatus = {
 const QUICK_DURATION_OPTIONS = [15, 20, 30, 45] as const;
 const BODYWEIGHT_GYM_ID = "bodyweight";
 const BODYWEIGHT_LABEL = "Kroppsvikt / utan gym";
+const MIN_DURATION = 5;
+const MAX_DURATION = 180;
 
 // Håller gym-listan robust även om API-formatet varierar lite.
 function normalizeGyms(data: unknown): Gym[] {
@@ -170,6 +169,20 @@ function extractEquipmentStrings(input: unknown): string[] {
   }
 
   return Array.from(values);
+}
+
+// Sparar senaste val per användare.
+function getAiSettingsStorageKey(userId: string) {
+  return `ai-workout-settings:${userId}`;
+}
+
+// Håller tid inom rimliga gränser.
+function clampDuration(value: number) {
+  if (!Number.isFinite(value)) {
+    return 30;
+  }
+
+  return Math.min(MAX_DURATION, Math.max(MIN_DURATION, Math.round(value)));
 }
 
 // Fallback för namn i hälsningen.
@@ -344,11 +357,18 @@ export default function HomePage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
+  // Home ska främst hålla koll på senaste val för snabbstart.
+  const [selectedDuration, setSelectedDuration] = useState(30);
+  const [durationInput, setDurationInput] = useState("30");
   const [gyms, setGyms] = useState<Gym[]>([]);
+  const [selectedGymId, setSelectedGymId] = useState(BODYWEIGHT_GYM_ID);
+
+  // Vi behåller bara den data som verkligen behövs för /home.
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [workoutLogs, setWorkoutLogs] = useState<WorkoutLog[]>([]);
   const [logsSource, setLogsSource] = useState<"api" | "local">("api");
 
+  // Separata busy-lägen gör knapparna tydligare.
   const [isLoadingGyms, setIsLoadingGyms] = useState(false);
   const [isStartingWorkout, setIsStartingWorkout] = useState(false);
   const [isOpeningPreview, setIsOpeningPreview] = useState(false);
@@ -356,19 +376,6 @@ export default function HomePage() {
 
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
-
-  const {
-    selectedDuration,
-    durationInput,
-    selectedGymId,
-    setSelectedGymId,
-    updateDuration,
-    updateDurationInput,
-    commitDurationInput,
-  } = useHomePreferences({
-    userId: authUser?.id ? String(authUser.id) : null,
-    defaultGymId: BODYWEIGHT_GYM_ID,
-  });
 
   useEffect(() => {
     let isMounted = true;
@@ -401,6 +408,33 @@ export default function HomePage() {
 
         setAuthUser(user);
         setAuthChecked(true);
+
+        // Läs tidigare snabbstartsval.
+        try {
+          const rawSettings = localStorage.getItem(getAiSettingsStorageKey(userId));
+
+          if (rawSettings) {
+            const parsed = JSON.parse(rawSettings) as {
+              duration?: unknown;
+              gymId?: unknown;
+            };
+
+            if (
+              typeof parsed.duration === "number" &&
+              Number.isFinite(parsed.duration)
+            ) {
+              const nextDuration = clampDuration(parsed.duration);
+              setSelectedDuration(nextDuration);
+              setDurationInput(String(nextDuration));
+            }
+
+            if (typeof parsed.gymId === "string" && parsed.gymId.trim()) {
+              setSelectedGymId(parsed.gymId);
+            }
+          }
+        } catch (error) {
+          console.error("Kunde inte läsa sparade home-val:", error);
+        }
 
         setIsLoadingGyms(true);
         setGymError(null);
@@ -514,7 +548,26 @@ export default function HomePage() {
     return () => {
       isMounted = false;
     };
-  }, [router, setSelectedGymId]);
+  }, [router]);
+
+  useEffect(() => {
+    if (!authUser) {
+      return;
+    }
+
+    // Spara val direkt så /home känns personlig och snabb.
+    try {
+      localStorage.setItem(
+        getAiSettingsStorageKey(String(authUser.id)),
+        JSON.stringify({
+          duration: selectedDuration,
+          gymId: selectedGymId,
+        }),
+      );
+    } catch (error) {
+      console.error("Kunde inte spara home-val:", error);
+    }
+  }, [authUser, selectedDuration, selectedGymId]);
 
   const displayName = useMemo(() => getDisplayName(authUser), [authUser]);
 
@@ -562,6 +615,32 @@ export default function HomePage() {
     !isLoadingGyms &&
     !isStartingWorkout &&
     !isOpeningPreview;
+
+  function handleQuickDurationSelect(duration: number) {
+    const nextDuration = clampDuration(duration);
+    setSelectedDuration(nextDuration);
+    setDurationInput(String(nextDuration));
+  }
+
+  function handleDurationInputChange(value: string) {
+    // Tillåt bara siffror i fältet.
+    const sanitized = value.replace(/[^\d]/g, "");
+    setDurationInput(sanitized);
+
+    const parsed = Number(sanitized);
+
+    if (Number.isFinite(parsed) && sanitized !== "") {
+      setSelectedDuration(clampDuration(parsed));
+    }
+  }
+
+  function handleDurationInputBlur() {
+    // Säkerställ alltid ett rimligt värde.
+    const parsed = Number(durationInput);
+    const nextDuration = clampDuration(parsed);
+    setSelectedDuration(nextDuration);
+    setDurationInput(String(nextDuration));
+  }
 
   async function loadSelectedGymDetail(params: {
     userId: string;
@@ -734,6 +813,7 @@ export default function HomePage() {
       isAdmin={authUser?.role === "admin"}
     >
       <div className="flex flex-col gap-5">
+        {/* Kort och tydlig toppdel. */}
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
             Hej igen
@@ -763,49 +843,227 @@ export default function HomePage() {
           </div>
         </section>
 
-        <HomeStartCard
-          gyms={gyms}
-          selectedDuration={selectedDuration}
-          durationInput={durationInput}
-          selectedGymId={selectedGymId}
-          selectedGymName={selectedGym?.name ?? BODYWEIGHT_LABEL}
-          quickDurationOptions={QUICK_DURATION_OPTIONS}
-          bodyweightId={BODYWEIGHT_GYM_ID}
-          bodyweightLabel={BODYWEIGHT_LABEL}
-          isLoadingGyms={isLoadingGyms}
-          isStartingWorkout={isStartingWorkout}
-          isOpeningPreview={isOpeningPreview}
-          isDisabled={!canUseStartActions}
-          gymError={gymError}
-          pageError={pageError}
-          onQuickDurationSelect={updateDuration}
-          onDurationInputChange={updateDurationInput}
-          onDurationInputBlur={commitDurationInput}
-          onGymChange={setSelectedGymId}
-          onStartWorkout={handleStartWorkout}
-          onReviewFirst={handleReviewFirst}
-        />
+        {/* Huvudytan enligt docs: startkort med tid + gym + tydlig CTA. */}
+        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+                Starta pass
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                Dagens träning
+              </h2>
+            </div>
 
-        <StatusSummaryCard
-          title={statusSummary.title}
-          detail={statusSummary.detail}
-        />
+            <Link
+              href="/gyms"
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+            >
+              Redigera gym
+            </Link>
+          </div>
 
-        <LastWorkoutCard
-          workout={
-            latestWorkout
-              ? {
-                  completedAt: formatDateTime(latestWorkout.completedAt),
-                  workoutName: latestWorkout.workoutName,
-                  durationLabel: formatDurationMinutes(
-                    latestWorkout.durationSeconds,
-                  ),
-                  exerciseCount: latestWorkout.exercises.length,
-                  setCount: getTotalSets(latestWorkout),
-                }
-              : null
-          }
-        />
+          <div className="mt-6 grid gap-5">
+            {/* Tidsval hålls snabbt med chips och enkel input. */}
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <label
+                htmlFor="duration"
+                className="text-sm font-semibold text-slate-900"
+              >
+                Tid
+              </label>
+
+              <p className="mt-1 text-sm text-slate-600">
+                Välj hur långt pass du vill ha idag.
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {QUICK_DURATION_OPTIONS.map((duration) => {
+                  const isSelected = selectedDuration === duration;
+
+                  return (
+                    <button
+                      key={duration}
+                      type="button"
+                      onClick={() => handleQuickDurationSelect(duration)}
+                      className={`min-h-[44px] rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                        isSelected
+                          ? "border-indigo-600 bg-indigo-600 text-white"
+                          : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                      }`}
+                    >
+                      {duration} min
+                    </button>
+                  );
+                })}
+              </div>
+
+              <input
+                id="duration"
+                inputMode="numeric"
+                value={durationInput}
+                onChange={(e) => handleDurationInputChange(e.target.value)}
+                onBlur={handleDurationInputBlur}
+                className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                placeholder="Annan tid i minuter"
+              />
+            </div>
+
+            {/* Gym-val hålls enkelt och nära startknappen. */}
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <label
+                htmlFor="gym"
+                className="text-sm font-semibold text-slate-900"
+              >
+                Gym
+              </label>
+
+              <p className="mt-1 text-sm text-slate-600">
+                Passet anpassas efter vald utrustning.
+              </p>
+
+              {isLoadingGyms ? (
+                <p className="mt-3 text-sm text-slate-500">Hämtar gym...</p>
+              ) : (
+                <>
+                  <select
+                    id="gym"
+                    value={selectedGymId}
+                    onChange={(e) => setSelectedGymId(e.target.value)}
+                    className="mt-3 min-h-[48px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                  >
+                    <option value={BODYWEIGHT_GYM_ID}>
+                      {BODYWEIGHT_LABEL}
+                    </option>
+
+                    {gyms.map((gym) => (
+                      <option key={String(gym.id)} value={String(gym.id)}>
+                        {gym.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <p className="mt-3 text-sm text-slate-600">
+                    Val idag:{" "}
+                    <span className="font-medium text-slate-900">
+                      {selectedGym?.name ?? BODYWEIGHT_LABEL}
+                    </span>
+                  </p>
+                </>
+              )}
+
+              {gymError ? (
+                <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {gymError}
+                </p>
+              ) : null}
+            </div>
+
+            {pageError ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {pageError}
+              </div>
+            ) : null}
+
+            {/* En tydlig primär handling och valfria sidospår. */}
+            <div className="grid gap-3">
+              <button
+                type="button"
+                onClick={handleStartWorkout}
+                disabled={!canUseStartActions}
+                className="inline-flex min-h-[56px] items-center justify-center rounded-2xl bg-indigo-600 px-5 py-4 text-base font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isStartingWorkout ? "Startar pass..." : "Starta pass"}
+              </button>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={handleReviewFirst}
+                  disabled={!canUseStartActions}
+                  className="inline-flex min-h-[48px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isOpeningPreview ? "Öppnar..." : "Granska först"}
+                </button>
+
+                <Link
+                  href="/workout/custom"
+                  className="inline-flex min-h-[48px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+                >
+                  Eget pass
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Kort status i liten skala, inte full dashboard. */}
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+            Kort status
+          </p>
+
+          <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
+            {statusSummary.title}
+          </h2>
+
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {statusSummary.detail}
+          </p>
+        </section>
+
+        {/* Senaste pass finns kvar, men kompakt. */}
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+                Senaste pass
+              </p>
+              <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
+                Senast genomfört
+              </h2>
+            </div>
+
+            <Link
+              href="/history"
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+            >
+              Historik
+            </Link>
+          </div>
+
+          {latestWorkout ? (
+            <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">
+                {formatDateTime(latestWorkout.completedAt)}
+              </p>
+
+              <h3 className="mt-2 text-lg font-semibold text-slate-950">
+                {latestWorkout.workoutName}
+              </h3>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                  {formatDurationMinutes(latestWorkout.durationSeconds)}
+                </span>
+
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                  {latestWorkout.exercises.length} övningar
+                </span>
+
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                  {getTotalSets(latestWorkout)} set
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-4">
+              <p className="text-sm leading-6 text-slate-600">
+                Inget genomfört pass ännu. Börja med ett kort pass idag.
+              </p>
+            </div>
+          )}
+        </section>
       </div>
     </AppLayout>
   );
