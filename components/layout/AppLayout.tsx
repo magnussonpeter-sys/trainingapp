@@ -1,7 +1,6 @@
 "use client";
 
-import AppTopBar from "@/components/navigation/AppTopBar";
-import BottomNav from "@/components/navigation/BottomNav";
+import AppPage from "@/components/app-shell/app-page";
 
 type AppLayoutProps = {
   children: React.ReactNode;
@@ -10,8 +9,13 @@ type AppLayoutProps = {
   onLogout?: () => Promise<void> | void;
   isLoggingOut?: boolean;
   isAdmin?: boolean;
+  backHref?: string;
+  backLabel?: string;
+  rightSlot?: React.ReactNode;
+  showBottomNav?: boolean;
 };
 
+// Kompatibilitetslager så befintliga sidor fortsätter fungera.
 export default function AppLayout({
   children,
   title = "Träningsapp",
@@ -19,23 +23,24 @@ export default function AppLayout({
   onLogout,
   isLoggingOut,
   isAdmin,
+  backHref,
+  backLabel,
+  rightSlot,
+  showBottomNav = true,
 }: AppLayoutProps) {
   return (
-    <>
-      <main className="min-h-screen bg-slate-50 pb-28 text-slate-950">
-        <AppTopBar
-          title={title}
-          subtitle={subtitle}
-          onLogout={onLogout}
-          isLoggingOut={isLoggingOut}
-        />
-
-        <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
-          {children}
-        </div>
-      </main>
-
-      <BottomNav isAdmin={isAdmin} />
-    </>
+    <AppPage
+      title={title}
+      subtitle={subtitle}
+      onLogout={onLogout}
+      isLoggingOut={isLoggingOut}
+      isAdmin={isAdmin}
+      backHref={backHref}
+      backLabel={backLabel}
+      rightSlot={rightSlot}
+      showBottomNav={showBottomNav}
+    >
+      {children}
+    </AppPage>
   );
 }
