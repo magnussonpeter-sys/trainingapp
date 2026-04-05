@@ -8,10 +8,12 @@ import AppLayout from "@/components/layout/AppLayout";
 import { generateWorkout } from "@/lib/workout-generator";
 import {
   getWorkoutLogs,
-  saveActiveWorkout,
-  saveGeneratedWorkout,
   type WorkoutLog,
 } from "@/lib/workout-log-storage";
+import {
+  saveActiveWorkout,
+  saveGeneratedWorkout,
+} from "@/lib/workout-storage";
 import type { Exercise, Workout } from "@/types/workout";
 
 type Goal = "strength" | "hypertrophy" | "health" | "body_composition";
