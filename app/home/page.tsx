@@ -1,10 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getWorkoutLogs, type WorkoutLog } from "@/lib/workout-log-storage";
+import AppTopBar from "@/components/navigation/AppTopBar";
+import {
+  getWorkoutLogs,
+  type WorkoutLog,
+} from "@/lib/workout-log-storage";
 import {
   buildTrainingDashboardAnalysis,
   type DashboardAnalysis,
@@ -51,7 +55,7 @@ function normalizeGyms(data: unknown): Gym[] {
           "name" in item &&
           (typeof (item as { id: unknown }).id === "string" ||
             typeof (item as { id: unknown }).id === "number") &&
-          typeof (item as { name: unknown }).name === "string"
+          typeof (item as { name: unknown }).name === "string",
       )
       .map((gym) => ({
         id: gym.id,
@@ -173,7 +177,6 @@ function getRequirementClasses(status: "good" | "warning" | "low") {
 
 export default function HomePage() {
   const router = useRouter();
-  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -199,7 +202,6 @@ export default function HomePage() {
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
@@ -308,7 +310,7 @@ export default function HomePage() {
             }
 
             const gymExists = normalizedGyms.some(
-              (gym) => String(gym.id) === prev
+              (gym) => String(gym.id) === prev,
             );
 
             return gymExists ? prev : BODYWEIGHT_GYM_ID;
@@ -326,7 +328,7 @@ export default function HomePage() {
             {
               cache: "no-store",
               credentials: "include",
-            }
+            },
           );
 
           const logsData = (await logsRes.json().catch(() => null)) as
@@ -378,26 +380,6 @@ export default function HomePage() {
   }, [router]);
 
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (!menuRef.current) {
-        return;
-      }
-
-      if (!menuRef.current.contains(event.target as Node)) {
-        setIsMenuOpen(false);
-      }
-    }
-
-    if (isMenuOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isMenuOpen]);
-
-  useEffect(() => {
     if (!authUser) {
       return;
     }
@@ -409,7 +391,7 @@ export default function HomePage() {
         JSON.stringify({
           duration: selectedDuration,
           gymId: selectedGymId,
-        })
+        }),
       );
     } catch (error) {
       console.error("Kunde inte spara AI-inställningar:", error);
@@ -434,7 +416,7 @@ export default function HomePage() {
       .filter((log) => log.status === "completed")
       .sort(
         (a, b) =>
-          new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()
+          new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime(),
       )[0];
   }, [workoutLogs]);
 
@@ -485,8 +467,7 @@ export default function HomePage() {
         setGoalReview({
           headline: data.headline ?? "Din AI-coach säger",
           nextFocus: data.nextFocus ?? "Fortsätt bygga steg för steg",
-          comment:
-            data.comment ?? "Ingen AI-kommentar kunde visas just nu.",
+          comment: data.comment ?? "Ingen AI-kommentar kunde visas just nu.",
         });
       } catch (error) {
         console.error("Kunde inte hämta AI-coach-kommentar:", error);
@@ -500,7 +481,8 @@ export default function HomePage() {
     void loadGoalReview();
   }, [dashboardAnalysis]);
 
-  const canGenerateAiWorkout = authChecked && !!authUser && !isLoadingGyms;
+  const canGenerateAiWorkout =
+    authChecked && !!authUser && !isLoadingGyms && !isLoadingDashboard;
 
   function handleQuickDurationSelect(duration: number) {
     const nextDuration = clampDuration(duration);
@@ -514,7 +496,6 @@ export default function HomePage() {
     setDurationInput(sanitized);
 
     const parsed = Number(sanitized);
-
     if (Number.isFinite(parsed) && sanitized !== "") {
       setSelectedDuration(clampDuration(parsed));
     }
@@ -524,7 +505,6 @@ export default function HomePage() {
     // Vid blur säkerställer vi ett giltigt värde.
     const parsed = Number(durationInput);
     const nextDuration = clampDuration(parsed);
-
     setSelectedDuration(nextDuration);
     setDurationInput(String(nextDuration));
   }
@@ -572,606 +552,537 @@ export default function HomePage() {
 
   if (!authChecked) {
     return (
-      <main className="min-h-screen bg-[var(--app-page,#f4f7fb)] px-4 py-10">
-        <div className="mx-auto max-w-6xl">
-          <div className="rounded-[32px] border border-white/70 bg-white/85 p-8 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] backdrop-blur">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
+      <main className="min-h-screen bg-slate-50 text-slate-950">
+        <AppTopBar
+          title="Träningsapp"
+          subtitle="Dashboard för snabbstart, översikt och målstyrd träningsanalys."
+        />
+
+        <div className="mx-auto flex min-h-[60vh] w-full max-w-3xl items-center justify-center px-4 py-8 sm:px-6">
+          <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
               Träningsapp
             </p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
               Laddar dashboard...
             </h1>
-            <p className="mt-3 text-base leading-7 text-slate-600">
+            <p className="mt-3 text-sm leading-6 text-slate-600">
               Hämtar användardata, senaste pass och AI-analys.
             </p>
-          </div>
+          </section>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.16),_transparent_28%),linear-gradient(180deg,#f7f9fc_0%,#eef3f9_100%)] px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-6xl">
-        <header className="mb-6 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
-              Träningsapp
-            </p>
-            <p className="mt-2 text-sm text-slate-600">
-              Dashboard för snabbstart, översikt och målstyrd träningsanalys.
-            </p>
-          </div>
+    <main className="min-h-screen bg-slate-50 text-slate-950">
+      <AppTopBar
+        title="Träningsapp"
+        subtitle="Dashboard för snabbstart, översikt och målstyrd träningsanalys."
+        onLogout={handleLogout}
+        isLoggingOut={isLoggingOut}
+      />
 
-          <div className="relative" ref={menuRef}>
-            <button
-              type="button"
-              onClick={() => setIsMenuOpen((prev) => !prev)}
-              className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-sm transition hover:shadow-md"
-              aria-label="Öppna meny"
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 pb-10 sm:px-6">
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+            Välkommen tillbaka
+          </p>
+
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+            Hej {displayName}
+          </h1>
+
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+            Här startar du nästa pass, ser hur väl träningen matchar ditt mål och
+            får tydliga råd om vad du behöver göra för att komma vidare.
+          </p>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            <span
+              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${getAnalysisBadgeClasses(
+                dashboardAnalysis.status,
+              )}`}
             >
-              ☰
-            </button>
+              AI-status: {dashboardAnalysis.statusLabel}
+            </span>
 
-            {isMenuOpen ? (
-              <div className="absolute right-0 top-14 z-20 w-56 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_24px_60px_-36px_rgba(15,23,42,0.4)]">
-                <Link
-                  href="/settings"
-                  onClick={() => setIsMenuOpen(false)}
-                  className="block px-4 py-3 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                >
-                  Inställningar
-                </Link>
-                <Link
-                  href="/gyms"
-                  onClick={() => setIsMenuOpen(false)}
-                  className="block border-t border-slate-100 px-4 py-3 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                >
-                  Hantera gym
-                </Link>
-                <Link
-                  href="/history"
-                  onClick={() => setIsMenuOpen(false)}
-                  className="block border-t border-slate-100 px-4 py-3 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                >
-                  Träningshistorik
-                </Link>
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="block w-full border-t border-slate-100 px-4 py-3 text-left text-sm font-medium text-rose-700 hover:bg-rose-50"
-                >
-                  {isLoggingOut ? "Loggar ut..." : "Logga ut"}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </header>
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+              Mål: {dashboardAnalysis.goalLabel}
+            </span>
 
-        <section className="mb-6 overflow-hidden rounded-[32px] border border-white/70 bg-white/85 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)] backdrop-blur sm:p-8">
-          <div className="grid gap-6 lg:grid-cols-[1.35fr_0.85fr]">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
-                Välkommen tillbaka
-              </p>
-
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
-                Hej {displayName}
-              </h1>
-
-              <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
-                Här startar du nästa pass, ser hur väl träningen matchar ditt mål
-                och får tydliga råd om vad du behöver göra för att komma vidare.
-              </p>
-
-              <div className="mt-6 flex flex-wrap gap-3">
-                <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700">
-                  AI-status: {dashboardAnalysis.statusLabel}
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
-                  Mål: {dashboardAnalysis.goalLabel}
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
-                  Datakälla: {logsSource === "api" ? "Databas" : "Lokal fallback"}
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-[28px] border border-indigo-100 bg-[linear-gradient(180deg,rgba(238,242,255,0.9),rgba(255,255,255,0.95))] p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">
-                AI-överblick
-              </p>
-
-              <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">
-                {dashboardAnalysis.consistencyScore}/100
-              </p>
-
-              <p className="mt-2 text-sm text-slate-600">
-                Samlad målmatchning utifrån frekvens, volym, kontinuitet,
-                progression, återhämtning och övningsbredd.
-              </p>
-
-              <div className="mt-5 h-3 overflow-hidden rounded-full bg-indigo-100">
-                <div
-                  className="h-full rounded-full bg-indigo-600 transition-all"
-                  style={{ width: `${dashboardAnalysis.consistencyScore}%` }}
-                />
-              </div>
-
-              <p className="mt-4 text-sm leading-6 text-slate-700">
-                {dashboardAnalysis.summary}
-              </p>
-            </div>
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+              Datakälla: {logsSource === "api" ? "Databas" : "Lokal fallback"}
+            </span>
           </div>
         </section>
 
-        <section className="grid gap-6 lg:grid-cols-[1fr_1fr]">
-          <div className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
-                  Senaste pass
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-                  Din senaste träningsaktivitet
-                </h2>
-              </div>
-
-              <Link
-                href="/history"
-                className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                Se historik
-              </Link>
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+                AI-överblick
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                {dashboardAnalysis.consistencyScore}/100
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Samlad målmatchning utifrån frekvens, volym, kontinuitet,
+                progression, återhämtning och övningsbredd.
+              </p>
             </div>
 
-            {latestWorkout ? (
-              <div className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
-                <p className="text-sm font-medium text-slate-500">
-                  {formatDateTime(latestWorkout.completedAt)}
-                </p>
-
-                <h3 className="mt-2 text-xl font-semibold text-slate-900">
-                  {latestWorkout.workoutName}
-                </h3>
-
-                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <div className="rounded-2xl bg-white p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      Tid
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                      {formatDurationMinutes(latestWorkout.durationSeconds)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-white p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      Övningar
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                      {latestWorkout.exercises.length}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-white p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      Set
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                      {getTotalSets(latestWorkout)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-white p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      Volym
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                      {Math.round(getTotalVolume(latestWorkout))} kg
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-5 flex flex-wrap gap-3">
-                  <Link
-                    href="/history"
-                    className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800 transition hover:bg-white"
-                  >
-                    Visa detaljer
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={handleGenerateAiWorkout}
-                    className="rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={!canGenerateAiWorkout}
-                  >
-                    Generera nytt AI-pass
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-6 rounded-[28px] border border-dashed border-slate-300 bg-slate-50/70 p-6">
-                <h3 className="text-lg font-semibold text-slate-900">
-                  Ingen träningshistorik ännu
-                </h3>
-                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
-                  När du har genomfört ditt första pass kommer dashboarden att visa
-                  senaste pass, målmatchning och mer träffsäkra råd här.
-                </p>
-              </div>
-            )}
+            <span
+              className={`inline-flex shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${getAnalysisBadgeClasses(
+                dashboardAnalysis.status,
+              )}`}
+            >
+              {dashboardAnalysis.statusLabel}
+            </span>
           </div>
 
-          <div className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
-                  Snabbstart
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-                  Starta dagens pass
-                </h2>
-              </div>
+          <p className="mt-4 text-sm leading-6 text-slate-700">
+            {dashboardAnalysis.summary}
+          </p>
+        </section>
 
-              <Link
-                href="/gyms"
-                className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                Redigera gym
-              </Link>
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+                Senaste pass
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                Din senaste träningsaktivitet
+              </h2>
             </div>
 
-            <div className="mt-6 space-y-5">
-              <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
-                <label className="text-sm font-semibold text-slate-900">
-                  Passlängd
-                </label>
-                <p className="mt-1 text-sm text-slate-500">
-                  Välj mellan {MIN_DURATION} och {MAX_DURATION} minuter.
-                </p>
+            <Link
+              href="/history"
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+            >
+              Se historik
+            </Link>
+          </div>
 
-                <input
-                  inputMode="numeric"
-                  value={durationInput}
-                  onChange={(e) => handleDurationInputChange(e.target.value)}
-                  onBlur={handleDurationInputBlur}
-                  className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
-                  placeholder="Antal minuter"
-                />
+          {latestWorkout ? (
+            <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <p className="text-sm text-slate-500">
+                {formatDateTime(latestWorkout.completedAt)}
+              </p>
 
-                <div className="mt-4 flex flex-wrap gap-3">
-                  {QUICK_DURATION_OPTIONS.map((duration) => {
-                    const isSelected = selectedDuration === duration;
+              <h3 className="mt-2 text-xl font-semibold text-slate-950">
+                {latestWorkout.workoutName}
+              </h3>
 
-                    return (
-                      <button
-                        key={duration}
-                        type="button"
-                        onClick={() => handleQuickDurationSelect(duration)}
-                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
-                          isSelected
-                            ? "border-indigo-600 bg-indigo-600 text-white"
-                            : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
-                        }`}
-                      >
-                        {duration} min
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
-                <label className="text-sm font-semibold text-slate-900">
-                  Valt gym
-                </label>
-                <p className="mt-1 text-sm text-slate-500">
-                  AI-passet anpassas efter vald utrustning.
-                </p>
-
-                {isLoadingGyms ? (
-                  <p className="mt-3 text-sm text-slate-500">Hämtar gym...</p>
-                ) : (
-                  <>
-                    <select
-                      value={selectedGymId}
-                      onChange={(e) => setSelectedGymId(e.target.value)}
-                      className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
-                    >
-                      <option value={BODYWEIGHT_GYM_ID}>
-                        Kroppsvikt / utan gym
-                      </option>
-                      {gyms.map((gym) => (
-                        <option key={String(gym.id)} value={String(gym.id)}>
-                          {gym.name}
-                        </option>
-                      ))}
-                    </select>
-
-                    <p className="mt-3 text-sm text-slate-600">
-                      Vald träningsmiljö:{" "}
-                      <span className="font-semibold text-slate-900">
-                        {selectedGym?.name ?? "Kroppsvikt / utan gym"}
-                      </span>
-                    </p>
-                  </>
-                )}
-
-                {gymError ? (
-                  <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                    {gymError}
+              <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                    Tid
                   </p>
-                ) : null}
+                  <p className="mt-2 text-lg font-semibold text-slate-950">
+                    {formatDurationMinutes(latestWorkout.durationSeconds)}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                    Övningar
+                  </p>
+                  <p className="mt-2 text-lg font-semibold text-slate-950">
+                    {latestWorkout.exercises.length}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                    Set
+                  </p>
+                  <p className="mt-2 text-lg font-semibold text-slate-950">
+                    {getTotalSets(latestWorkout)}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                    Volym
+                  </p>
+                  <p className="mt-2 text-lg font-semibold text-slate-950">
+                    {Math.round(getTotalVolume(latestWorkout))} kg
+                  </p>
+                </div>
               </div>
 
-              {pageError ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {pageError}
-                </div>
-              ) : null}
+              <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                <Link
+                  href="/history"
+                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+                >
+                  Visa detaljer
+                </Link>
 
-              <div className="flex flex-col gap-3 sm:flex-row">
                 <button
                   type="button"
                   onClick={handleGenerateAiWorkout}
                   disabled={!canGenerateAiWorkout}
-                  className="inline-flex flex-1 items-center justify-center rounded-2xl bg-indigo-600 px-5 py-4 text-base font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {canGenerateAiWorkout ? "Generera AI-pass" : "Laddar användardata..."}
+                  Generera nytt AI-pass
                 </button>
-
-                <Link
-                  href="/custom"
-                  className="inline-flex flex-1 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base font-semibold text-slate-900 transition hover:bg-slate-50"
-                >
-                  Eget pass
-                </Link>
               </div>
+            </div>
+          ) : (
+            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5">
+              <h3 className="text-lg font-semibold text-slate-950">
+                Ingen träningshistorik ännu
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                När du har genomfört ditt första pass kommer dashboarden att visa
+                senaste pass, målmatchning och mer träffsäkra råd här.
+              </p>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+                Snabbstart
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                Starta dagens pass
+              </h2>
+            </div>
+
+            <Link
+              href="/gyms"
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+            >
+              Redigera gym
+            </Link>
+          </div>
+
+          <div className="mt-6 grid gap-5">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <label
+                htmlFor="duration"
+                className="text-sm font-semibold text-slate-900"
+              >
+                Passlängd
+              </label>
+
+              <p className="mt-1 text-sm text-slate-600">
+                Välj mellan {MIN_DURATION} och {MAX_DURATION} minuter.
+              </p>
+
+              <input
+                id="duration"
+                inputMode="numeric"
+                value={durationInput}
+                onChange={(e) => handleDurationInputChange(e.target.value)}
+                onBlur={handleDurationInputBlur}
+                className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                placeholder="Antal minuter"
+              />
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {QUICK_DURATION_OPTIONS.map((duration) => {
+                  const isSelected = selectedDuration === duration;
+
+                  return (
+                    <button
+                      key={duration}
+                      type="button"
+                      onClick={() => handleQuickDurationSelect(duration)}
+                      className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                        isSelected
+                          ? "border-indigo-600 bg-indigo-600 text-white"
+                          : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                      }`}
+                    >
+                      {duration} min
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <label
+                htmlFor="gym"
+                className="text-sm font-semibold text-slate-900"
+              >
+                Valt gym
+              </label>
+
+              <p className="mt-1 text-sm text-slate-600">
+                AI-passet anpassas efter vald utrustning.
+              </p>
+
+              {isLoadingGyms ? (
+                <p className="mt-3 text-sm text-slate-500">Hämtar gym...</p>
+              ) : (
+                <>
+                  <select
+                    id="gym"
+                    value={selectedGymId}
+                    onChange={(e) => setSelectedGymId(e.target.value)}
+                    className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                  >
+                    <option value={BODYWEIGHT_GYM_ID}>
+                      Kroppsvikt / utan gym
+                    </option>
+
+                    {gyms.map((gym) => (
+                      <option key={String(gym.id)} value={String(gym.id)}>
+                        {gym.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <p className="mt-3 text-sm text-slate-600">
+                    Vald träningsmiljö:{" "}
+                    <span className="font-medium text-slate-900">
+                      {selectedGym?.name ?? "Kroppsvikt / utan gym"}
+                    </span>
+                  </p>
+                </>
+              )}
+
+              {gymError ? (
+                <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {gymError}
+                </p>
+              ) : null}
+            </div>
+
+            {pageError ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {pageError}
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={handleGenerateAiWorkout}
+                disabled={!canGenerateAiWorkout}
+                className="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-5 py-4 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {canGenerateAiWorkout
+                  ? "Generera AI-pass"
+                  : "Laddar användardata..."}
+              </button>
+
+              <Link
+                href="/workout/custom"
+                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+              >
+                Eget pass
+              </Link>
             </div>
           </div>
         </section>
 
-        <section className="mt-6 grid gap-6 lg:grid-cols-[1fr_1fr]">
-          <div className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
-                  AI-analys
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-                  Matchar träningen ditt mål?
-                </h2>
-              </div>
-
-              <div
-                className={`rounded-2xl border px-4 py-2 text-sm font-semibold ${getAnalysisBadgeClasses(
-                  dashboardAnalysis.status
-                )}`}
-              >
-                {dashboardAnalysis.statusLabel}
-              </div>
-            </div>
-
-            <h3 className="mt-6 text-xl font-semibold text-slate-900">
-              {dashboardAnalysis.title}
-            </h3>
-
-            <p className="mt-3 text-sm leading-7 text-slate-600">
-              {dashboardAnalysis.summary}
-            </p>
-
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              {dashboardAnalysis.metrics.map((metric) => (
-                <div
-                  key={metric.label}
-                  className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4"
-                >
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                    {metric.label}
-                  </p>
-                  <p className="mt-2 text-xl font-semibold text-slate-900">
-                    {metric.value}
-                  </p>
-                  <p className="mt-2 text-sm leading-6 text-slate-500">
-                    {metric.hint}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Vad målet brukar kräva
-              </p>
-
-              <div className="mt-4 space-y-3">
-                {dashboardAnalysis.requirementItems.map((item) => (
-                  <div
-                    key={item.label}
-                    className={`rounded-[24px] border p-4 ${getRequirementClasses(
-                      item.status
-                    )}`}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <h3 className="text-base font-semibold text-slate-900">
-                          {item.label}
-                        </h3>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          Målbild: {item.target}
-                        </p>
-                      </div>
-
-                      <div className="text-right">
-                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                          Din nivå
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900">
-                          {item.actual}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {goalReview ? (
-              <div className="mt-6 rounded-[28px] border border-indigo-100 bg-indigo-50/70 p-5">
-                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">
-                  AI-coach
-                </p>
-                <h3 className="mt-3 text-lg font-semibold text-slate-900">
-                  {goalReview.headline}
-                </h3>
-                <p className="mt-3 text-sm font-medium text-indigo-700">
-                  Fokus nu: {goalReview.nextFocus}
-                </p>
-                <p className="mt-3 text-sm leading-7 text-slate-700">
-                  {goalReview.comment}
-                </p>
-              </div>
-            ) : null}
-
-            {isLoadingGoalReview ? (
-              <p className="mt-4 text-sm text-slate-500">
-                Hämtar AI-coachens kommentar...
-              </p>
-            ) : null}
-
-            {goalReviewError ? (
-              <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                {goalReviewError}
-              </p>
-            ) : null}
-          </div>
-
-          <div className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.4)]">
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-accent-strong,#4338ca)]">
-                Rekommendationer framåt
+              <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+                AI-analys
               </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-                Vad du bör fokusera på nu
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                Matchar träningen ditt mål?
               </h2>
             </div>
 
-            <div className="mt-6 rounded-[28px] border border-indigo-100 bg-indigo-50/70 p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">
-                För att nå målet nu
-              </p>
+            <span
+              className={`inline-flex shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${getAnalysisBadgeClasses(
+                dashboardAnalysis.status,
+              )}`}
+            >
+              {dashboardAnalysis.statusLabel}
+            </span>
+          </div>
 
-              <div className="mt-4 space-y-3">
-                {dashboardAnalysis.actionPlan.map((step) => (
-                  <div
-                    key={step.title}
-                    className="rounded-2xl border border-indigo-100 bg-white px-4 py-4 text-sm leading-6 text-slate-700"
-                  >
-                    <h3 className="text-base font-semibold text-slate-900">
-                      {step.title}
-                    </h3>
-                    <p className="mt-2">{step.detail}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <h3 className="mt-5 text-xl font-semibold text-slate-950">
+            {dashboardAnalysis.title}
+          </h3>
 
-            <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Fokusområden
-              </p>
+          <p className="mt-3 text-sm leading-6 text-slate-700">
+            {dashboardAnalysis.summary}
+          </p>
 
-              <div className="mt-4 space-y-3">
-                {dashboardAnalysis.focusAreas.map((focusArea) => (
-                  <div
-                    key={focusArea}
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-700"
-                  >
-                    {focusArea}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-5 sm:grid-cols-2">
-              <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
-                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  Det som ser bra ut
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {dashboardAnalysis.metrics.map((metric) => (
+              <div
+                key={metric.label}
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+              >
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                  {metric.label}
                 </p>
-
-                <div className="mt-4 space-y-3">
-                  {dashboardAnalysis.strengths.length > 0 ? (
-                    dashboardAnalysis.strengths.map((strength) => (
-                      <div
-                        key={strength}
-                        className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm leading-6 text-slate-700"
-                      >
-                        {strength}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-500">
-                      Fler styrkor blir tydliga när du samlat mer träningsdata.
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
-                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  Det som bromsar målet
+                <p className="mt-2 text-lg font-semibold text-slate-950">
+                  {metric.value}
                 </p>
-
-                <div className="mt-4 space-y-3">
-                  {dashboardAnalysis.gaps.length > 0 ? (
-                    dashboardAnalysis.gaps.map((gap) => (
-                      <div
-                        key={gap}
-                        className="rounded-2xl border border-rose-200 bg-white px-4 py-3 text-sm leading-6 text-slate-700"
-                      >
-                        {gap}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-500">
-                      Inga tydliga bromsklossar identifierade just nu.
-                    </div>
-                  )}
-                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  {metric.hint}
+                </p>
               </div>
-            </div>
+            ))}
+          </div>
 
-            <div className="mt-5 space-y-3">
-              {dashboardAnalysis.recommendations.map((recommendation) => (
+          <div className="mt-6">
+            <h3 className="text-lg font-semibold text-slate-950">
+              Vad målet brukar kräva
+            </h3>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {dashboardAnalysis.requirementItems.map((item) => (
                 <div
-                  key={`${recommendation.title}-${recommendation.timeframe ?? "none"}`}
-                  className="rounded-[24px] border border-slate-200 bg-white p-4"
+                  key={item.label}
+                  className={`rounded-2xl border p-4 ${getRequirementClasses(
+                    item.status,
+                  )}`}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <h3 className="text-base font-semibold text-slate-900">
-                      {recommendation.title}
-                    </h3>
-
-                    {recommendation.timeframe ? (
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-                        {recommendation.timeframe}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    {recommendation.detail}
+                  <h4 className="text-base font-semibold text-slate-950">
+                    {item.label}
+                  </h4>
+                  <p className="mt-2 text-sm text-slate-700">
+                    <span className="font-medium">Målbild:</span> {item.target}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-700">
+                    <span className="font-medium">Din nivå:</span> {item.actual}
                   </p>
                 </div>
               ))}
             </div>
+          </div>
 
-            {isLoadingDashboard ? (
-              <p className="mt-5 text-sm text-slate-500">
-                Uppdaterar analysen...
+          {goalReview ? (
+            <div className="mt-6 rounded-3xl border border-violet-200 bg-violet-50 p-5">
+              <p className="text-sm font-medium uppercase tracking-[0.16em] text-violet-500">
+                AI-coach
               </p>
-            ) : null}
+              <h3 className="mt-2 text-xl font-semibold text-slate-950">
+                {goalReview.headline}
+              </h3>
+              <p className="mt-3 text-sm text-slate-700">
+                <span className="font-medium">Fokus nu:</span>{" "}
+                {goalReview.nextFocus}
+              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {goalReview.comment}
+              </p>
+            </div>
+          ) : null}
+
+          {isLoadingGoalReview ? (
+            <p className="mt-4 text-sm text-slate-500">
+              Hämtar AI-coachens kommentar...
+            </p>
+          ) : null}
+
+          {goalReviewError ? (
+            <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {goalReviewError}
+            </p>
+          ) : null}
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
+            Rekommendationer framåt
+          </p>
+
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+            Vad du bör fokusera på nu
+          </h2>
+
+          <p className="mt-3 text-sm font-medium text-slate-700">
+            För att nå målet nu
+          </p>
+
+          <div className="mt-4 grid gap-3">
+            {dashboardAnalysis.actionPlan.map((step) => (
+              <div
+                key={step.title}
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+              >
+                <h3 className="text-base font-semibold text-slate-950">
+                  {step.title}
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-slate-700">
+                  {step.detail}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-950">
+                Fokusområden
+              </h3>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {dashboardAnalysis.focusAreas.map((focusArea) => (
+                  <span
+                    key={focusArea}
+                    className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700"
+                  >
+                    {focusArea}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold text-slate-950">
+                Det som ser bra ut
+              </h3>
+
+              <div className="mt-3 grid gap-2">
+                {dashboardAnalysis.strengths.length > 0 ? (
+                  dashboardAnalysis.strengths.map((strength) => (
+                    <div
+                      key={strength}
+                      className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
+                    >
+                      {strength}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    Fler styrkor blir tydliga när du samlat mer träningsdata.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <h3 className="text-lg font-semibold text-slate-950">
+              Det som bromsar målet
+            </h3>
+
+            <div className="mt-3 grid gap-2">
+              {dashboardAnalysis.gaps.length > 0 ? (
+                dashboardAnalysis.gaps.map((gap) => (
+                  <div
+                    key={gap}
+                    className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"
+                  >
+                    {gap}
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  Inga tydliga bromsklossar identifierade just nu.
+                </div>
+              )}
+            </div>
           </div>
         </section>
       </div>
