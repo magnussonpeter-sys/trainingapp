@@ -8,18 +8,20 @@ import LastWorkoutCard from "@/components/home/last-workout-card";
 import StatusSummaryCard from "@/components/home/status-summary-card";
 import AppLayout from "@/components/layout/AppLayout";
 import { useHomePreferences } from "@/hooks/use-home-preferences";
+import {
+  buildWorkoutRequest,
+  type WorkoutGoal,
+  type WorkoutFlowGym,
+} from "@/lib/workout-flow/build-workout-request";
+import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
+import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
 import { generateWorkout } from "@/lib/workout-generator";
 import {
   getWorkoutLogs,
   type WorkoutLog,
 } from "@/lib/workout-log-storage";
-import {
-  saveActiveWorkout,
-  saveGeneratedWorkout,
-} from "@/lib/workout-storage";
-import type { Exercise, Workout } from "@/types/workout";
 
-type Goal = "strength" | "hypertrophy" | "health" | "body_composition";
+type Goal = WorkoutGoal;
 
 type AuthUser = {
   id: number | string;
@@ -48,11 +50,7 @@ type GymEquipmentItem = {
   type?: string | null;
 };
 
-type GymDetail = {
-  id: string | number;
-  name: string;
-  equipment: string[];
-};
+type GymDetail = WorkoutFlowGym;
 
 type HomeStatus = {
   title: string;
@@ -93,39 +91,6 @@ function normalizeGyms(data: unknown): Gym[] {
   }
 
   return [];
-}
-
-// Normaliserar ett enskilt gym med utrustning.
-function normalizeGymDetail(data: unknown): GymDetail | null {
-  if (!data || typeof data !== "object") {
-    return null;
-  }
-
-  if (
-    "id" in data &&
-    "name" in data &&
-    (typeof (data as { id: unknown }).id === "string" ||
-      typeof (data as { id: unknown }).id === "number") &&
-    typeof (data as { name: unknown }).name === "string"
-  ) {
-    const gym = data as {
-      id: string | number;
-      name: string;
-      equipment?: unknown;
-    };
-
-    return {
-      id: gym.id,
-      name: gym.name,
-      equipment: extractEquipmentStrings(gym.equipment),
-    };
-  }
-
-  if ("gym" in data) {
-    return normalizeGymDetail((data as { gym?: unknown }).gym);
-  }
-
-  return null;
 }
 
 // Plockar ut användbara utrustningssträngar från olika API-format.
@@ -170,6 +135,39 @@ function extractEquipmentStrings(input: unknown): string[] {
   }
 
   return Array.from(values);
+}
+
+// Normaliserar ett enskilt gym med utrustning.
+function normalizeGymDetail(data: unknown): GymDetail | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  if (
+    "id" in data &&
+    "name" in data &&
+    (typeof (data as { id: unknown }).id === "string" ||
+      typeof (data as { id: unknown }).id === "number") &&
+    typeof (data as { name: unknown }).name === "string"
+  ) {
+    const gym = data as {
+      id: string | number;
+      name: string;
+      equipment?: unknown;
+    };
+
+    return {
+      id: gym.id,
+      name: gym.name,
+      equipment: extractEquipmentStrings(gym.equipment),
+    };
+  }
+
+  if ("gym" in data) {
+    return normalizeGymDetail((data as { gym?: unknown }).gym);
+  }
+
+  return null;
 }
 
 // Fallback för namn i hälsningen.
@@ -228,71 +226,6 @@ function getGoalLabel(goal: Goal | null | undefined) {
     default:
       return "Ej valt";
   }
-}
-
-// Skapar id för nytt pass och egna övningsrader.
-function createId() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  return Math.random().toString(36).slice(2);
-}
-
-// Ser till att passet alltid får ett format som run-sidan klarar.
-function normalizeWorkout(params: {
-  workout: Workout;
-  duration: number;
-  gymLabel: string;
-}): Workout {
-  const { workout, duration, gymLabel } = params;
-
-  return {
-    id: workout.id ?? createId(),
-    name: workout.name?.trim() || "AI-genererat pass",
-    duration,
-    goal: workout.goal,
-    gym: gymLabel,
-    aiComment:
-      typeof workout.aiComment === "string" && workout.aiComment.trim()
-        ? workout.aiComment.trim()
-        : undefined,
-    createdAt: workout.createdAt ?? new Date().toISOString(),
-    exercises: Array.isArray(workout.exercises)
-      ? workout.exercises.map((exercise, index) => {
-          const hasDuration =
-            typeof exercise.duration === "number" && exercise.duration > 0;
-          const hasReps =
-            typeof exercise.reps === "number" && exercise.reps > 0;
-
-          return {
-            id:
-              typeof exercise.id === "string" && exercise.id.trim()
-                ? exercise.id
-                : `exercise-${index + 1}-${createId()}`,
-            name:
-              typeof exercise.name === "string" && exercise.name.trim()
-                ? exercise.name.trim()
-                : `Övning ${index + 1}`,
-            sets:
-              typeof exercise.sets === "number" && exercise.sets > 0
-                ? exercise.sets
-                : 3,
-            reps: hasDuration ? undefined : hasReps ? exercise.reps : 10,
-            duration: hasDuration ? exercise.duration : undefined,
-            rest:
-              typeof exercise.rest === "number" && exercise.rest >= 0
-                ? exercise.rest
-                : 60,
-            description:
-              typeof exercise.description === "string" &&
-              exercise.description.trim()
-                ? exercise.description.trim()
-                : undefined,
-          } satisfies Exercise;
-        })
-      : [],
-  };
 }
 
 // Enkel statusrad på home i stället för tung dashboard.
@@ -357,27 +290,19 @@ export default function HomePage() {
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
 
-const {
-  selectedDuration,
-  durationInput,
-  selectedGymId,
-  hasLoadedPreferences,
-  setSelectedGymId,
-  updateDuration,
-  updateDurationInput,
-  commitDurationInput,
-} = useHomePreferences({
-  userId: authUser?.id ? String(authUser.id) : null,
-  defaultGymId: BODYWEIGHT_GYM_ID,
-});
-
-const canUseStartActions =
-  authChecked &&
-  !!authUser &&
-  hasLoadedPreferences &&
-  !isLoadingGyms &&
-  !isStartingWorkout &&
-  !isOpeningPreview;
+  const {
+    selectedDuration,
+    durationInput,
+    selectedGymId,
+    hasLoadedPreferences,
+    setSelectedGymId,
+    updateDuration,
+    updateDurationInput,
+    commitDurationInput,
+  } = useHomePreferences({
+    userId: authUser?.id ? String(authUser.id) : null,
+    defaultGymId: BODYWEIGHT_GYM_ID,
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -565,6 +490,14 @@ const canUseStartActions =
     ).length;
   }, [workoutLogs]);
 
+  const canUseStartActions =
+    authChecked &&
+    !!authUser &&
+    hasLoadedPreferences &&
+    !isLoadingGyms &&
+    !isStartingWorkout &&
+    !isOpeningPreview;
+
   async function loadSelectedGymDetail(params: {
     userId: string;
     gymId: string;
@@ -588,37 +521,31 @@ const canUseStartActions =
     return normalizeGymDetail(data);
   }
 
-  async function buildWorkoutInput() {
+  async function buildSelectedWorkoutRequest() {
     if (!authUser?.id) {
       throw new Error("Användaren är inte färdigladdad ännu.");
     }
 
     const userId = String(authUser.id);
-    const goal = settings?.training_goal ?? "strength";
 
-    if (selectedGymId === BODYWEIGHT_GYM_ID) {
-      return {
-        userId,
-        goal,
-        equipment: ["bodyweight"],
-        gymLabel: BODYWEIGHT_LABEL,
-      };
-    }
+    const gymDetail =
+      selectedGymId === BODYWEIGHT_GYM_ID
+        ? null
+        : await loadSelectedGymDetail({
+            userId,
+            gymId: selectedGymId,
+          });
 
-    const gymDetail = await loadSelectedGymDetail({
+    return buildWorkoutRequest({
       userId,
-      gymId: selectedGymId,
+      goal: settings?.training_goal,
+      durationMinutes: selectedDuration,
+      selectedGymId,
+      selectedGymName: selectedGym?.name,
+      bodyweightGymId: BODYWEIGHT_GYM_ID,
+      bodyweightLabel: BODYWEIGHT_LABEL,
+      gymDetail,
     });
-
-    return {
-      userId,
-      goal,
-      equipment:
-        gymDetail && gymDetail.equipment.length > 0
-          ? gymDetail.equipment
-          : ["bodyweight"],
-      gymLabel: gymDetail?.name?.trim() || selectedGym?.name || BODYWEIGHT_LABEL,
-    };
   }
 
   async function handleStartWorkout() {
@@ -626,25 +553,27 @@ const canUseStartActions =
       setIsStartingWorkout(true);
       setPageError(null);
 
-      // Bygg underlaget direkt från användare, mål, tid och gym.
-      const input = await buildWorkoutInput();
+      // Bygg request enligt nya workout-flow-lagret.
+      const request = await buildSelectedWorkoutRequest();
 
       const result = await generateWorkout({
-        userId: input.userId,
-        goal: input.goal,
-        durationMinutes: selectedDuration,
-        equipment: input.equipment,
+        userId: request.userId,
+        goal: request.goal,
+        durationMinutes: request.durationMinutes,
+        equipment: request.equipment,
       });
 
-      const normalizedWorkout = normalizeWorkout({
+      const normalizedWorkout = normalizePreviewWorkout({
         workout: result.workout,
-        duration: selectedDuration,
-        gymLabel: input.gymLabel,
+        duration: request.durationMinutes,
+        gymLabel: request.gymLabel,
       });
 
-      // Spara både preview- och active-version så resten av flödet fungerar.
-      saveGeneratedWorkout(input.userId, normalizedWorkout);
-      saveActiveWorkout(input.userId, normalizedWorkout);
+      // Spara draft/active på ett ställe.
+      saveWorkoutDraft({
+        userId: request.userId,
+        workout: normalizedWorkout,
+      });
 
       router.push("/workout/run");
     } catch (error) {
@@ -683,7 +612,7 @@ const canUseStartActions =
 
       router.push(`/workout/preview?${params.toString()}`);
     } finally {
-      // Vi återställer snabbt eftersom navigation sker direkt.
+      // Navigation sker direkt, så state kan återställas direkt.
       setIsOpeningPreview(false);
     }
   }
