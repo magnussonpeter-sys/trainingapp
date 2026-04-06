@@ -4,14 +4,14 @@ type RunHeaderProps = {
   workoutName: string;
   displayName: string;
   onAbort: () => void;
-  children?: React.ReactNode;
+  onOpenOptions: () => void;
 };
 
 export default function RunHeader({
   workoutName,
   displayName,
   onAbort,
-  children,
+  onOpenOptions,
 }: RunHeaderProps) {
   return (
     <div className="bg-slate-900 px-5 pb-6 pt-5 text-white">
@@ -30,16 +30,24 @@ export default function RunHeader({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onAbort}
-          className="min-h-11 shrink-0 rounded-2xl border border-white/30 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-100 active:scale-[0.99]"
-        >
-          Avbryt
-        </button>
-      </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenOptions}
+            className="min-h-11 rounded-2xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 active:scale-[0.99]"
+          >
+            Meny
+          </button>
 
-      {children}
+          <button
+            type="button"
+            onClick={onAbort}
+            className="min-h-11 rounded-2xl border border-white/30 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-100 active:scale-[0.99]"
+          >
+            Avbryt
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

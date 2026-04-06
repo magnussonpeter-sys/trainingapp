@@ -6,6 +6,7 @@ import CurrentExerciseCard from "@/components/run/current-exercise-card";
 import EffortFeedbackRow from "@/components/run/effort-feedback-row";
 import NextExerciseHint from "@/components/run/next-exercise-hint";
 import RunHeader from "@/components/run/run-header";
+import RunOptionsSheet from "@/components/run/run-options-sheet";
 import SetProgress from "@/components/run/set-progress";
 import { clearActiveWorkoutSessionDraft } from "@/lib/active-workout-session-storage";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
@@ -72,6 +73,7 @@ export default function RunPage() {
   const [workout, setWorkout] = useState<Workout | null>(null);
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -126,7 +128,9 @@ export default function RunPage() {
 
     try {
       const storedWorkout = getWorkoutDraft(resolvedUserId) as Workout | null;
-      const normalizedWorkout = normalizePreviewWorkout(storedWorkout) as Workout | null;
+      const normalizedWorkout = normalizePreviewWorkout(
+        storedWorkout,
+      ) as Workout | null;
 
       setWorkout(normalizedWorkout);
       setLoading(false);
@@ -232,6 +236,21 @@ export default function RunPage() {
     router.push("/home");
   }
 
+  function handleSkipExerciseFromSheet() {
+    setOptionsOpen(false);
+    skipExercise();
+  }
+
+  function handleAbortFromSheet() {
+    setOptionsOpen(false);
+    handleGoHome();
+  }
+
+  function handleResetTimedSetFromSheet() {
+    setOptionsOpen(false);
+    resetTimer();
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-50 px-4 py-6">
@@ -250,7 +269,8 @@ export default function RunPage() {
         <div className="mx-auto max-w-3xl space-y-4">
           <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
             <p className="text-sm leading-6 text-slate-600">
-              Inget aktivt pass hittades. Gå tillbaka till home och starta ett nytt pass.
+              Inget aktivt pass hittades. Gå tillbaka till home och starta ett
+              nytt pass.
             </p>
 
             <button
@@ -330,6 +350,7 @@ export default function RunPage() {
             workoutName={workout.name}
             displayName={getDisplayName(authUser)}
             onAbort={() => router.push("/home")}
+            onOpenOptions={() => setOptionsOpen(true)}
           />
 
           <div className="space-y-4 px-5 py-5">
@@ -466,6 +487,20 @@ export default function RunPage() {
           </div>
         </div>
       ) : null}
+
+      <RunOptionsSheet
+        open={optionsOpen}
+        currentExerciseName={currentExercise?.name}
+        plannedReps={currentExercise?.reps}
+        plannedDuration={currentExercise?.duration}
+        plannedRest={currentExercise?.rest}
+        timedExercise={timedExercise}
+        timerState={timerState}
+        onClose={() => setOptionsOpen(false)}
+        onSkipExercise={handleSkipExerciseFromSheet}
+        onAbortWorkout={handleAbortFromSheet}
+        onResetTimedSet={handleResetTimedSetFromSheet}
+      />
     </main>
   );
 }
