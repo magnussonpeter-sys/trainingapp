@@ -1,5 +1,12 @@
 "use client";
 
+// Tunnare sida för /run.
+// Fokus här:
+// - ladda användare + workout draft
+// - rendera run-komponenter
+// - skriva tillbaka ändringar i workout till draft-lagret
+// - rensa lokal run-state på ett konsekvent sätt
+
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import CurrentExerciseCard from "@/components/run/current-exercise-card";
@@ -7,11 +14,16 @@ import EffortFeedbackRow from "@/components/run/effort-feedback-row";
 import NextExerciseHint from "@/components/run/next-exercise-hint";
 import RunHeader from "@/components/run/run-header";
 import RunOptionsSheet from "@/components/run/run-options-sheet";
+import RunSaveStatus from "@/components/run/run-save-status";
 import SetProgress from "@/components/run/set-progress";
 import { clearActiveWorkoutSessionDraft } from "@/lib/active-workout-session-storage";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
-import { getWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
+import {
+  clearWorkoutDraft,
+  getWorkoutDraft,
+  saveWorkoutDraft,
+} from "@/lib/workout-flow/workout-draft-store";
 import { useActiveWorkout } from "@/hooks/use-active-workout";
 import type { Workout } from "@/types/workout";
 
@@ -41,6 +53,8 @@ function getDisplayName(user: AuthUser | null) {
   );
 }
 
+// Fallback om auth-svaret inte finns men lokalt draft redan finns.
+// Viktigt för offline/resume.
 function resolveLocalFallbackUserId() {
   if (typeof window === "undefined") {
     return "";
@@ -146,6 +160,7 @@ export default function RunPage() {
 
       setWorkout(normalizedWorkout);
       setLoading(false);
+      setPageError(null);
     } catch {
       setWorkout(null);
       setLoading(false);
@@ -185,6 +200,8 @@ export default function RunPage() {
     setRestTimerRunning,
     restRemainingSeconds,
     isWorkoutComplete,
+    saveStatus,
+    restoreNotice,
   } = useActiveWorkout({
     userId: resolvedUserId,
     workout,
@@ -198,6 +215,7 @@ export default function RunPage() {
     const currentIndex = workout.exercises.findIndex(
       (item) => item.id === currentExercise.id,
     );
+
     if (currentIndex === -1) {
       return "";
     }
@@ -221,6 +239,30 @@ export default function RunPage() {
     return "Spara set";
   }, [timedExercise, timerState]);
 
+  // Skriv tillbaka workout-ändringar direkt till draft-lagret.
+  // Det gör att användaren inte tappar set/reps/rest-ändringar från options sheet.
+  function persistWorkoutDraft(nextWorkout: Workout | null) {
+    if (!resolvedUserId || !nextWorkout) {
+      return;
+    }
+
+    try {
+      saveWorkoutDraft(resolvedUserId, nextWorkout);
+    } catch {
+      setPageError("Kunde inte spara ändring i passupplägget lokalt.");
+    }
+  }
+
+  // Rensa båda lokala lagren när användaren lämnar run-flödet helt.
+  function clearLocalRunState() {
+    if (!resolvedUserId) {
+      return;
+    }
+
+    clearActiveWorkoutSessionDraft(resolvedUserId);
+    clearWorkoutDraft(resolvedUserId);
+  }
+
   function updateCurrentExerciseField(field: string, value: number) {
     setWorkout((previous) => {
       if (!previous || !currentExercise) {
@@ -238,10 +280,15 @@ export default function RunPage() {
         };
       });
 
-      return {
+      const nextWorkout = {
         ...previous,
         exercises: nextExercises,
       };
+
+      // Viktigt för offline-first.
+      persistWorkoutDraft(nextWorkout);
+
+      return nextWorkout;
     });
   }
 
@@ -321,10 +368,7 @@ export default function RunPage() {
   }
 
   function handleGoHome() {
-    if (resolvedUserId) {
-      clearActiveWorkoutSessionDraft(resolvedUserId);
-    }
-
+    clearLocalRunState();
     router.push("/home");
   }
 
@@ -401,23 +445,30 @@ export default function RunPage() {
               </p>
             </div>
 
-            <div className="grid gap-3 px-6 py-5 sm:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                  Genomförda set
-                </p>
-                <p className="mt-2 text-2xl font-semibold text-slate-900">
-                  {totalCompletedSets}
-                </p>
-              </div>
+            <div className="space-y-4 px-6 py-5">
+              <RunSaveStatus
+                status={saveStatus}
+                restoreNotice={restoreNotice}
+              />
 
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                  Total volym
-                </p>
-                <p className="mt-2 text-2xl font-semibold text-slate-900">
-                  {Math.round(totalVolume)}
-                </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+                    Genomförda set
+                  </p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-900">
+                    {totalCompletedSets}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+                    Total volym
+                  </p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-900">
+                    {Math.round(totalVolume)}
+                  </p>
+                </div>
               </div>
             </div>
           </section>
@@ -441,7 +492,7 @@ export default function RunPage() {
           <RunHeader
             workoutName={workout.name}
             displayName={getDisplayName(authUser)}
-            onAbort={() => router.push("/home")}
+            onAbort={handleGoHome}
             onOpenOptions={() => setOptionsOpen(true)}
           />
 
@@ -451,6 +502,8 @@ export default function RunPage() {
                 {pageError}
               </div>
             ) : null}
+
+            <RunSaveStatus status={saveStatus} restoreNotice={restoreNotice} />
 
             {currentExercise ? (
               <>

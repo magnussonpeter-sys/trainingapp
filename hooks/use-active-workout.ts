@@ -1,18 +1,12 @@
-"use client";
-
-// Central state-motor för /run.
+"use client"; // Central state-motor för /run.
 // Fokus:
-// - en tydlig huvudhandling
-// - offline-first lagring
-// - förvald vikt från AI/historik
-// - enkel timerlogik
-// - återställning om sidan laddas om
+// - lokal lagring först
+// - robust resume / finish / abort
+// - pending sync för färdiga pass
+// - tunnare page.tsx
+// - små steg så att resten av UI:t kan leva vidare
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  getActiveWorkoutSessionDraft,
-  saveActiveWorkoutSessionDraft,
-} from "@/lib/active-workout-session-storage";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CompletedExercise,
   CompletedSet,
@@ -20,10 +14,30 @@ import type {
 } from "@/lib/workout-log-storage";
 import type { TimedEffortOption } from "@/types/exercise-feedback";
 import type { Workout } from "@/types/workout";
+import {
+  clearActiveWorkoutSessionDraft,
+  getActiveWorkoutSessionDraft,
+  saveActiveWorkoutSessionDraft,
+} from "@/lib/active-workout-session-storage";
+import {
+  clearActiveWorkoutSnapshot,
+  getActiveWorkoutSnapshot,
+  saveActiveWorkoutSnapshot,
+} from "@/lib/workout-flow/active-workout-store";
+import {
+  clearSessionDraft,
+  getSessionDraft,
+  saveSessionDraft,
+} from "@/lib/workout-flow/session-draft-store";
+import {
+  enqueuePendingSyncItem,
+  getPendingSyncCount,
+} from "@/lib/workout-flow/pending-sync-store";
 
 type WorkoutExercise = Workout["exercises"][number];
 type TimerState = "idle" | "running" | "ready_to_save";
 type SaveStatus = "idle" | "saving" | "saved_local" | "error_local";
+type SyncStatus = "idle" | "pending" | "syncing" | "synced" | "error";
 
 type UseActiveWorkoutProps = {
   userId: string;
@@ -106,11 +120,13 @@ function buildWeightChipOptions(params: {
 
   const addValue = (value: string) => {
     const normalized = normalizeWeightString(value);
+
     if (!normalized) {
       return;
     }
 
     const numericValue = Number(normalized);
+
     if (!Number.isFinite(numericValue)) {
       values.add(value.trim());
       return;
@@ -130,8 +146,10 @@ function buildWeightChipOptions(params: {
   if (Number.isFinite(baseValue) && baseValue > 0) {
     // Några logiska närliggande steg.
     const offsets = [-4, -2, -1, 1, 2, 4];
+
     for (const offset of offsets) {
       const next = baseValue + offset;
+
       if (next > 0) {
         addValue(String(next));
       }
@@ -168,9 +186,11 @@ function playBeep(params: {
 
   const AudioContextClass =
     window.AudioContext ||
-    (window as typeof window & {
-      webkitAudioContext?: typeof AudioContext;
-    }).webkitAudioContext;
+    (
+      window as typeof window & {
+        webkitAudioContext?: typeof AudioContext;
+      }
+    ).webkitAudioContext;
 
   if (!AudioContextClass) {
     return;
@@ -187,7 +207,6 @@ function playBeep(params: {
 
     oscillator.connect(gainNode);
     gainNode.connect(context.destination);
-
     oscillator.start();
 
     const durationSeconds = (params.durationMs ?? 120) / 1000;
@@ -201,47 +220,35 @@ function playBeep(params: {
   }
 }
 
-export function useActiveWorkout({
-  userId,
-  workout,
-}: UseActiveWorkoutProps) {
+export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [currentSet, setCurrentSet] = useState(1);
-
   const [reps, setReps] = useState("");
   const [weight, setWeight] = useState("");
-
-  const [completedExercises, setCompletedExercises] = useState<
-    CompletedExercise[]
-  >([]);
-
+  const [completedExercises, setCompletedExercises] = useState<CompletedExercise[]>([]);
   const [showExerciseFeedback, setShowExerciseFeedback] = useState(false);
-  const [selectedExtraReps, setSelectedExtraReps] =
-    useState<ExtraRepsOption | null>(null);
+  const [selectedExtraReps, setSelectedExtraReps] = useState<ExtraRepsOption | null>(null);
   const [selectedTimedEffort, setSelectedTimedEffort] =
     useState<TimedEffortOption | null>(null);
-  const [selectedRating, setSelectedRating] = useState<1 | 2 | 3 | 4 | 5 | null>(
-    null,
-  );
-
+  const [selectedRating, setSelectedRating] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
   const [timerState, setTimerState] = useState<TimerState>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-
   const [showRestTimer, setShowRestTimer] = useState(false);
   const [restTimerRunning, setRestTimerRunning] = useState(false);
   const [restDurationSeconds, setRestDurationSeconds] = useState(0);
   const [restRemainingSeconds, setRestRemainingSeconds] = useState(0);
-
-  const [lastWeightByExercise, setLastWeightByExercise] = useState<
-    Record<string, string>
-  >({});
-
+  const [lastWeightByExercise, setLastWeightByExercise] = useState<Record<string, string>>(
+    {},
+  );
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
+  const [finishSummaryVisible, setFinishSummaryVisible] = useState(false);
 
-  const sessionStartedAtRef = useRef<string>(new Date().toISOString());
+  const sessionStartedAtRef = useRef(new Date().toISOString());
   const countdownSignalRef = useRef<number | null>(null);
   const targetReachedSignalRef = useRef(false);
+  const hasRestoredRef = useRef(false);
 
   const currentExercise = useMemo(() => {
     if (!workout) {
@@ -256,13 +263,12 @@ export function useActiveWorkout({
       return false;
     }
 
-    return (
-      typeof currentExercise.duration === "number" && currentExercise.duration > 0
-    );
+    return typeof currentExercise.duration === "number" && currentExercise.duration > 0;
   }, [currentExercise]);
 
   const suggestedWeightValue = useMemo(() => {
     const fromExercise = getSuggestedWeightFromExercise(currentExercise);
+
     if (fromExercise) {
       return fromExercise;
     }
@@ -275,9 +281,7 @@ export function useActiveWorkout({
   }, [currentExercise, lastWeightByExercise]);
 
   const weightChipOptions = useMemo(() => {
-    const lastWeight = currentExercise
-      ? (lastWeightByExercise[currentExercise.id] ?? "")
-      : "";
+    const lastWeight = currentExercise ? lastWeightByExercise[currentExercise.id] ?? "" : "";
 
     return buildWeightChipOptions({
       suggestedWeight: suggestedWeightValue,
@@ -286,36 +290,217 @@ export function useActiveWorkout({
     });
   }, [currentExercise, lastWeightByExercise, suggestedWeightValue, weight]);
 
-  // Återställ aktiv session lokalt om den finns.
+  const isWorkoutComplete = useMemo(() => {
+    if (!workout) {
+      return false;
+    }
+
+    return currentExerciseIndex >= workout.exercises.length;
+  }, [currentExerciseIndex, workout]);
+
+  const totalCompletedSets = useMemo(() => {
+    return completedExercises.reduce((sum, item) => sum + item.sets.length, 0);
+  }, [completedExercises]);
+
+  const totalVolume = useMemo(() => {
+    return completedExercises.reduce((sum, item) => {
+      return (
+        sum +
+        item.sets.reduce((exerciseSum, setItem) => {
+          if (
+            typeof setItem.actualReps === "number" &&
+            typeof setItem.actualWeight === "number"
+          ) {
+            return exerciseSum + setItem.actualReps * setItem.actualWeight;
+          }
+
+          return exerciseSum;
+        }, 0)
+      );
+    }, 0);
+  }, [completedExercises]);
+
+  const pendingSyncCount = useMemo(() => {
+    return userId ? getPendingSyncCount(userId) : 0;
+  }, [userId, finishSummaryVisible, syncStatus]);
+
+  const persistState = useCallback(
+    (nextSaveStatus: SaveStatus = "saved_local") => {
+      if (!userId || !workout) {
+        return;
+      }
+
+      try {
+        setSaveStatus("saving");
+
+        // Full draft för exakt återställning av UI.
+        saveSessionDraft(userId, {
+          workoutId: workout.id ?? null,
+          workoutName: workout.name,
+          sessionStartedAt: sessionStartedAtRef.current,
+          currentExerciseIndex,
+          currentSet,
+          reps,
+          weight,
+          elapsedSeconds,
+          timerState,
+          showRestTimer,
+          restTimerRunning,
+          restDurationSeconds,
+          restRemainingSeconds,
+          showExerciseFeedback,
+          selectedExtraReps,
+          selectedTimedEffort,
+          selectedRating,
+          lastWeightByExercise,
+          completedExercises,
+          status: isWorkoutComplete ? "finished" : "active",
+        });
+
+        // Lätt snapshot för snabb resume-koll.
+        saveActiveWorkoutSnapshot(userId, {
+          workoutId: workout.id ?? null,
+          workoutName: workout.name,
+          workout,
+          currentExerciseIndex,
+          currentSet,
+          startedAt: sessionStartedAtRef.current,
+          status: isWorkoutComplete ? "finished" : "active",
+        });
+
+        // Behåll bakåtkompatibilitet med gamla storage-lagret tills allt är flyttat.
+        saveActiveWorkoutSessionDraft(userId, {
+          workoutId: workout.id ?? null,
+          workoutName: workout.name,
+          sessionStartedAt: sessionStartedAtRef.current,
+          currentExerciseIndex,
+          currentSet,
+          lastWeightByExercise,
+          setLog: {
+            reps,
+            durationSeconds: timedExercise
+              ? String(elapsedSeconds)
+              : getDefaultDurationValue(currentExercise?.duration),
+            weight,
+            completed: false,
+          },
+          completedExercises,
+          showExerciseFeedback,
+          selectedExtraReps,
+          selectedTimedEffort,
+          selectedRating,
+          exerciseTimerElapsedSeconds: elapsedSeconds,
+          exerciseTimerAlarmPlayed: false,
+          timedSetPhase: timerState,
+          showRestTimer,
+          restTimerRunning,
+          restDurationSeconds,
+          restRemainingSeconds,
+        });
+
+        setSaveStatus(nextSaveStatus);
+      } catch {
+        setSaveStatus("error_local");
+      }
+    },
+    [
+      completedExercises,
+      currentExercise?.duration,
+      currentExerciseIndex,
+      currentSet,
+      elapsedSeconds,
+      isWorkoutComplete,
+      lastWeightByExercise,
+      reps,
+      restDurationSeconds,
+      restRemainingSeconds,
+      restTimerRunning,
+      selectedExtraReps,
+      selectedRating,
+      selectedTimedEffort,
+      showExerciseFeedback,
+      showRestTimer,
+      timedExercise,
+      timerState,
+      userId,
+      weight,
+      workout,
+    ],
+  );
+
+  // Återställ från nya lagret först, sedan äldre fallback.
   useEffect(() => {
-    if (!userId || !workout) {
+    if (!userId || !workout || hasRestoredRef.current) {
       return;
     }
 
-    const draft = getActiveWorkoutSessionDraft(userId);
-    if (!draft) {
+    const sessionDraft = getSessionDraft(userId);
+
+    if (
+      sessionDraft &&
+      sessionDraft.status === "active" &&
+      sessionDraft.workoutName.trim() === workout.name.trim()
+    ) {
+      setCurrentExerciseIndex(sessionDraft.currentExerciseIndex);
+      setCurrentSet(sessionDraft.currentSet);
+      setReps(sessionDraft.reps);
+      setWeight(sessionDraft.weight);
+      setElapsedSeconds(sessionDraft.elapsedSeconds);
+      setTimerState(sessionDraft.timerState);
+      setShowRestTimer(sessionDraft.showRestTimer);
+      setRestTimerRunning(sessionDraft.restTimerRunning);
+      setRestDurationSeconds(sessionDraft.restDurationSeconds);
+      setRestRemainingSeconds(sessionDraft.restRemainingSeconds);
+      setShowExerciseFeedback(sessionDraft.showExerciseFeedback);
+      setSelectedExtraReps(sessionDraft.selectedExtraReps);
+      setSelectedTimedEffort(sessionDraft.selectedTimedEffort);
+      setSelectedRating(sessionDraft.selectedRating);
+      setLastWeightByExercise(sessionDraft.lastWeightByExercise);
+      setCompletedExercises(sessionDraft.completedExercises);
+      sessionStartedAtRef.current = sessionDraft.sessionStartedAt;
+      setRestoreNotice("Tidigare lokalt sparat pass återställt.");
+      hasRestoredRef.current = true;
       return;
     }
 
-    setCurrentExerciseIndex(draft.currentExerciseIndex);
-    setCurrentSet(draft.currentSet);
-    setReps(draft.setLog.reps);
-    setWeight(draft.setLog.weight);
-    setCompletedExercises(draft.completedExercises);
-    setShowExerciseFeedback(draft.showExerciseFeedback);
-    setSelectedExtraReps(draft.selectedExtraReps);
-    setSelectedTimedEffort(draft.selectedTimedEffort);
-    setSelectedRating(draft.selectedRating);
-    setElapsedSeconds(draft.exerciseTimerElapsedSeconds);
-    setTimerState(draft.timedSetPhase);
-    setShowRestTimer(draft.showRestTimer);
-    setRestTimerRunning(draft.restTimerRunning);
-    setRestDurationSeconds(draft.restDurationSeconds);
-    setRestRemainingSeconds(draft.restRemainingSeconds);
-    setLastWeightByExercise(draft.lastWeightByExercise);
-    sessionStartedAtRef.current = draft.sessionStartedAt;
+    const legacyDraft = getActiveWorkoutSessionDraft(userId);
 
-    setRestoreNotice("Tidigare lokalt sparat pass återställt.");
+    if (legacyDraft) {
+      setCurrentExerciseIndex(legacyDraft.currentExerciseIndex);
+      setCurrentSet(legacyDraft.currentSet);
+      setReps(legacyDraft.setLog.reps);
+      setWeight(legacyDraft.setLog.weight);
+      setCompletedExercises(legacyDraft.completedExercises);
+      setShowExerciseFeedback(legacyDraft.showExerciseFeedback);
+      setSelectedExtraReps(legacyDraft.selectedExtraReps);
+      setSelectedTimedEffort(legacyDraft.selectedTimedEffort);
+      setSelectedRating(legacyDraft.selectedRating);
+      setElapsedSeconds(legacyDraft.exerciseTimerElapsedSeconds);
+      setTimerState(legacyDraft.timedSetPhase);
+      setShowRestTimer(legacyDraft.showRestTimer);
+      setRestTimerRunning(legacyDraft.restTimerRunning);
+      setRestDurationSeconds(legacyDraft.restDurationSeconds);
+      setRestRemainingSeconds(legacyDraft.restRemainingSeconds);
+      setLastWeightByExercise(legacyDraft.lastWeightByExercise);
+      sessionStartedAtRef.current = legacyDraft.sessionStartedAt;
+      setRestoreNotice("Tidigare lokalt sparat pass återställt.");
+      hasRestoredRef.current = true;
+      return;
+    }
+
+    const activeSnapshot = getActiveWorkoutSnapshot(userId);
+
+    if (
+      activeSnapshot &&
+      activeSnapshot.status === "active" &&
+      activeSnapshot.workoutName.trim() === workout.name.trim()
+    ) {
+      setCurrentExerciseIndex(activeSnapshot.currentExerciseIndex);
+      setCurrentSet(activeSnapshot.currentSet);
+      sessionStartedAtRef.current = activeSnapshot.startedAt;
+      setRestoreNotice("Aktivt pass återupptaget.");
+      hasRestoredRef.current = true;
+    }
   }, [userId, workout]);
 
   // Förifyll reps och vikt när övning/set byts.
@@ -342,7 +527,7 @@ export function useActiveWorkout({
 
     setRestDurationSeconds(currentExercise.rest ?? 0);
     setRestRemainingSeconds(currentExercise.rest ?? 0);
-  }, [currentExercise, suggestedWeightValue, showExerciseFeedback]);
+  }, [currentExercise, showExerciseFeedback, suggestedWeightValue]);
 
   // Enkel set-timer.
   useEffect(() => {
@@ -413,49 +598,6 @@ export function useActiveWorkout({
     }
   }, [currentExercise, elapsedSeconds, timedExercise, timerState]);
 
-  function persistState(nextSaveStatus: SaveStatus = "saved_local") {
-    if (!userId || !workout) {
-      return;
-    }
-
-    try {
-      setSaveStatus("saving");
-
-      saveActiveWorkoutSessionDraft(userId, {
-        workoutId: workout.id ?? null,
-        workoutName: workout.name,
-        sessionStartedAt: sessionStartedAtRef.current,
-        currentExerciseIndex,
-        currentSet,
-        lastWeightByExercise,
-        setLog: {
-          reps,
-          durationSeconds: timedExercise
-            ? String(elapsedSeconds)
-            : getDefaultDurationValue(currentExercise?.duration),
-          weight,
-          completed: false,
-        },
-        completedExercises,
-        showExerciseFeedback,
-        selectedExtraReps,
-        selectedTimedEffort,
-        selectedRating,
-        exerciseTimerElapsedSeconds: elapsedSeconds,
-        exerciseTimerAlarmPlayed: false,
-        timedSetPhase: timerState,
-        showRestTimer,
-        restTimerRunning,
-        restDurationSeconds,
-        restRemainingSeconds,
-      });
-
-      setSaveStatus(nextSaveStatus);
-    } catch {
-      setSaveStatus("error_local");
-    }
-  }
-
   // Offline-first autosave på varje viktig förändring.
   useEffect(() => {
     if (!userId || !workout) {
@@ -463,26 +605,26 @@ export function useActiveWorkout({
     }
 
     persistState();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    userId,
-    workout,
+    completedExercises,
     currentExerciseIndex,
     currentSet,
-    reps,
-    weight,
-    completedExercises,
-    showExerciseFeedback,
-    selectedExtraReps,
-    selectedTimedEffort,
-    selectedRating,
     elapsedSeconds,
-    timerState,
-    showRestTimer,
-    restTimerRunning,
+    lastWeightByExercise,
+    persistState,
+    reps,
     restDurationSeconds,
     restRemainingSeconds,
-    lastWeightByExercise,
+    restTimerRunning,
+    selectedExtraReps,
+    selectedRating,
+    selectedTimedEffort,
+    showExerciseFeedback,
+    showRestTimer,
+    timerState,
+    userId,
+    weight,
+    workout,
   ]);
 
   function startTimer() {
@@ -534,12 +676,9 @@ export function useActiveWorkout({
 
     return {
       setNumber: currentSet,
-      plannedReps:
-        typeof currentExercise.reps === "number" ? currentExercise.reps : null,
+      plannedReps: typeof currentExercise.reps === "number" ? currentExercise.reps : null,
       plannedDuration:
-        typeof currentExercise.duration === "number"
-          ? currentExercise.duration
-          : null,
+        typeof currentExercise.duration === "number" ? currentExercise.duration : null,
       plannedWeight: suggestedWeightValue
         ? Number(normalizeWeightString(suggestedWeightValue))
         : null,
@@ -567,14 +706,9 @@ export function useActiveWorkout({
           exerciseId: currentExercise.id,
           exerciseName: currentExercise.name,
           plannedSets: currentExercise.sets,
-          plannedReps:
-            typeof currentExercise.reps === "number"
-              ? currentExercise.reps
-              : null,
+          plannedReps: typeof currentExercise.reps === "number" ? currentExercise.reps : null,
           plannedDuration:
-            typeof currentExercise.duration === "number"
-              ? currentExercise.duration
-              : null,
+            typeof currentExercise.duration === "number" ? currentExercise.duration : null,
           isNewExercise: false,
           rating: null,
           extraReps: null,
@@ -631,6 +765,7 @@ export function useActiveWorkout({
     }
 
     const completedSet = buildCompletedSet();
+
     if (!completedSet) {
       return;
     }
@@ -699,35 +834,56 @@ export function useActiveWorkout({
     moveToNextExercise();
   }
 
-  const totalCompletedSets = useMemo(() => {
-    return completedExercises.reduce((sum, item) => sum + item.sets.length, 0);
-  }, [completedExercises]);
-
-  const totalVolume = useMemo(() => {
-    return completedExercises.reduce((sum, item) => {
-      return (
-        sum +
-        item.sets.reduce((exerciseSum, setItem) => {
-          if (
-            typeof setItem.actualReps === "number" &&
-            typeof setItem.actualWeight === "number"
-          ) {
-            return exerciseSum + setItem.actualReps * setItem.actualWeight;
-          }
-
-          return exerciseSum;
-        }, 0)
-      );
-    }, 0);
-  }, [completedExercises]);
-
-  const isWorkoutComplete = useMemo(() => {
-    if (!workout) {
-      return false;
+  function abortWorkout() {
+    if (!userId || !workout) {
+      return;
     }
 
-    return currentExerciseIndex >= workout.exercises.length;
-  }, [currentExerciseIndex, workout]);
+    setSyncStatus("pending");
+
+    enqueuePendingSyncItem({
+      userId,
+      workoutId: workout.id ?? null,
+      workoutName: workout.name,
+      workout,
+      sessionStartedAt: sessionStartedAtRef.current,
+      completedAt: new Date().toISOString(),
+      status: "aborted",
+      completedExercises,
+    });
+
+    clearActiveWorkoutSnapshot(userId);
+    clearSessionDraft(userId);
+    clearActiveWorkoutSessionDraft(userId);
+  }
+
+  function finishWorkout() {
+    if (!userId || !workout) {
+      return;
+    }
+
+    // Säkerställ senaste lokala state innan vi avslutar.
+    persistState("saved_local");
+
+    enqueuePendingSyncItem({
+      userId,
+      workoutId: workout.id ?? null,
+      workoutName: workout.name,
+      workout,
+      sessionStartedAt: sessionStartedAtRef.current,
+      completedAt: new Date().toISOString(),
+      status: "completed",
+      completedExercises,
+    });
+
+    clearActiveWorkoutSnapshot(userId);
+    clearSessionDraft(userId);
+    clearActiveWorkoutSessionDraft(userId);
+
+    setSyncStatus("pending");
+    setFinishSummaryVisible(true);
+    setCurrentExerciseIndex(workout.exercises.length);
+  }
 
   return {
     currentExercise,
@@ -748,6 +904,8 @@ export function useActiveWorkout({
     resetTimer,
     saveSet,
     skipExercise,
+    abortWorkout,
+    finishWorkout,
     completedExercises,
     totalCompletedSets,
     totalVolume,
@@ -767,6 +925,9 @@ export function useActiveWorkout({
     restRemainingSeconds,
     restoreNotice,
     saveStatus,
+    syncStatus,
+    pendingSyncCount,
+    finishSummaryVisible,
     isWorkoutComplete,
   };
 }
