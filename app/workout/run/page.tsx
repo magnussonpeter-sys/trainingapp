@@ -1,12 +1,13 @@
 "use client";
 
-// Ny minimalistisk /run-sida.
+// Minimalistisk /run-sida.
 // Fokus:
 // - en huvudhandling i taget
 // - AI-vikt vald direkt
 // - chips för snabb viktändring
 // - timer utan störande extralogik
 // - lokal sparstatus tydlig men diskret
+// - enhetliga färger med övriga appen
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -139,7 +140,7 @@ function SetDots({
             className={cn(
               "h-2.5 rounded-full transition-all",
               active
-                ? "w-8 bg-slate-950"
+                ? "w-8 bg-slate-900"
                 : completed
                   ? "w-2.5 bg-slate-400"
                   : "w-2.5 bg-slate-200",
@@ -184,10 +185,10 @@ function WeightChipRow({
             className={cn(
               "min-h-11 rounded-full border px-3 py-2 text-sm font-medium transition",
               isSelected
-                ? "border-slate-950 bg-slate-950 text-white"
+                ? "border-slate-900 bg-slate-900 text-white"
                 : isSuggested
-                  ? "border-emerald-300 bg-emerald-50 text-emerald-800"
-                  : "border-slate-200 bg-slate-50 text-slate-700",
+                  ? "border-sky-300 bg-sky-50 text-sky-800"
+                  : "border-slate-200 bg-white text-slate-700",
             )}
           >
             {chip} kg
@@ -237,8 +238,8 @@ function RepsFeedbackRow({
             className={cn(
               "min-h-11 rounded-2xl border px-3 py-3 text-sm font-medium transition",
               value === option.value
-                ? "border-slate-950 bg-slate-950 text-white"
-                : "border-slate-200 bg-slate-50 text-slate-700",
+                ? "border-slate-900 bg-slate-900 text-white"
+                : "border-slate-200 bg-white text-slate-700",
             )}
           >
             {option.label}
@@ -257,7 +258,7 @@ function RepsFeedbackRow({
         <button
           type="button"
           onClick={onContinue}
-          className="min-h-11 flex-[1.3] rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white"
+          className="min-h-11 flex-[1.3] rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
         >
           Fortsätt
         </button>
@@ -303,8 +304,8 @@ function TimedFeedbackRow({
             className={cn(
               "min-h-11 rounded-2xl border px-3 py-3 text-sm font-medium transition",
               value === option.value
-                ? "border-slate-950 bg-slate-950 text-white"
-                : "border-slate-200 bg-slate-50 text-slate-700",
+                ? "border-slate-900 bg-slate-900 text-white"
+                : "border-slate-200 bg-white text-slate-700",
             )}
           >
             {option.label}
@@ -323,7 +324,7 @@ function TimedFeedbackRow({
         <button
           type="button"
           onClick={onContinue}
-          className="min-h-11 flex-[1.3] rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white"
+          className="min-h-11 flex-[1.3] rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
         >
           Fortsätt
         </button>
@@ -451,7 +452,9 @@ export default function RunPage() {
       return "";
     }
 
-    const currentIndex = workout.exercises.findIndex((item) => item.id === currentExercise.id);
+    const currentIndex = workout.exercises.findIndex(
+      (item) => item.id === currentExercise.id,
+    );
     if (currentIndex === -1) {
       return "";
     }
@@ -475,13 +478,14 @@ export default function RunPage() {
     return "Spara set";
   }, [timedExercise, timerState]);
 
-  const canSaveRepSet = useMemo(() => {
+  // Tidsövning ska alltid kunna gå vidare mellan sina tre lägen.
+  const canUsePrimaryAction = useMemo(() => {
     if (timedExercise) {
-      return timerState === "ready_to_save";
+      return true;
     }
 
     return true;
-  }, [timedExercise, timerState]);
+  }, [timedExercise]);
 
   function handlePrimaryAction() {
     if (timedExercise) {
@@ -534,7 +538,7 @@ export default function RunPage() {
             <button
               type="button"
               onClick={() => router.push("/home")}
-              className="mt-4 min-h-11 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white"
+              className="mt-4 min-h-11 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
             >
               Till home
             </button>
@@ -555,7 +559,7 @@ export default function RunPage() {
       <main className="min-h-screen bg-slate-50 px-4 py-6">
         <div className="mx-auto max-w-3xl space-y-4">
           <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-            <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-6 py-6 text-white">
+            <div className="bg-slate-900 px-6 py-6 text-white">
               <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-300">
                 Pass klart
               </p>
@@ -600,7 +604,7 @@ export default function RunPage() {
           <button
             type="button"
             onClick={handleGoHome}
-            className="min-h-11 w-full rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white"
+            className="min-h-11 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
           >
             Till home
           </button>
@@ -613,7 +617,7 @@ export default function RunPage() {
     <main className="min-h-screen bg-slate-50 pb-32">
       <div className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-5 pb-6 pt-5 text-white">
+          <div className="bg-slate-900 px-5 pb-6 pt-5 text-white">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-300">
@@ -630,7 +634,7 @@ export default function RunPage() {
               <button
                 type="button"
                 onClick={() => router.push("/home")}
-                className="min-h-11 shrink-0 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-medium text-white"
+                className="min-h-11 shrink-0 rounded-2xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-white"
               >
                 Avbryt
               </button>
@@ -639,7 +643,7 @@ export default function RunPage() {
             <div className="mt-5 flex flex-wrap items-center gap-2">
               <SaveStatusPill status={saveStatus} />
               {restoreNotice ? (
-                <span className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs text-slate-200">
+                <span className="inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
                   {restoreNotice}
                 </span>
               ) : null}
@@ -739,7 +743,7 @@ export default function RunPage() {
                           <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
                             Tid för set
                           </p>
-                          <div className="mt-3 text-6xl font-semibold tracking-tight text-slate-950">
+                          <div className="mt-3 text-6xl font-semibold tracking-tight text-slate-900">
                             {formatTimerClock(elapsedSeconds)}
                           </div>
                           <p className="mt-3 text-sm text-slate-500">
@@ -779,13 +783,13 @@ export default function RunPage() {
                     )}
 
                     {showRestTimer ? (
-                      <section className="rounded-[24px] border border-indigo-100 bg-indigo-50 px-4 py-4">
+                      <section className="rounded-[24px] border border-sky-100 bg-sky-50 px-4 py-4">
                         <div className="flex items-center justify-between gap-4">
                           <div>
-                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-indigo-500">
+                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-sky-600">
                               Vila
                             </p>
-                            <p className="mt-1 text-2xl font-semibold text-indigo-950">
+                            <p className="mt-1 text-2xl font-semibold text-sky-950">
                               {formatTimerClock(restRemainingSeconds)}
                             </p>
                           </div>
@@ -793,7 +797,7 @@ export default function RunPage() {
                           <button
                             type="button"
                             onClick={() => setRestTimerRunning(!restTimerRunning)}
-                            className="min-h-11 rounded-2xl border border-indigo-200 bg-white px-4 py-3 text-sm font-medium text-indigo-800"
+                            className="min-h-11 rounded-2xl border border-sky-200 bg-white px-4 py-3 text-sm font-medium text-sky-800"
                           >
                             {restTimerRunning ? "Pausa" : "Starta"}
                           </button>
@@ -819,7 +823,10 @@ export default function RunPage() {
 
                 {!showExerciseFeedback && nextExerciseName ? (
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-                    Nästa övning: <span className="font-medium text-slate-900">{nextExerciseName}</span>
+                    Nästa övning:{" "}
+                    <span className="font-medium text-slate-900">
+                      {nextExerciseName}
+                    </span>
                   </div>
                 ) : null}
 
@@ -881,12 +888,12 @@ export default function RunPage() {
             <button
               type="button"
               onClick={handlePrimaryAction}
-              disabled={!canSaveRepSet}
+              disabled={!canUsePrimaryAction}
               className={cn(
-                "min-h-11 flex-[1.4] rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-sm",
-                canSaveRepSet
-                  ? "bg-slate-950"
-                  : "cursor-not-allowed bg-slate-300",
+                "min-h-11 flex-[1.4] rounded-2xl px-4 py-3 text-sm font-semibold shadow-sm",
+                canUsePrimaryAction
+                  ? "bg-slate-900 text-white"
+                  : "cursor-not-allowed bg-slate-300 text-slate-500",
               )}
             >
               {primaryButtonLabel}
