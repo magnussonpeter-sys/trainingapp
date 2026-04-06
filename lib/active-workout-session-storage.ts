@@ -1,4 +1,7 @@
-import type { CompletedExercise, ExtraRepsOption } from "@/lib/workout-log-storage";
+import type {
+  CompletedExercise,
+  ExtraRepsOption,
+} from "@/lib/workout-log-storage";
 import type { TimedEffortOption } from "@/types/exercise-feedback";
 import type { Workout } from "@/types/workout";
 
@@ -120,7 +123,21 @@ function normalizeDraft(
     return null;
   }
 
-  const setLogRaw = isRecord(raw.setLog) ? raw.setLog : {};
+  // Tydlig record-typ här så TypeScript vet att egenskaper kan läsas säkert.
+  const setLogRaw: Record<string, unknown> = isRecord(raw.setLog)
+    ? raw.setLog
+    : {};
+
+  const normalizedLastWeightByExercise: Record<string, string> = isRecord(
+    raw.lastWeightByExercise,
+  )
+    ? Object.fromEntries(
+        Object.entries(raw.lastWeightByExercise).map(([key, value]) => [
+          key,
+          typeof value === "string" ? value : "",
+        ]),
+      )
+    : {};
 
   return {
     version: ACTIVE_WORKOUT_SESSION_VERSION,
@@ -133,19 +150,12 @@ function normalizeDraft(
     sessionStartedAt: asString(raw.sessionStartedAt, new Date().toISOString()),
     currentExerciseIndex: asNumber(raw.currentExerciseIndex, 0),
     currentSet: Math.max(1, asNumber(raw.currentSet, 1)),
-    lastWeightByExercise: isRecord(raw.lastWeightByExercise)
-      ? Object.fromEntries(
-          Object.entries(raw.lastWeightByExercise).map(([key, value]) => [
-            key,
-            typeof value === "string" ? value : "",
-          ]),
-        )
-      : {},
+    lastWeightByExercise: normalizedLastWeightByExercise,
     setLog: {
-      reps: asString(setLogRaw.reps),
-      durationSeconds: asString(setLogRaw.durationSeconds),
-      weight: asString(setLogRaw.weight),
-      completed: asBoolean(setLogRaw.completed, false),
+      reps: asString(setLogRaw["reps"]),
+      durationSeconds: asString(setLogRaw["durationSeconds"]),
+      weight: asString(setLogRaw["weight"]),
+      completed: asBoolean(setLogRaw["completed"], false),
     },
     completedExercises: asArray<CompletedExercise>(raw.completedExercises, []),
     showExerciseFeedback: asBoolean(raw.showExerciseFeedback, false),
