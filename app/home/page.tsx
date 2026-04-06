@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-
 import HomeStartCard from "@/components/home/home-start-card";
 import LastWorkoutCard from "@/components/home/last-workout-card";
 import StatusSummaryCard from "@/components/home/status-summary-card";
@@ -50,11 +49,9 @@ function extractEquipmentStrings(input: unknown): string[] {
   for (const item of input) {
     if (typeof item === "string") {
       const trimmed = item.trim();
-
       if (trimmed) {
         values.add(trimmed);
       }
-
       continue;
     }
 
@@ -71,7 +68,6 @@ function extractEquipmentStrings(input: unknown): string[] {
       for (const candidate of candidates) {
         if (typeof candidate === "string") {
           const trimmed = candidate.trim();
-
           if (trimmed) {
             values.add(trimmed);
           }
@@ -117,12 +113,16 @@ function normalizeGymDetail(data: unknown): GymDetail | null {
 }
 
 // Väljer bästa möjliga namn för hälsningen.
-function getDisplayName(user: {
-  displayName?: string | null;
-  name?: string | null;
-  username?: string | null;
-  email?: string | null;
-} | null) {
+function getDisplayName(
+  user:
+    | {
+        displayName?: string | null;
+        name?: string | null;
+        username?: string | null;
+        email?: string | null;
+      }
+    | null,
+) {
   if (!user) {
     return "Där";
   }
@@ -184,7 +184,6 @@ function buildHomeStatus(params: {
   goal: Goal | null | undefined;
 }): HomeStatus {
   const { logs, goal } = params;
-
   const completedLogs = logs.filter((log) => log.status === "completed");
 
   if (completedLogs.length === 0) {
@@ -204,7 +203,9 @@ function buildHomeStatus(params: {
   if (recentCount >= 3) {
     return {
       title: "Bra rytm",
-      detail: `Du har tränat ${recentCount} pass senaste veckan. Fortsätt så för ${getGoalLabel(goal).toLowerCase()}.`,
+      detail: `Du har tränat ${recentCount} pass senaste veckan. Fortsätt så för ${getGoalLabel(
+        goal,
+      ).toLowerCase()}.`,
     };
   }
 
@@ -266,7 +267,6 @@ export default function HomePage() {
       }
 
       const gymExists = gyms.some((gym) => String(gym.id) === prev);
-
       return gymExists ? prev : BODYWEIGHT_GYM_ID;
     });
   }, [gyms, setSelectedGymId]);
@@ -386,23 +386,20 @@ export default function HomePage() {
         equipment: request.equipment,
       });
 
+      // Normalisera själva workout-objektet, inte ett wrapper-objekt.
       const normalizedWorkout = normalizePreviewWorkout({
-        workout: result.workout,
+        ...result.workout,
         duration: request.durationMinutes,
         gymLabel: request.gymLabel,
       });
 
-      // Spara draft och active på ett ställe.
-      saveWorkoutDraft({
-        userId: request.userId,
-        workout: normalizedWorkout,
-      });
+      // Spara draft med korrekt signatur: (userId, draft)
+      saveWorkoutDraft(request.userId, normalizedWorkout);
 
       // Defaultflödet enligt planen är direkt till run.
       router.push("/workout/run");
     } catch (error) {
       console.error("Kunde inte starta AI-pass direkt:", error);
-
       setPageError(
         error instanceof Error
           ? error.message
@@ -444,12 +441,10 @@ export default function HomePage() {
   async function handleLogout() {
     try {
       setIsLoggingOut(true);
-
       await fetch("/api/auth/logout", {
         method: "POST",
         credentials: "include",
       });
-
       router.replace("/");
       router.refresh();
     } catch (error) {
@@ -468,7 +463,7 @@ export default function HomePage() {
             <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
               Träningsapp
             </p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
               Laddar hem...
             </h1>
             <p className="mt-3 text-sm leading-6 text-slate-600">
@@ -481,60 +476,45 @@ export default function HomePage() {
   }
 
   return (
-    <AppLayout
-      title="Träningsapp"
-      subtitle="Snabbstart för dagens pass."
-      onLogout={handleLogout}
-      isLoggingOut={isLoggingOut}
-      isAdmin={authUser?.role === "admin"}
-    >
-      <div className="flex flex-col gap-5">
-        {/* Enkel toppyta med liten status och tydligt fokus på start. */}
+    <AppLayout>
+      <div className="space-y-6">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
             Hej igen
           </p>
-
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
             {displayName}
           </h1>
-
           <p className="mt-3 text-sm leading-6 text-slate-600">
             Starta pass direkt eller granska först. Senaste tid och gym sparas
             automatiskt.
           </p>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+          <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-500">
+            <span className="rounded-full bg-slate-100 px-3 py-1">
               Mål: {getGoalLabel(settings?.training_goal)}
             </span>
-
-            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+            <span className="rounded-full bg-slate-100 px-3 py-1">
               Pass senaste 7 dagar: {recentWeekCount}
             </span>
-
-            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+            <span className="rounded-full bg-slate-100 px-3 py-1">
               Källa: {logsSource === "api" ? "Databas" : "Lokal fallback"}
             </span>
           </div>
         </section>
 
         <HomeStartCard
-          gyms={gyms}
           selectedDuration={selectedDuration}
           durationInput={durationInput}
+          quickDurationOptions={QUICK_DURATION_OPTIONS}
           selectedGymId={selectedGymId}
           selectedGymName={selectedGym?.name ?? BODYWEIGHT_LABEL}
-          quickDurationOptions={QUICK_DURATION_OPTIONS}
+          gyms={gyms}
           bodyweightId={BODYWEIGHT_GYM_ID}
           bodyweightLabel={BODYWEIGHT_LABEL}
-          isLoadingGyms={isLoadingGyms}
+          canUseStartActions={canUseStartActions}
           isStartingWorkout={isStartingWorkout}
           isOpeningPreview={isOpeningPreview}
-          isDisabled={!canUseStartActions}
-          gymError={gymError}
-          pageError={pageError}
-          onQuickDurationSelect={updateDuration}
+          onDurationSelect={updateDuration}
           onDurationInputChange={updateDurationInput}
           onDurationInputBlur={commitDurationInput}
           onGymChange={setSelectedGymId}
@@ -547,21 +527,38 @@ export default function HomePage() {
           detail={statusSummary.detail}
         />
 
-        <LastWorkoutCard
-          workout={
-            latestWorkout
-              ? {
-                  completedAt: formatDateTime(latestWorkout.completedAt),
-                  workoutName: latestWorkout.workoutName,
-                  durationLabel: formatDurationMinutes(
-                    latestWorkout.durationSeconds,
-                  ),
-                  exerciseCount: latestWorkout.exercises.length,
-                  setCount: getTotalSets(latestWorkout),
-                }
-              : null
-          }
-        />
+        {latestWorkout ? (
+          <LastWorkoutCard
+            title={latestWorkout.workoutName}
+            completedAtLabel={formatDateTime(latestWorkout.completedAt)}
+            durationLabel={formatDurationMinutes(latestWorkout.durationSeconds)}
+            setsLabel={`${getTotalSets(latestWorkout)} set`}
+            href={`/history/${latestWorkout.id}`}
+          />
+        ) : null}
+
+        {gymError ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            {gymError}
+          </div>
+        ) : null}
+
+        {pageError ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            {pageError}
+          </div>
+        ) : null}
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoggingOut ? "Loggar ut..." : "Logga ut"}
+          </button>
+        </div>
       </div>
     </AppLayout>
   );
