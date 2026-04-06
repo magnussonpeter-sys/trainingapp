@@ -7,18 +7,40 @@ import HomeStartCard from "@/components/home/home-start-card";
 import LastWorkoutCard from "@/components/home/last-workout-card";
 import StatusSummaryCard from "@/components/home/status-summary-card";
 import AppLayout from "@/components/layout/AppLayout";
-import { useHomeData, type HomeGoal } from "@/hooks/use-home-data";
 import { useHomePreferences } from "@/hooks/use-home-preferences";
 import {
   buildWorkoutRequest,
+  type WorkoutGoal,
   type WorkoutFlowGym,
 } from "@/lib/workout-flow/build-workout-request";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
 import { generateWorkout } from "@/lib/workout-generator";
-import type { WorkoutLog } from "@/lib/workout-log-storage";
+import {
+  getWorkoutLogs,
+  type WorkoutLog,
+} from "@/lib/workout-log-storage";
 
-type Goal = HomeGoal;
+type Goal = WorkoutGoal;
+
+type AuthUser = {
+  id: number | string;
+  email?: string | null;
+  username?: string | null;
+  name?: string | null;
+  displayName?: string | null;
+  role?: "user" | "admin";
+  status?: "active" | "disabled";
+};
+
+type Gym = {
+  id: string | number;
+  name: string;
+};
+
+type UserSettings = {
+  training_goal?: Goal | null;
+};
 
 type GymEquipmentItem = {
   equipment_type?: string | null;
@@ -39,7 +61,39 @@ const QUICK_DURATION_OPTIONS = [15, 20, 30, 45] as const;
 const BODYWEIGHT_GYM_ID = "bodyweight";
 const BODYWEIGHT_LABEL = "Kroppsvikt / utan gym";
 
-// Plockar ut användbara utrustningssträngar från olika API-format.
+// Normaliserar gym-listan även om API-formatet varierar lite.
+function normalizeGyms(data: unknown): Gym[] {
+  if (Array.isArray(data)) {
+    return data
+      .filter(
+        (item): item is { id: string | number; name: string } =>
+          typeof item === "object" &&
+          item !== null &&
+          "id" in item &&
+          "name" in item &&
+          (typeof (item as { id: unknown }).id === "string" ||
+            typeof (item as { id: unknown }).id === "number") &&
+          typeof (item as { name: unknown }).name === "string",
+      )
+      .map((gym) => ({
+        id: gym.id,
+        name: gym.name,
+      }));
+  }
+
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "gyms" in data &&
+    Array.isArray((data as { gyms?: unknown }).gyms)
+  ) {
+    return normalizeGyms((data as { gyms: unknown[] }).gyms);
+  }
+
+  return [];
+}
+
+// Plockar ut rimliga utrustningsnamn från olika API-format.
 function extractEquipmentStrings(input: unknown): string[] {
   if (!Array.isArray(input)) {
     return [];
@@ -117,12 +171,7 @@ function normalizeGymDetail(data: unknown): GymDetail | null {
 }
 
 // Väljer bästa möjliga namn för hälsningen.
-function getDisplayName(user: {
-  displayName?: string | null;
-  name?: string | null;
-  username?: string | null;
-  email?: string | null;
-} | null) {
+function getDisplayName(user: AuthUser | null) {
   if (!user) {
     return "Där";
   }
@@ -224,26 +273,25 @@ function buildHomeStatus(params: {
 export default function HomePage() {
   const router = useRouter();
 
-  // Home-data är nu samlad i egen hook.
-  const {
-    authChecked,
-    authUser,
-    gyms,
-    settings,
-    workoutLogs,
-    logsSource,
-    isLoadingGyms,
-    gymError,
-    pageError,
-    setPageError,
-  } = useHomeData({ router });
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
-  // Knapplägen stannar kvar lokalt i sidan.
+  // Data som behövs för home.
+  const [gyms, setGyms] = useState<Gym[]>([]);
+  const [settings, setSettings] = useState<UserSettings | null>(null);
+  const [workoutLogs, setWorkoutLogs] = useState<WorkoutLog[]>([]);
+  const [logsSource, setLogsSource] = useState<"api" | "local">("api");
+
+  // UI-state för laddning och handlingar.
+  const [isLoadingGyms, setIsLoadingGyms] = useState(false);
   const [isStartingWorkout, setIsStartingWorkout] = useState(false);
   const [isOpeningPreview, setIsOpeningPreview] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  // Home-preferenser hålls i egen hook.
+  const [gymError, setGymError] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
+
+  // Hook för senaste val på home.
   const {
     selectedDuration,
     durationInput,
@@ -259,17 +307,150 @@ export default function HomePage() {
   });
 
   useEffect(() => {
-    // Om valt gym försvunnit, återgå till kroppsvikt.
-    setSelectedGymId((prev) => {
-      if (prev === BODYWEIGHT_GYM_ID) {
-        return prev;
+    let isMounted = true;
+
+    async function loadHome() {
+      try {
+        setPageError(null);
+
+        // Börja med aktuell användare.
+        const authRes = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
+        const authData = (await authRes.json().catch(() => null)) as
+          | { ok?: boolean; user?: AuthUser | null }
+          | null;
+
+        if (!authRes.ok || !authData?.user) {
+          router.replace("/");
+          return;
+        }
+
+        const user = authData.user;
+        const userId = String(user.id);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setAuthUser(user);
+        setAuthChecked(true);
+
+        setIsLoadingGyms(true);
+        setGymError(null);
+
+        // Home behöver i huvudsak gym, settings och senaste loggar.
+        const [gymsRes, settingsRes] = await Promise.all([
+          fetch(`/api/gyms?userId=${encodeURIComponent(userId)}`, {
+            cache: "no-store",
+            credentials: "include",
+          }),
+          fetch(`/api/user-settings?userId=${encodeURIComponent(userId)}`, {
+            cache: "no-store",
+            credentials: "include",
+          }),
+        ]);
+
+        const gymsData = (await gymsRes.json().catch(() => null)) as unknown;
+        const settingsData = (await settingsRes.json().catch(() => null)) as
+          | { ok?: boolean; settings?: UserSettings | null; error?: string }
+          | null;
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (!gymsRes.ok) {
+          const apiMessage =
+            typeof gymsData === "object" &&
+            gymsData !== null &&
+            "error" in gymsData &&
+            typeof (gymsData as { error?: unknown }).error === "string"
+              ? (gymsData as { error: string }).error
+              : "Kunde inte hämta gym.";
+
+          setGymError(apiMessage);
+          setGyms([]);
+        } else {
+          const normalizedGyms = normalizeGyms(gymsData);
+          setGyms(normalizedGyms);
+
+          // Om valt gym inte längre finns kvar, gå tillbaka till kroppsvikt.
+          setSelectedGymId((prev) => {
+            if (prev === BODYWEIGHT_GYM_ID) {
+              return prev;
+            }
+
+            const gymExists = normalizedGyms.some(
+              (gym) => String(gym.id) === prev,
+            );
+
+            return gymExists ? prev : BODYWEIGHT_GYM_ID;
+          });
+        }
+
+        if (settingsRes.ok && settingsData?.ok) {
+          setSettings(settingsData.settings ?? null);
+        }
+
+        // Hämta historik från API, annars lokal fallback.
+        try {
+          const logsRes = await fetch(
+            `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=12`,
+            {
+              cache: "no-store",
+              credentials: "include",
+            },
+          );
+
+          const logsData = (await logsRes.json().catch(() => null)) as
+            | { ok?: boolean; logs?: WorkoutLog[]; error?: string }
+            | null;
+
+          if (!logsRes.ok || !logsData?.ok || !Array.isArray(logsData.logs)) {
+            throw new Error(logsData?.error || "Kunde inte hämta träningshistorik");
+          }
+
+          if (!isMounted) {
+            return;
+          }
+
+          setWorkoutLogs(logsData.logs);
+          setLogsSource("api");
+        } catch (error) {
+          console.error("Kunde inte hämta loggar från API:", error);
+
+          if (!isMounted) {
+            return;
+          }
+
+          setWorkoutLogs(getWorkoutLogs(userId));
+          setLogsSource("local");
+        }
+      } catch (error) {
+        console.error("Kunde inte ladda home:", error);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setPageError("Kunde inte ladda startsidan.");
+      } finally {
+        if (isMounted) {
+          setIsLoadingGyms(false);
+          setAuthChecked(true);
+        }
       }
+    }
 
-      const gymExists = gyms.some((gym) => String(gym.id) === prev);
+    void loadHome();
 
-      return gymExists ? prev : BODYWEIGHT_GYM_ID;
-    });
-  }, [gyms, setSelectedGymId]);
+    return () => {
+      isMounted = false;
+    };
+  }, [router, setSelectedGymId]);
 
   const displayName = useMemo(() => getDisplayName(authUser), [authUser]);
 
