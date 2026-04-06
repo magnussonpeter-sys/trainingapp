@@ -6,7 +6,6 @@ import CurrentExerciseCard from "@/components/run/current-exercise-card";
 import EffortFeedbackRow from "@/components/run/effort-feedback-row";
 import NextExerciseHint from "@/components/run/next-exercise-hint";
 import RunHeader from "@/components/run/run-header";
-import RunSaveStatus from "@/components/run/run-save-status";
 import SetProgress from "@/components/run/set-progress";
 import { clearActiveWorkoutSessionDraft } from "@/lib/active-workout-session-storage";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
@@ -166,8 +165,6 @@ export default function RunPage() {
     restTimerRunning,
     setRestTimerRunning,
     restRemainingSeconds,
-    restoreNotice,
-    saveStatus,
     isWorkoutComplete,
   } = useActiveWorkout({
     userId: resolvedUserId,
@@ -290,7 +287,7 @@ export default function RunPage() {
               </p>
             </div>
 
-            <div className="grid gap-3 px-6 py-5 sm:grid-cols-3">
+            <div className="grid gap-3 px-6 py-5 sm:grid-cols-2">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
                   Genomförda set
@@ -306,15 +303,6 @@ export default function RunPage() {
                 </p>
                 <p className="mt-2 text-2xl font-semibold text-slate-900">
                   {Math.round(totalVolume)}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                  Status
-                </p>
-                <p className="mt-2 text-base font-semibold text-emerald-700">
-                  Sparat lokalt
                 </p>
               </div>
             </div>
@@ -340,9 +328,7 @@ export default function RunPage() {
             workoutName={workout.name}
             displayName={getDisplayName(authUser)}
             onAbort={() => router.push("/home")}
-          >
-            <RunSaveStatus status={saveStatus} restoreNotice={restoreNotice} />
-          </RunHeader>
+          />
 
           <div className="space-y-4 px-5 py-5">
             {pageError ? (
@@ -380,7 +366,6 @@ export default function RunPage() {
 
                 {!showExerciseFeedback ? (
                   <CurrentExerciseCard
-                    exerciseName={currentExercise.name}
                     description={currentExercise.description}
                     timedExercise={timedExercise}
                     reps={reps}
@@ -423,7 +408,7 @@ export default function RunPage() {
                   <NextExerciseHint nextExerciseName={nextExerciseName} />
                 ) : null}
 
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-2xl border border-slate-200 bg-white p-4">
                     <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
                       Genomförda set
@@ -439,15 +424,6 @@ export default function RunPage() {
                     </p>
                     <p className="mt-2 text-2xl font-semibold text-slate-900">
                       {Math.round(totalVolume)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                      Gym
-                    </p>
-                    <p className="mt-2 text-base font-semibold text-slate-900">
-                      {workout.gym ?? "Valt gym"}
                     </p>
                   </div>
                 </div>
