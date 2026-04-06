@@ -6,6 +6,10 @@ import {
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
+import {
+  getAvailableExercises,
+  type ExerciseCatalogItem,
+} from "@/lib/exercise-catalog";
 
 type WorkoutExercise = {
   id: string;
@@ -41,12 +45,97 @@ function clampNumber(value: number, min: number, max?: number) {
   return Math.max(value, min);
 }
 
+// Enkel id-generator för customövningar.
+function createExerciseId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  return Math.random().toString(36).slice(2);
+}
+
+// Söknormalisering för kataloglistan.
+function normalizeSearch(value: string) {
+  return value.trim().toLowerCase();
+}
+
+// Plockar fram en rimlig utrustningslista från workout-draften.
+function getEquipmentSeedFromWorkout(workout: PreviewWorkout | null) {
+  if (!workout?.gymLabel) {
+    return ["bodyweight"];
+  }
+
+  const gymLabel = workout.gymLabel.trim().toLowerCase();
+
+  if (
+    gymLabel.includes("kroppsvikt") ||
+    gymLabel.includes("utan gym") ||
+    gymLabel === "bodyweight"
+  ) {
+    return ["bodyweight"];
+  }
+
+  // Tills vidare använder vi bodyweight som säker fallback om vi inte har bättre metadata.
+  return ["bodyweight"];
+}
+
+// Gör om katalogövning till vanlig workout-övning.
+function createExerciseFromCatalog(item: ExerciseCatalogItem): WorkoutExercise {
+  const isTimed =
+    typeof item.defaultDuration === "number" &&
+    item.defaultDuration > 0 &&
+    typeof item.defaultReps !== "number";
+
+  return {
+    id: item.id,
+    name: item.name,
+    sets: item.defaultSets,
+    reps: isTimed ? undefined : item.defaultReps ?? 10,
+    duration: isTimed ? item.defaultDuration : undefined,
+    rest: item.defaultRest,
+    description: item.description,
+  };
+}
+
+// Skapar customövning från formuläret.
+function createCustomExercise(params: {
+  name: string;
+  sets: string;
+  reps: string;
+  duration: string;
+  rest: string;
+  description: string;
+}): WorkoutExercise {
+  const parsedSets = Math.max(1, Number(params.sets) || 3);
+  const parsedReps = Math.max(0, Number(params.reps) || 0);
+  const parsedDuration = Math.max(0, Number(params.duration) || 0);
+  const parsedRest = Math.max(0, Number(params.rest) || 45);
+
+  return {
+    id: `custom_${createExerciseId()}`,
+    name: params.name.trim(),
+    sets: parsedSets,
+    reps: parsedDuration > 0 ? undefined : parsedReps || 10,
+    duration: parsedDuration > 0 ? parsedDuration : undefined,
+    rest: parsedRest,
+    description: params.description.trim() || undefined,
+  };
+}
+
 export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   const [workout, setWorkout] = useState<PreviewWorkout | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [customSets, setCustomSets] = useState("3");
+  const [customReps, setCustomReps] = useState("10");
+  const [customDuration, setCustomDuration] = useState("");
+  const [customRest, setCustomRest] = useState("45");
+  const [customDescription, setCustomDescription] = useState("");
 
   useEffect(() => {
-    // Saknas userId ska vi inte försöka läsa draft.
     if (!userId) {
       setWorkout(null);
       setLoading(false);
@@ -63,7 +152,6 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   function updateWorkout(next: PreviewWorkout) {
     setWorkout(next);
 
-    // Autospara direkt så preview och run använder samma draft.
     if (userId) {
       saveWorkoutDraft(userId, next);
     }
@@ -165,11 +253,125 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     });
   }
 
+  const availableCatalogExercises = useMemo(() => {
+    const seedEquipment = getEquipmentSeedFromWorkout(workout);
+    return getAvailableExercises(seedEquipment);
+  }, [workout]);
+
+  const filteredCatalogExercises = useMemo(() => {
+    const search = normalizeSearch(catalogSearch);
+
+    if (!search) {
+      return availableCatalogExercises.slice(0, 80);
+    }
+
+    return availableCatalogExercises
+      .filter((exercise) => {
+        const haystack = [
+          exercise.name,
+          exercise.description,
+          exercise.movementPattern,
+          ...(exercise.primaryMuscles ?? []),
+          ...(exercise.requiredEquipment ?? []),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(search);
+      })
+      .slice(0, 80);
+  }, [availableCatalogExercises, catalogSearch]);
+
+  function addCatalogExercise(item: ExerciseCatalogItem) {
+    if (!workout) return;
+
+    const nextExercise = createExerciseFromCatalog(item);
+
+    const alreadyExists = workout.exercises.some((exercise) => {
+      return exercise.name.trim().toLowerCase() === nextExercise.name.trim().toLowerCase();
+    });
+
+    if (alreadyExists) {
+      setError("Övningen finns redan i passet.");
+      return false;
+    }
+
+    updateWorkout({
+      ...workout,
+      exercises: [...workout.exercises, nextExercise],
+    });
+
+    setError(null);
+    setCatalogSearch("");
+    return true;
+  }
+
+  function replaceWithCatalogExercise(index: number, item: ExerciseCatalogItem) {
+    if (!workout) return false;
+
+    const nextExercise = createExerciseFromCatalog(item);
+    const current = workout.exercises[index];
+
+    if (!current) return false;
+
+    const alreadyExists = workout.exercises.some((exercise, exerciseIndex) => {
+      if (exerciseIndex === index) {
+        return false;
+      }
+
+      return exercise.name.trim().toLowerCase() === nextExercise.name.trim().toLowerCase();
+    });
+
+    if (alreadyExists) {
+      setError("Den övningen finns redan i passet.");
+      return false;
+    }
+
+    updateExercise(index, nextExercise);
+    setError(null);
+    setCatalogSearch("");
+    return true;
+  }
+
+  function addCustomExercise() {
+    if (!workout) return false;
+
+    if (!customName.trim()) {
+      setError("Ange namn på övningen.");
+      return false;
+    }
+
+    const nextExercise = createCustomExercise({
+      name: customName,
+      sets: customSets,
+      reps: customReps,
+      duration: customDuration,
+      rest: customRest,
+      description: customDescription,
+    });
+
+    updateWorkout({
+      ...workout,
+      exercises: [...workout.exercises, nextExercise],
+    });
+
+    setCustomName("");
+    setCustomSets("3");
+    setCustomReps("10");
+    setCustomDuration("");
+    setCustomRest("45");
+    setCustomDescription("");
+    setError(null);
+
+    return true;
+  }
+
   const summary = useMemo(() => {
     if (!workout) {
       return {
         exerciseCount: 0,
         totalSets: 0,
+        timedExercises: 0,
       };
     }
 
@@ -178,12 +380,17 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       totalSets: workout.exercises.reduce((sum, exercise) => {
         return sum + exercise.sets;
       }, 0),
+      timedExercises: workout.exercises.filter((exercise) => {
+        return typeof exercise.duration === "number" && exercise.duration > 0;
+      }).length,
     };
   }, [workout]);
 
   return {
     workout,
     loading,
+    error,
+    setError,
     summary,
     updateExercise,
     removeExercise,
@@ -192,5 +399,23 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     decrementSets,
     incrementRest,
     decrementRest,
+    catalogSearch,
+    setCatalogSearch,
+    filteredCatalogExercises,
+    addCatalogExercise,
+    replaceWithCatalogExercise,
+    customName,
+    setCustomName,
+    customSets,
+    setCustomSets,
+    customReps,
+    setCustomReps,
+    customDuration,
+    setCustomDuration,
+    customRest,
+    setCustomRest,
+    customDescription,
+    setCustomDescription,
+    addCustomExercise,
   };
 }
