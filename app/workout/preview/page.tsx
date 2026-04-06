@@ -1,13 +1,13 @@
 "use client";
 
 // Preview-sida = tunn container.
-// All huvudsaklig logik ligger i hooken.
-// Viktigt: vi använder inte useSession här eftersom sidan annars kan krascha vid prerender/build.
+// useSearchParams måste ligga innanför Suspense i Next.js App Router.
 
+import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useWorkoutPreview } from "@/hooks/use-workout-preview";
 
-export default function PreviewPage() {
+function PreviewPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -124,5 +124,13 @@ export default function PreviewPage() {
         Starta pass
       </button>
     </main>
+  );
+}
+
+export default function PreviewPage() {
+  return (
+    <Suspense fallback={<div className="p-4">Laddar preview...</div>}>
+      <PreviewPageContent />
+    </Suspense>
   );
 }
