@@ -1,21 +1,17 @@
 "use client";
 
-// Minimalistisk /run-sida.
-// Fokus:
-// - en huvudhandling i taget
-// - AI-vikt vald direkt
-// - chips för snabb viktändring
-// - timer utan störande extralogik
-// - lokal sparstatus tydlig men diskret
-// - delade knappstilar i stället för hårdkodade färger
-// - tydligare header och klickbar övningsbeskrivning
-
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
+import CurrentExerciseCard from "@/components/run/current-exercise-card";
+import EffortFeedbackRow from "@/components/run/effort-feedback-row";
+import NextExerciseHint from "@/components/run/next-exercise-hint";
+import RunHeader from "@/components/run/run-header";
+import RunSaveStatus from "@/components/run/run-save-status";
+import SetProgress from "@/components/run/set-progress";
 import { clearActiveWorkoutSessionDraft } from "@/lib/active-workout-session-storage";
-import { useActiveWorkout } from "@/hooks/use-active-workout";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
+import { getWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
+import { useActiveWorkout } from "@/hooks/use-active-workout";
 import type { Workout } from "@/types/workout";
 
 type AuthUser = {
@@ -44,30 +40,6 @@ function getDisplayName(user: AuthUser | null) {
   );
 }
 
-function formatTimerClock(totalSeconds: number) {
-  const safeSeconds = Math.max(0, totalSeconds);
-  const minutes = Math.floor(safeSeconds / 60);
-  const seconds = safeSeconds % 60;
-
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function formatDuration(seconds: number) {
-  if (seconds < 60) {
-    return `${seconds} s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const restSeconds = seconds % 60;
-
-  if (!restSeconds) {
-    return `${minutes} min`;
-  }
-
-  return `${minutes} min ${restSeconds} s`;
-}
-
-// Fallback för att kunna återställa lokalt även om nätet tillfälligt saknas.
 function resolveLocalFallbackUserId() {
   if (typeof window === "undefined") {
     return "";
@@ -92,287 +64,6 @@ function resolveLocalFallbackUserId() {
   return "";
 }
 
-function SaveStatusPill({
-  status,
-}: {
-  status: "idle" | "saving" | "saved_local" | "error_local";
-}) {
-  const label =
-    status === "saving"
-      ? "Sparar lokalt..."
-      : status === "saved_local"
-        ? "Sparat lokalt"
-        : status === "error_local"
-          ? "Kunde inte spara lokalt"
-          : "Pass pågår";
-
-  return (
-    <span
-      className={cn(
-        "inline-flex rounded-full px-3 py-1 text-xs font-medium",
-        status === "error_local"
-          ? "bg-rose-100 text-rose-700"
-          : status === "saving"
-            ? "bg-amber-100 text-amber-800"
-            : "bg-emerald-100 text-emerald-700",
-      )}
-    >
-      {label}
-    </span>
-  );
-}
-
-function SetDots({
-  totalSets,
-  currentSet,
-}: {
-  totalSets: number;
-  currentSet: number;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      {Array.from({ length: totalSets }).map((_, index) => {
-        const setNumber = index + 1;
-        const active = setNumber === currentSet;
-        const completed = setNumber < currentSet;
-
-        return (
-          <span
-            key={setNumber}
-            className={cn(
-              "h-2.5 rounded-full transition-all",
-              active
-                ? "w-8 bg-indigo-600"
-                : completed
-                  ? "w-2.5 bg-slate-400"
-                  : "w-2.5 bg-slate-200",
-            )}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function WeightChipRow({
-  chips,
-  selectedWeight,
-  suggestedWeight,
-  onSelect,
-}: {
-  chips: string[];
-  selectedWeight: string;
-  suggestedWeight: string;
-  onSelect: (value: string) => void;
-}) {
-  const normalizedSelected = selectedWeight.trim().replace(",", ".");
-  const normalizedSuggested = suggestedWeight.trim().replace(",", ".");
-
-  if (chips.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      {chips.map((chip) => {
-        const normalizedChip = chip.trim().replace(",", ".");
-        const isSelected = normalizedChip === normalizedSelected;
-        const isSuggested = normalizedChip === normalizedSuggested;
-
-        return (
-          <button
-            key={chip}
-            type="button"
-            onClick={() => onSelect(chip)}
-            className={cn(
-              uiButtonClasses.chip,
-              isSelected
-                ? uiButtonClasses.chipSelected
-                : isSuggested
-                  ? uiButtonClasses.chipSuggested
-                  : uiButtonClasses.chipDefault,
-            )}
-          >
-            {chip} kg
-            {isSuggested ? " · förslag" : ""}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function DescriptionToggle({
-  description,
-}: {
-  description?: string;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  if (!description?.trim()) {
-    return null;
-  }
-
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white">
-      <button
-        type="button"
-        onClick={() => setIsOpen((previous) => !previous)}
-        className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-3 text-left"
-      >
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-            Övningsbeskrivning
-          </p>
-          <p className="mt-1 text-sm font-medium text-slate-700">
-            {isOpen ? "Dölj beskrivning" : "Visa beskrivning"}
-          </p>
-        </div>
-
-        <span
-          className={cn(
-            "text-lg font-semibold text-slate-500 transition-transform",
-            isOpen ? "rotate-180" : "",
-          )}
-        >
-          ˅
-        </span>
-      </button>
-
-      {isOpen ? (
-        <div className="border-t border-slate-100 px-4 py-4">
-          <p className="text-sm leading-6 text-slate-600">{description}</p>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function RepsFeedbackRow({
-  value,
-  onChange,
-  onSkip,
-  onContinue,
-}: {
-  value: 0 | 2 | 4 | 6 | null;
-  onChange: (value: 0 | 2 | 4 | 6) => void;
-  onSkip: () => void;
-  onContinue: () => void;
-}) {
-  const options: Array<{ value: 0 | 2 | 4 | 6; label: string }> = [
-    { value: 0, label: "0 · tungt" },
-    { value: 2, label: "2 · bra" },
-    { value: 4, label: "4 · lätt" },
-    { value: 6, label: "6+ · mycket lätt" },
-  ];
-
-  return (
-    <div className="space-y-4 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div>
-        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-          Feedback
-        </p>
-        <h3 className="mt-1 text-lg font-semibold text-slate-900">
-          Hur kändes sista seten?
-        </h3>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        {options.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => onChange(option.value)}
-            className={cn(
-              "min-h-11 rounded-2xl border px-3 py-3 text-sm font-medium transition",
-              value === option.value
-                ? uiButtonClasses.feedbackSelected
-                : uiButtonClasses.feedbackDefault,
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex gap-3">
-        <button type="button" onClick={onSkip} className={uiButtonClasses.secondary}>
-          Hoppa över
-        </button>
-        <button
-          type="button"
-          onClick={onContinue}
-          className={cn(uiButtonClasses.primary, "flex-[1.3]")}
-        >
-          Fortsätt
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TimedFeedbackRow({
-  value,
-  onChange,
-  onSkip,
-  onContinue,
-}: {
-  value: "light" | "just_right" | "tough" | null;
-  onChange: (value: "light" | "just_right" | "tough") => void;
-  onSkip: () => void;
-  onContinue: () => void;
-}) {
-  const options: Array<{ value: "light" | "just_right" | "tough"; label: string }> = [
-    { value: "light", label: "Lätt" },
-    { value: "just_right", label: "Lagom" },
-    { value: "tough", label: "Tufft" },
-  ];
-
-  return (
-    <div className="space-y-4 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div>
-        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-          Feedback
-        </p>
-        <h3 className="mt-1 text-lg font-semibold text-slate-900">
-          Hur kändes tidsövningen?
-        </h3>
-      </div>
-
-      <div className="grid grid-cols-3 gap-2">
-        {options.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => onChange(option.value)}
-            className={cn(
-              "min-h-11 rounded-2xl border px-3 py-3 text-sm font-medium transition",
-              value === option.value
-                ? uiButtonClasses.feedbackSelected
-                : uiButtonClasses.feedbackDefault,
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex gap-3">
-        <button type="button" onClick={onSkip} className={uiButtonClasses.secondary}>
-          Hoppa över
-        </button>
-        <button
-          type="button"
-          onClick={onContinue}
-          className={cn(uiButtonClasses.primary, "flex-[1.3]")}
-        >
-          Fortsätt
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function RunPage() {
   const router = useRouter();
 
@@ -382,7 +73,6 @@ export default function RunPage() {
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
 
-  // Ladda användare. Om nätet faller tillbaka används lokal nyckel.
   useEffect(() => {
     let isMounted = true;
 
@@ -411,15 +101,13 @@ export default function RunPage() {
           return;
         }
 
-        const fallbackUserId = resolveLocalFallbackUserId();
-        setResolvedUserId(fallbackUserId);
+        setResolvedUserId(resolveLocalFallbackUserId());
       } catch {
         if (!isMounted) {
           return;
         }
 
-        const fallbackUserId = resolveLocalFallbackUserId();
-        setResolvedUserId(fallbackUserId);
+        setResolvedUserId(resolveLocalFallbackUserId());
       }
     }
 
@@ -430,7 +118,6 @@ export default function RunPage() {
     };
   }, []);
 
-  // Ladda workout draft lokalt.
   useEffect(() => {
     if (!resolvedUserId) {
       setLoading(false);
@@ -518,8 +205,6 @@ export default function RunPage() {
     return "Spara set";
   }, [timedExercise, timerState]);
 
-  const canUsePrimaryAction = true;
-
   function handlePrimaryAction() {
     if (timedExercise) {
       if (timerState === "idle") {
@@ -565,7 +250,8 @@ export default function RunPage() {
         <div className="mx-auto max-w-3xl space-y-4">
           <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
             <p className="text-sm leading-6 text-slate-600">
-              Inget aktivt pass hittades. Gå tillbaka till home och starta ett nytt pass.
+              Inget aktivt pass hittades. Gå tillbaka till home och starta ett
+              nytt pass.
             </p>
 
             <button
@@ -650,38 +336,13 @@ export default function RunPage() {
     <main className="min-h-screen bg-slate-50 pb-32">
       <div className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <div className="bg-slate-900 px-5 pb-6 pt-5 text-white">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-300">
-                  Pass pågår
-                </p>
-                <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
-                  {workout.name}
-                </h1>
-                <p className="mt-3 text-sm leading-6 text-slate-200">
-                  Hej {getDisplayName(authUser)}. Fokusera bara på nästa handling.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => router.push("/home")}
-                className="min-h-11 shrink-0 rounded-2xl border border-white/30 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-100 active:scale-[0.99]"
-              >
-                Avbryt
-              </button>
-            </div>
-
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              <SaveStatusPill status={saveStatus} />
-              {restoreNotice ? (
-                <span className="inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
-                  {restoreNotice}
-                </span>
-              ) : null}
-            </div>
-          </div>
+          <RunHeader
+            workoutName={workout.name}
+            displayName={getDisplayName(authUser)}
+            onAbort={() => router.push("/home")}
+          >
+            <RunSaveStatus status={saveStatus} restoreNotice={restoreNotice} />
+          </RunHeader>
 
           <div className="space-y-4 px-5 py-5">
             {pageError ? (
@@ -712,137 +373,44 @@ export default function RunPage() {
                   </div>
                 </div>
 
-                <SetDots totalSets={currentExercise.sets} currentSet={currentSet} />
-
-                <DescriptionToggle description={currentExercise.description} />
+                <SetProgress
+                  totalSets={currentExercise.sets}
+                  currentSet={currentSet}
+                />
 
                 {!showExerciseFeedback ? (
-                  <>
-                    {!timedExercise ? (
-                      <section className="space-y-4 rounded-[28px] border border-slate-200 bg-slate-50 p-4">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                              Reps
-                            </p>
-                            <input
-                              inputMode="numeric"
-                              value={reps}
-                              onChange={(event) => setReps(event.target.value)}
-                              className="mt-2 w-full border-none bg-transparent p-0 text-3xl font-semibold text-slate-900 outline-none"
-                            />
-                            <p className="mt-1 text-sm text-slate-500">
-                              Planerat: {currentExercise.reps ?? "-"}
-                            </p>
-                          </div>
-
-                          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                              Vikt
-                            </p>
-                            <div className="mt-2 flex items-end gap-2">
-                              <input
-                                inputMode="decimal"
-                                value={weight}
-                                onChange={(event) => updateWeight(event.target.value)}
-                                className="w-full border-none bg-transparent p-0 text-3xl font-semibold text-slate-900 outline-none"
-                              />
-                              <span className="pb-1 text-sm font-medium text-slate-500">
-                                kg
-                              </span>
-                            </div>
-                            <p className="mt-1 text-sm text-slate-500">
-                              {suggestedWeightValue
-                                ? `AI-förslag: ${suggestedWeightValue} kg`
-                                : "Ingen vikt föreslagen"}
-                            </p>
-                          </div>
-                        </div>
-
-                        <WeightChipRow
-                          chips={weightChipOptions}
-                          selectedWeight={weight}
-                          suggestedWeight={suggestedWeightValue}
-                          onSelect={chooseWeightChip}
-                        />
-                      </section>
-                    ) : (
-                      <section className="space-y-4 rounded-[28px] border border-slate-200 bg-slate-50 p-4">
-                        <div className="rounded-[28px] border border-slate-200 bg-white p-5 text-center shadow-sm">
-                          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-                            Tid för set
-                          </p>
-                          <div className="mt-3 text-6xl font-semibold tracking-tight text-slate-900">
-                            {formatTimerClock(elapsedSeconds)}
-                          </div>
-                          <p className="mt-3 text-sm text-slate-500">
-                            Mål: {formatDuration(currentExercise.duration ?? 0)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                            Vikt
-                          </p>
-                          <div className="mt-2 flex items-end gap-2">
-                            <input
-                              inputMode="decimal"
-                              value={weight}
-                              onChange={(event) => updateWeight(event.target.value)}
-                              className="w-full border-none bg-transparent p-0 text-3xl font-semibold text-slate-900 outline-none"
-                            />
-                            <span className="pb-1 text-sm font-medium text-slate-500">
-                              kg
-                            </span>
-                          </div>
-                          <p className="mt-1 text-sm text-slate-500">
-                            {suggestedWeightValue
-                              ? `AI-förslag: ${suggestedWeightValue} kg`
-                              : "Valfri vikt"}
-                          </p>
-                        </div>
-
-                        <WeightChipRow
-                          chips={weightChipOptions}
-                          selectedWeight={weight}
-                          suggestedWeight={suggestedWeightValue}
-                          onSelect={chooseWeightChip}
-                        />
-                      </section>
-                    )}
-
-                    {showRestTimer ? (
-                      <section className="rounded-[24px] border border-sky-100 bg-sky-50 px-4 py-4">
-                        <div className="flex items-center justify-between gap-4">
-                          <div>
-                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-sky-600">
-                              Vila
-                            </p>
-                            <p className="mt-1 text-2xl font-semibold text-sky-950">
-                              {formatTimerClock(restRemainingSeconds)}
-                            </p>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => setRestTimerRunning(!restTimerRunning)}
-                            className={uiButtonClasses.secondary}
-                          >
-                            {restTimerRunning ? "Pausa" : "Starta"}
-                          </button>
-                        </div>
-                      </section>
-                    ) : null}
-                  </>
+                  <CurrentExerciseCard
+                    exerciseName={currentExercise.name}
+                    description={currentExercise.description}
+                    timedExercise={timedExercise}
+                    reps={reps}
+                    onRepsChange={setReps}
+                    plannedReps={currentExercise.reps}
+                    weight={weight}
+                    onWeightChange={updateWeight}
+                    suggestedWeightValue={suggestedWeightValue}
+                    weightChipOptions={weightChipOptions}
+                    onWeightChipSelect={chooseWeightChip}
+                    elapsedSeconds={elapsedSeconds}
+                    targetDurationSeconds={currentExercise.duration}
+                    showRestTimer={showRestTimer}
+                    restRemainingSeconds={restRemainingSeconds}
+                    restTimerRunning={restTimerRunning}
+                    onToggleRestTimer={() =>
+                      setRestTimerRunning(!restTimerRunning)
+                    }
+                  />
                 ) : timedExercise ? (
-                  <TimedFeedbackRow
+                  <EffortFeedbackRow
+                    mode="timed"
                     value={selectedTimedEffort}
                     onChange={setSelectedTimedEffort}
                     onSkip={moveToNextExercise}
                     onContinue={submitExerciseFeedback}
                   />
                 ) : (
-                  <RepsFeedbackRow
+                  <EffortFeedbackRow
+                    mode="reps"
                     value={selectedExtraReps}
                     onChange={setSelectedExtraReps}
                     onSkip={moveToNextExercise}
@@ -850,13 +418,8 @@ export default function RunPage() {
                   />
                 )}
 
-                {!showExerciseFeedback && nextExerciseName ? (
-                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-                    Nästa övning:{" "}
-                    <span className="font-medium text-slate-900">
-                      {nextExerciseName}
-                    </span>
-                  </div>
+                {!showExerciseFeedback ? (
+                  <NextExerciseHint nextExerciseName={nextExerciseName} />
                 ) : null}
 
                 <div className="grid gap-3 sm:grid-cols-3">
@@ -917,7 +480,6 @@ export default function RunPage() {
             <button
               type="button"
               onClick={handlePrimaryAction}
-              disabled={!canUsePrimaryAction}
               className={cn(uiButtonClasses.primary, "flex-[1.4]")}
             >
               {primaryButtonLabel}
