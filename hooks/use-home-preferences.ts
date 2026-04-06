@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const MIN_DURATION = 5;
 const MAX_DURATION = 180;
@@ -21,49 +21,62 @@ function getStorageKey(userId: string) {
   return `ai-workout-settings:${userId}`;
 }
 
+type StoredHomePreferences = {
+  duration?: unknown;
+  gymId?: unknown;
+};
+
 type UseHomePreferencesParams = {
   userId?: string | null;
   defaultGymId?: string;
+  defaultDuration?: number;
 };
 
 export function useHomePreferences({
   userId,
   defaultGymId = DEFAULT_GYM_ID,
+  defaultDuration = DEFAULT_DURATION,
 }: UseHomePreferencesParams) {
-  const [selectedDuration, setSelectedDuration] = useState(DEFAULT_DURATION);
-  const [durationInput, setDurationInput] = useState(String(DEFAULT_DURATION));
+  const safeDefaultDuration = useMemo(
+    () => clampDuration(defaultDuration),
+    [defaultDuration],
+  );
+
+  const [selectedDuration, setSelectedDuration] = useState(safeDefaultDuration);
+  const [durationInput, setDurationInput] = useState(
+    String(safeDefaultDuration),
+  );
   const [selectedGymId, setSelectedGymId] = useState(defaultGymId);
   const [hasLoadedPreferences, setHasLoadedPreferences] = useState(false);
 
   useEffect(() => {
+    // Ingen användare ännu: använd rena defaults.
     if (!userId) {
-      setSelectedDuration(DEFAULT_DURATION);
-      setDurationInput(String(DEFAULT_DURATION));
+      setSelectedDuration(safeDefaultDuration);
+      setDurationInput(String(safeDefaultDuration));
       setSelectedGymId(defaultGymId);
       setHasLoadedPreferences(true);
       return;
     }
 
+    setHasLoadedPreferences(false);
+
     try {
       const raw = localStorage.getItem(getStorageKey(userId));
 
       if (!raw) {
-        setSelectedDuration(DEFAULT_DURATION);
-        setDurationInput(String(DEFAULT_DURATION));
+        setSelectedDuration(safeDefaultDuration);
+        setDurationInput(String(safeDefaultDuration));
         setSelectedGymId(defaultGymId);
-        setHasLoadedPreferences(true);
         return;
       }
 
-      const parsed = JSON.parse(raw) as {
-        duration?: unknown;
-        gymId?: unknown;
-      };
+      const parsed = JSON.parse(raw) as StoredHomePreferences;
 
       const nextDuration =
         typeof parsed.duration === "number"
           ? clampDuration(parsed.duration)
-          : DEFAULT_DURATION;
+          : safeDefaultDuration;
 
       const nextGymId =
         typeof parsed.gymId === "string" && parsed.gymId.trim()
@@ -75,15 +88,17 @@ export function useHomePreferences({
       setSelectedGymId(nextGymId);
     } catch (error) {
       console.error("Kunde inte läsa sparade home-val:", error);
-      setSelectedDuration(DEFAULT_DURATION);
-      setDurationInput(String(DEFAULT_DURATION));
+
+      setSelectedDuration(safeDefaultDuration);
+      setDurationInput(String(safeDefaultDuration));
       setSelectedGymId(defaultGymId);
     } finally {
       setHasLoadedPreferences(true);
     }
-  }, [defaultGymId, userId]);
+  }, [defaultGymId, safeDefaultDuration, userId]);
 
   useEffect(() => {
+    // Spara inte förrän vi säkert har laddat initial state.
     if (!userId || !hasLoadedPreferences) {
       return;
     }
@@ -126,6 +141,12 @@ export function useHomePreferences({
     setDurationInput(String(clamped));
   }
 
+  function resetToDefaults() {
+    setSelectedDuration(safeDefaultDuration);
+    setDurationInput(String(safeDefaultDuration));
+    setSelectedGymId(defaultGymId);
+  }
+
   return {
     selectedDuration,
     durationInput,
@@ -135,5 +156,6 @@ export function useHomePreferences({
     updateDuration,
     updateDurationInput,
     commitDurationInput,
+    resetToDefaults,
   };
 }

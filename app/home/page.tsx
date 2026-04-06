@@ -357,18 +357,27 @@ export default function HomePage() {
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
 
-  const {
-    selectedDuration,
-    durationInput,
-    selectedGymId,
-    setSelectedGymId,
-    updateDuration,
-    updateDurationInput,
-    commitDurationInput,
-  } = useHomePreferences({
-    userId: authUser?.id ? String(authUser.id) : null,
-    defaultGymId: BODYWEIGHT_GYM_ID,
-  });
+const {
+  selectedDuration,
+  durationInput,
+  selectedGymId,
+  hasLoadedPreferences,
+  setSelectedGymId,
+  updateDuration,
+  updateDurationInput,
+  commitDurationInput,
+} = useHomePreferences({
+  userId: authUser?.id ? String(authUser.id) : null,
+  defaultGymId: BODYWEIGHT_GYM_ID,
+});
+
+const canUseStartActions =
+  authChecked &&
+  !!authUser &&
+  hasLoadedPreferences &&
+  !isLoadingGyms &&
+  !isStartingWorkout &&
+  !isOpeningPreview;
 
   useEffect(() => {
     let isMounted = true;
