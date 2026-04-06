@@ -9,6 +9,7 @@ import RunHeader from "@/components/run/run-header";
 import SetProgress from "@/components/run/set-progress";
 import { clearActiveWorkoutSessionDraft } from "@/lib/active-workout-session-storage";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
+import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 import { getWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
 import { useActiveWorkout } from "@/hooks/use-active-workout";
 import type { Workout } from "@/types/workout";
@@ -125,7 +126,9 @@ export default function RunPage() {
 
     try {
       const storedWorkout = getWorkoutDraft(resolvedUserId) as Workout | null;
-      setWorkout(storedWorkout);
+      const normalizedWorkout = normalizePreviewWorkout(storedWorkout) as Workout | null;
+
+      setWorkout(normalizedWorkout);
       setLoading(false);
     } catch {
       setWorkout(null);
@@ -247,8 +250,7 @@ export default function RunPage() {
         <div className="mx-auto max-w-3xl space-y-4">
           <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
             <p className="text-sm leading-6 text-slate-600">
-              Inget aktivt pass hittades. Gå tillbaka till home och starta ett
-              nytt pass.
+              Inget aktivt pass hittades. Gå tillbaka till home och starta ett nytt pass.
             </p>
 
             <button

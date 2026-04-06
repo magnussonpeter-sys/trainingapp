@@ -25,9 +25,7 @@ function DescriptionToggle({
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
-  if (!description?.trim()) {
-    return null;
-  }
+  const hasDescription = Boolean(description?.trim());
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white">
@@ -54,7 +52,11 @@ function DescriptionToggle({
 
       {isOpen ? (
         <div className="border-t border-slate-100 px-4 py-4">
-          <p className="text-sm leading-6 text-slate-600">{description}</p>
+          <p className="text-sm leading-6 text-slate-600">
+            {hasDescription
+              ? description
+              : "Ingen beskrivning tillgänglig ännu."}
+          </p>
         </div>
       ) : null}
     </section>
