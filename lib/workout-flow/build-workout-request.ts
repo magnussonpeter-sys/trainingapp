@@ -1,13 +1,11 @@
-import type { Workout } from "@/types/workout";
+// Bygger request till workout-generatorn från home-valen.
 
-// Målkategorier som home använder just nu.
 export type WorkoutGoal =
   | "strength"
   | "hypertrophy"
   | "health"
   | "body_composition";
 
-// Enkel gymtyp för request-byggaren.
 export type WorkoutFlowGym = {
   id: string | number;
   name: string;
@@ -33,7 +31,6 @@ export type BuiltWorkoutRequest = {
   gymLabel: string;
 };
 
-// Bygger ett stabilt request-objekt från home-valen.
 export function buildWorkoutRequest({
   userId,
   goal,
@@ -46,7 +43,7 @@ export function buildWorkoutRequest({
 }: BuildWorkoutRequestParams): BuiltWorkoutRequest {
   const safeGoal: WorkoutGoal = goal ?? "strength";
 
-  // Kroppsviktsläge ska alltid fungera utan extra data.
+  // Kroppsviktsläge ska alltid fungera direkt.
   if (selectedGymId === bodyweightGymId) {
     return {
       userId,
@@ -73,8 +70,3 @@ export function buildWorkoutRequest({
     gymLabel,
   };
 }
-
-// Hjälper vid typer när workout-generatorn svarar.
-export type GeneratedWorkoutResult = {
-  workout: Workout;
-};

@@ -6,14 +6,14 @@ type SaveWorkoutDraftParams = {
   workout: Workout;
 };
 
-// Samlar lagring av draft/preview på ett ställe.
+// Samlar draft-lagring på ett ställe.
 export function saveWorkoutDraft({
   userId,
   workout,
 }: SaveWorkoutDraftParams): void {
-  // Preview-versionen används av preview-flödet.
+  // Preview använder generated_workout.
   saveGeneratedWorkout(userId, workout);
 
-  // Active-versionen används av run-flödet.
+  // Run använder active_workout.
   saveActiveWorkout(userId, workout);
 }

@@ -1,6 +1,6 @@
 import type { Exercise, Workout } from "@/types/workout";
 
-// Skapar stabilt id för pass och övningar.
+// Skapar stabila id:n för pass och övningar.
 function createId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -15,7 +15,7 @@ type NormalizePreviewWorkoutParams = {
   gymLabel: string;
 };
 
-// Säkerställer att workout alltid har format som preview/run klarar.
+// Säkerställer att workout-formatet fungerar i preview/run.
 export function normalizePreviewWorkout({
   workout,
   duration,

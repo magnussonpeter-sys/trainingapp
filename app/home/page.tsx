@@ -61,7 +61,7 @@ const QUICK_DURATION_OPTIONS = [15, 20, 30, 45] as const;
 const BODYWEIGHT_GYM_ID = "bodyweight";
 const BODYWEIGHT_LABEL = "Kroppsvikt / utan gym";
 
-// Håller gym-listan robust även om API-formatet varierar lite.
+// Normaliserar gym-listan även om API-formatet varierar lite.
 function normalizeGyms(data: unknown): Gym[] {
   if (Array.isArray(data)) {
     return data
@@ -93,7 +93,7 @@ function normalizeGyms(data: unknown): Gym[] {
   return [];
 }
 
-// Plockar ut användbara utrustningssträngar från olika API-format.
+// Plockar ut rimliga utrustningsnamn från olika API-format.
 function extractEquipmentStrings(input: unknown): string[] {
   if (!Array.isArray(input)) {
     return [];
@@ -137,7 +137,7 @@ function extractEquipmentStrings(input: unknown): string[] {
   return Array.from(values);
 }
 
-// Normaliserar ett enskilt gym med utrustning.
+// Normaliserar ett enskilt gymobjekt med utrustning.
 function normalizeGymDetail(data: unknown): GymDetail | null {
   if (!data || typeof data !== "object") {
     return null;
@@ -170,7 +170,7 @@ function normalizeGymDetail(data: unknown): GymDetail | null {
   return null;
 }
 
-// Fallback för namn i hälsningen.
+// Väljer bästa möjliga namn för hälsningen.
 function getDisplayName(user: AuthUser | null) {
   if (!user) {
     return "Där";
@@ -185,7 +185,7 @@ function getDisplayName(user: AuthUser | null) {
   );
 }
 
-// Fina datum för senaste pass.
+// Formaterar datum för senaste pass.
 function formatDateTime(value: string) {
   try {
     return new Date(value).toLocaleString("sv-SE", {
@@ -200,19 +200,18 @@ function formatDateTime(value: string) {
   }
 }
 
-// Kort visning av träningslängd.
+// Formaterar träningslängd i minuter.
 function formatDurationMinutes(seconds: number) {
   const minutes = Math.max(1, Math.round(seconds / 60));
-
   return `${minutes} min`;
 }
 
-// Summerar set i senaste passet.
+// Räknar totalt antal set i ett loggat pass.
 function getTotalSets(log: WorkoutLog) {
   return log.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
 }
 
-// En enkel, användbar etikett för målet.
+// Visar mänsklig etikett för måltypen.
 function getGoalLabel(goal: Goal | null | undefined) {
   switch (goal) {
     case "strength":
@@ -228,7 +227,7 @@ function getGoalLabel(goal: Goal | null | undefined) {
   }
 }
 
-// Enkel statusrad på home i stället för tung dashboard.
+// Enkel statusruta på home utan tung dashboard-logik.
 function buildHomeStatus(params: {
   logs: WorkoutLog[];
   goal: Goal | null | undefined;
@@ -277,11 +276,13 @@ export default function HomePage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
+  // Data som behövs för home.
   const [gyms, setGyms] = useState<Gym[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [workoutLogs, setWorkoutLogs] = useState<WorkoutLog[]>([]);
   const [logsSource, setLogsSource] = useState<"api" | "local">("api");
 
+  // UI-state för laddning och handlingar.
   const [isLoadingGyms, setIsLoadingGyms] = useState(false);
   const [isStartingWorkout, setIsStartingWorkout] = useState(false);
   const [isOpeningPreview, setIsOpeningPreview] = useState(false);
@@ -290,6 +291,7 @@ export default function HomePage() {
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
 
+  // Hook för senaste val på home.
   const {
     selectedDuration,
     durationInput,
@@ -311,7 +313,7 @@ export default function HomePage() {
       try {
         setPageError(null);
 
-        // Börja alltid med att hämta användaren.
+        // Börja med aktuell användare.
         const authRes = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
@@ -339,7 +341,7 @@ export default function HomePage() {
         setIsLoadingGyms(true);
         setGymError(null);
 
-        // Home behöver bara gym, settings och senaste loggar.
+        // Home behöver i huvudsak gym, settings och senaste loggar.
         const [gymsRes, settingsRes] = await Promise.all([
           fetch(`/api/gyms?userId=${encodeURIComponent(userId)}`, {
             cache: "no-store",
@@ -375,7 +377,7 @@ export default function HomePage() {
           const normalizedGyms = normalizeGyms(gymsData);
           setGyms(normalizedGyms);
 
-          // Om senaste gym saknas längre, gå tillbaka till kroppsvikt.
+          // Om valt gym inte längre finns kvar, gå tillbaka till kroppsvikt.
           setSelectedGymId((prev) => {
             if (prev === BODYWEIGHT_GYM_ID) {
               return prev;
@@ -393,7 +395,7 @@ export default function HomePage() {
           setSettings(settingsData.settings ?? null);
         }
 
-        // Läs historik från API, annars lokal fallback.
+        // Hämta historik från API, annars lokal fallback.
         try {
           const logsRes = await fetch(
             `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=12`,
@@ -490,6 +492,7 @@ export default function HomePage() {
     ).length;
   }, [workoutLogs]);
 
+  // Startknapparna aktiveras först när allt nödvändigt är laddat.
   const canUseStartActions =
     authChecked &&
     !!authUser &&
@@ -528,6 +531,7 @@ export default function HomePage() {
 
     const userId = String(authUser.id);
 
+    // Ladda gymdetaljer bara när ett riktigt gym är valt.
     const gymDetail =
       selectedGymId === BODYWEIGHT_GYM_ID
         ? null
@@ -553,7 +557,7 @@ export default function HomePage() {
       setIsStartingWorkout(true);
       setPageError(null);
 
-      // Bygg request enligt nya workout-flow-lagret.
+      // Bygg request enligt workout-flow-lagret.
       const request = await buildSelectedWorkoutRequest();
 
       const result = await generateWorkout({
@@ -569,12 +573,13 @@ export default function HomePage() {
         gymLabel: request.gymLabel,
       });
 
-      // Spara draft/active på ett ställe.
+      // Spara draft och active på ett ställe.
       saveWorkoutDraft({
         userId: request.userId,
         workout: normalizedWorkout,
       });
 
+      // Defaultflödet enligt planen är direkt till run.
       router.push("/workout/run");
     } catch (error) {
       console.error("Kunde inte starta AI-pass direkt:", error);
@@ -603,7 +608,7 @@ export default function HomePage() {
       params.set("duration", String(selectedDuration));
       params.set("userId", String(authUser.id));
 
-      // Bodyweight-läge skickas separat.
+      // Preview är valfritt sidospår.
       if (selectedGymId === BODYWEIGHT_GYM_ID) {
         params.set("gymMode", "bodyweight");
       } else if (selectedGymId) {
@@ -612,7 +617,7 @@ export default function HomePage() {
 
       router.push(`/workout/preview?${params.toString()}`);
     } finally {
-      // Navigation sker direkt, så state kan återställas direkt.
+      // Navigation sker direkt.
       setIsOpeningPreview(false);
     }
   }
@@ -665,6 +670,7 @@ export default function HomePage() {
       isAdmin={authUser?.role === "admin"}
     >
       <div className="flex flex-col gap-5">
+        {/* Enkel toppyta med liten status och tydligt fokus på start. */}
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <p className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400">
             Hej igen
