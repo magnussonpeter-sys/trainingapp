@@ -65,6 +65,18 @@ function resolveLocalFallbackUserId() {
   return "";
 }
 
+function clampNumber(value: number, min: number, max?: number) {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+
+  if (typeof max === "number") {
+    return Math.min(Math.max(value, min), max);
+  }
+
+  return Math.max(value, min);
+}
+
 export default function RunPage() {
   const router = useRouter();
 
@@ -208,6 +220,86 @@ export default function RunPage() {
 
     return "Spara set";
   }, [timedExercise, timerState]);
+
+  function updateCurrentExerciseField(field: string, value: number) {
+    setWorkout((previous) => {
+      if (!previous || !currentExercise) {
+        return previous;
+      }
+
+      const nextExercises = previous.exercises.map((exercise) => {
+        if (exercise.id !== currentExercise.id) {
+          return exercise;
+        }
+
+        return {
+          ...exercise,
+          [field]: value,
+        };
+      });
+
+      return {
+        ...previous,
+        exercises: nextExercises,
+      };
+    });
+  }
+
+  function handleIncreaseSets() {
+    updateCurrentExerciseField(
+      "sets",
+      clampNumber((currentExercise?.sets ?? 1) + 1, 1, 10),
+    );
+  }
+
+  function handleDecreaseSets() {
+    updateCurrentExerciseField(
+      "sets",
+      clampNumber((currentExercise?.sets ?? 1) - 1, 1, 10),
+    );
+  }
+
+  function handleIncreaseReps() {
+    updateCurrentExerciseField(
+      "reps",
+      clampNumber((currentExercise?.reps ?? 8) + 1, 1, 30),
+    );
+  }
+
+  function handleDecreaseReps() {
+    updateCurrentExerciseField(
+      "reps",
+      clampNumber((currentExercise?.reps ?? 8) - 1, 1, 30),
+    );
+  }
+
+  function handleIncreaseDuration() {
+    updateCurrentExerciseField(
+      "duration",
+      clampNumber((currentExercise?.duration ?? 30) + 5, 5, 300),
+    );
+  }
+
+  function handleDecreaseDuration() {
+    updateCurrentExerciseField(
+      "duration",
+      clampNumber((currentExercise?.duration ?? 30) - 5, 5, 300),
+    );
+  }
+
+  function handleIncreaseRest() {
+    updateCurrentExerciseField(
+      "rest",
+      clampNumber((currentExercise?.rest ?? 45) + 15, 0, 300),
+    );
+  }
+
+  function handleDecreaseRest() {
+    updateCurrentExerciseField(
+      "rest",
+      clampNumber((currentExercise?.rest ?? 45) - 15, 0, 300),
+    );
+  }
 
   function handlePrimaryAction() {
     if (timedExercise) {
@@ -491,6 +583,7 @@ export default function RunPage() {
       <RunOptionsSheet
         open={optionsOpen}
         currentExerciseName={currentExercise?.name}
+        plannedSets={currentExercise?.sets}
         plannedReps={currentExercise?.reps}
         plannedDuration={currentExercise?.duration}
         plannedRest={currentExercise?.rest}
@@ -500,6 +593,14 @@ export default function RunPage() {
         onSkipExercise={handleSkipExerciseFromSheet}
         onAbortWorkout={handleAbortFromSheet}
         onResetTimedSet={handleResetTimedSetFromSheet}
+        onIncreaseSets={handleIncreaseSets}
+        onDecreaseSets={handleDecreaseSets}
+        onIncreaseReps={handleIncreaseReps}
+        onDecreaseReps={handleDecreaseReps}
+        onIncreaseDuration={handleIncreaseDuration}
+        onDecreaseDuration={handleDecreaseDuration}
+        onIncreaseRest={handleIncreaseRest}
+        onDecreaseRest={handleDecreaseRest}
       />
     </main>
   );

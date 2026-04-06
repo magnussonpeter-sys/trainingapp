@@ -23,9 +23,54 @@ function formatDuration(seconds?: number) {
   return `${minutes} min ${restSeconds} s`;
 }
 
+type ValueAdjusterProps = {
+  label: string;
+  value: string;
+  onDecrease: () => void;
+  onIncrease: () => void;
+};
+
+function ValueAdjuster({
+  label,
+  value,
+  onDecrease,
+  onIncrease,
+}: ValueAdjusterProps) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-3">
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+        {label}
+      </p>
+
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={onDecrease}
+          className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-lg font-semibold text-slate-700 transition active:scale-[0.98]"
+        >
+          −
+        </button>
+
+        <div className="min-w-[72px] text-center text-base font-semibold text-slate-900">
+          {value}
+        </div>
+
+        <button
+          type="button"
+          onClick={onIncrease}
+          className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-lg font-semibold text-slate-700 transition active:scale-[0.98]"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+}
+
 type RunOptionsSheetProps = {
   open: boolean;
   currentExerciseName?: string;
+  plannedSets?: number;
   plannedReps?: number;
   plannedDuration?: number;
   plannedRest?: number;
@@ -35,11 +80,20 @@ type RunOptionsSheetProps = {
   onSkipExercise: () => void;
   onAbortWorkout: () => void;
   onResetTimedSet: () => void;
+  onIncreaseSets: () => void;
+  onDecreaseSets: () => void;
+  onIncreaseReps: () => void;
+  onDecreaseReps: () => void;
+  onIncreaseDuration: () => void;
+  onDecreaseDuration: () => void;
+  onIncreaseRest: () => void;
+  onDecreaseRest: () => void;
 };
 
 export default function RunOptionsSheet({
   open,
   currentExerciseName,
+  plannedSets,
   plannedReps,
   plannedDuration,
   plannedRest,
@@ -49,6 +103,14 @@ export default function RunOptionsSheet({
   onSkipExercise,
   onAbortWorkout,
   onResetTimedSet,
+  onIncreaseSets,
+  onDecreaseSets,
+  onIncreaseReps,
+  onDecreaseReps,
+  onIncreaseDuration,
+  onDecreaseDuration,
+  onIncreaseRest,
+  onDecreaseRest,
 }: RunOptionsSheetProps) {
   if (!open) {
     return null;
@@ -78,7 +140,7 @@ export default function RunOptionsSheet({
                 Alternativ
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                Avancerade val för pågående pass.
+                Justera aktuell övning utan att störa huvudflödet.
               </p>
             </div>
 
@@ -100,24 +162,36 @@ export default function RunOptionsSheet({
                 {currentExerciseName || "Ingen övning vald"}
               </h3>
 
-              <div className="mt-3 flex flex-wrap gap-2 text-sm text-slate-600">
-                {typeof plannedReps === "number" ? (
-                  <span className="rounded-full bg-white px-3 py-1">
-                    Planerade reps: {plannedReps}
-                  </span>
-                ) : null}
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <ValueAdjuster
+                  label="Set"
+                  value={String(plannedSets ?? 0)}
+                  onDecrease={onDecreaseSets}
+                  onIncrease={onIncreaseSets}
+                />
 
-                {typeof plannedDuration === "number" ? (
-                  <span className="rounded-full bg-white px-3 py-1">
-                    Planerad tid: {formatDuration(plannedDuration)}
-                  </span>
-                ) : null}
+                <ValueAdjuster
+                  label="Vila"
+                  value={formatDuration(plannedRest)}
+                  onDecrease={onDecreaseRest}
+                  onIncrease={onIncreaseRest}
+                />
 
-                {typeof plannedRest === "number" ? (
-                  <span className="rounded-full bg-white px-3 py-1">
-                    Vila: {formatDuration(plannedRest)}
-                  </span>
-                ) : null}
+                {!timedExercise ? (
+                  <ValueAdjuster
+                    label="Reps"
+                    value={String(plannedReps ?? 0)}
+                    onDecrease={onDecreaseReps}
+                    onIncrease={onIncreaseReps}
+                  />
+                ) : (
+                  <ValueAdjuster
+                    label="Tid per set"
+                    value={formatDuration(plannedDuration)}
+                    onDecrease={onDecreaseDuration}
+                    onIncrease={onIncreaseDuration}
+                  />
+                )}
               </div>
             </section>
 
@@ -148,11 +222,6 @@ export default function RunOptionsSheet({
                 Avbryt pass och gå till home
               </button>
             </section>
-
-            <p className="text-xs leading-5 text-slate-500">
-              Nästa steg enligt planen är att lägga ännu fler avancerade val här,
-              så att huvudvyn kan fortsätta vara ren och snabb.
-            </p>
           </div>
         </div>
       </div>
