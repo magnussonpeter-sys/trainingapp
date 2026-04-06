@@ -46,18 +46,6 @@ function getDefaultDurationValue(value: number | undefined) {
   return "";
 }
 
-function clampNumber(value: number, min: number, max?: number) {
-  if (!Number.isFinite(value)) {
-    return min;
-  }
-
-  if (typeof max === "number") {
-    return Math.min(Math.max(value, min), max);
-  }
-
-  return Math.max(value, min);
-}
-
 function normalizeWeightString(value: string) {
   return value.trim().replace(",", ".").replace(/\s+/g, "");
 }
@@ -77,7 +65,6 @@ function formatWeightValue(value: number | string) {
 }
 
 // Försöker hitta AI-föreslagen/planderad vikt från flera möjliga fältnamn.
-// Detta gör hooken tåligare mot olika format.
 function getSuggestedWeightFromExercise(exercise: WorkoutExercise | null) {
   if (!exercise) {
     return "";
@@ -110,7 +97,6 @@ function getSuggestedWeightFromExercise(exercise: WorkoutExercise | null) {
 }
 
 // Bygger viktchips så att AI-förslag kommer först.
-// Sedan läggs några närliggande vikter till för snabb finjustering.
 function buildWeightChipOptions(params: {
   suggestedWeight: string;
   currentWeight: string;
@@ -137,7 +123,9 @@ function buildWeightChipOptions(params: {
   addValue(params.currentWeight);
   addValue(params.lastWeight);
 
-  const baseValue = Number(normalizeWeightString(params.suggestedWeight || params.lastWeight));
+  const baseValue = Number(
+    normalizeWeightString(params.suggestedWeight || params.lastWeight),
+  );
 
   if (Number.isFinite(baseValue) && baseValue > 0) {
     // Några logiska närliggande steg.
@@ -169,15 +157,20 @@ function buildWeightChipOptions(params: {
 }
 
 // Enkla ljudsignaler via Web Audio.
-// Kort pip för countdown, lite tydligare pip vid mål/slut.
-function playBeep(params: { frequency?: number; durationMs?: number; volume?: number }) {
+function playBeep(params: {
+  frequency?: number;
+  durationMs?: number;
+  volume?: number;
+}) {
   if (typeof window === "undefined") {
     return;
   }
 
   const AudioContextClass =
     window.AudioContext ||
-    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    (window as typeof window & {
+      webkitAudioContext?: typeof AudioContext;
+    }).webkitAudioContext;
 
   if (!AudioContextClass) {
     return;
@@ -208,19 +201,28 @@ function playBeep(params: { frequency?: number; durationMs?: number; volume?: nu
   }
 }
 
-export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
+export function useActiveWorkout({
+  userId,
+  workout,
+}: UseActiveWorkoutProps) {
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [currentSet, setCurrentSet] = useState(1);
 
   const [reps, setReps] = useState("");
   const [weight, setWeight] = useState("");
 
-  const [completedExercises, setCompletedExercises] = useState<CompletedExercise[]>([]);
+  const [completedExercises, setCompletedExercises] = useState<
+    CompletedExercise[]
+  >([]);
 
   const [showExerciseFeedback, setShowExerciseFeedback] = useState(false);
-  const [selectedExtraReps, setSelectedExtraReps] = useState<ExtraRepsOption | null>(null);
-  const [selectedTimedEffort, setSelectedTimedEffort] = useState<TimedEffortOption | null>(null);
-  const [selectedRating, setSelectedRating] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
+  const [selectedExtraReps, setSelectedExtraReps] =
+    useState<ExtraRepsOption | null>(null);
+  const [selectedTimedEffort, setSelectedTimedEffort] =
+    useState<TimedEffortOption | null>(null);
+  const [selectedRating, setSelectedRating] = useState<1 | 2 | 3 | 4 | 5 | null>(
+    null,
+  );
 
   const [timerState, setTimerState] = useState<TimerState>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -230,7 +232,9 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
   const [restDurationSeconds, setRestDurationSeconds] = useState(0);
   const [restRemainingSeconds, setRestRemainingSeconds] = useState(0);
 
-  const [lastWeightByExercise, setLastWeightByExercise] = useState<Record<string, string>>({});
+  const [lastWeightByExercise, setLastWeightByExercise] = useState<
+    Record<string, string>
+  >({});
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
@@ -252,7 +256,9 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
       return false;
     }
 
-    return typeof currentExercise.duration === "number" && currentExercise.duration > 0;
+    return (
+      typeof currentExercise.duration === "number" && currentExercise.duration > 0
+    );
   }, [currentExercise]);
 
   const suggestedWeightValue = useMemo(() => {
@@ -269,7 +275,9 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
   }, [currentExercise, lastWeightByExercise]);
 
   const weightChipOptions = useMemo(() => {
-    const lastWeight = currentExercise ? (lastWeightByExercise[currentExercise.id] ?? "") : "";
+    const lastWeight = currentExercise
+      ? (lastWeightByExercise[currentExercise.id] ?? "")
+      : "";
 
     return buildWeightChipOptions({
       suggestedWeight: suggestedWeightValue,
@@ -310,7 +318,7 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
     setRestoreNotice("Tidigare lokalt sparat pass återställt.");
   }, [userId, workout]);
 
-  // Förifyll reps och vikt när övning/set byts, men skriv inte över redan återställd data.
+  // Förifyll reps och vikt när övning/set byts.
   useEffect(() => {
     if (!currentExercise || showExerciseFeedback) {
       return;
@@ -422,7 +430,9 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
         lastWeightByExercise,
         setLog: {
           reps,
-          durationSeconds: timedExercise ? String(elapsedSeconds) : getDefaultDurationValue(currentExercise?.duration),
+          durationSeconds: timedExercise
+            ? String(elapsedSeconds)
+            : getDefaultDurationValue(currentExercise?.duration),
           weight,
           completed: false,
         },
@@ -524,9 +534,15 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
 
     return {
       setNumber: currentSet,
-      plannedReps: typeof currentExercise.reps === "number" ? currentExercise.reps : null,
-      plannedDuration: typeof currentExercise.duration === "number" ? currentExercise.duration : null,
-      plannedWeight: suggestedWeightValue ? Number(normalizeWeightString(suggestedWeightValue)) : null,
+      plannedReps:
+        typeof currentExercise.reps === "number" ? currentExercise.reps : null,
+      plannedDuration:
+        typeof currentExercise.duration === "number"
+          ? currentExercise.duration
+          : null,
+      plannedWeight: suggestedWeightValue
+        ? Number(normalizeWeightString(suggestedWeightValue))
+        : null,
       actualReps: Number.isFinite(actualReps) ? actualReps : null,
       actualDuration: Number.isFinite(actualDuration) ? actualDuration : null,
       actualWeight: Number.isFinite(actualWeight) ? actualWeight : null,
@@ -547,24 +563,26 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
       );
 
       if (existingIndex === -1) {
-        return [
-          ...previous,
-          {
-            exerciseId: currentExercise.id,
-            exerciseName: currentExercise.name,
-            plannedSets: currentExercise.sets,
-            plannedReps:
-              typeof currentExercise.reps === "number" ? currentExercise.reps : null,
-            plannedDuration:
-              typeof currentExercise.duration === "number"
-                ? currentExercise.duration
-                : null,
-            isNewExercise: false,
-            rating: null,
-            extraReps: null,
-            sets: [setItem],
-          },
-        ];
+        const nextExercise: CompletedExercise = {
+          exerciseId: currentExercise.id,
+          exerciseName: currentExercise.name,
+          plannedSets: currentExercise.sets,
+          plannedReps:
+            typeof currentExercise.reps === "number"
+              ? currentExercise.reps
+              : null,
+          plannedDuration:
+            typeof currentExercise.duration === "number"
+              ? currentExercise.duration
+              : null,
+          isNewExercise: false,
+          rating: null,
+          extraReps: null,
+          timedEffort: null,
+          sets: [setItem],
+        };
+
+        return [...previous, nextExercise];
       }
 
       return previous.map((item, index) => {
@@ -668,6 +686,7 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
           ...item,
           extraReps: selectedExtraReps,
           rating: selectedRating,
+          timedEffort: selectedTimedEffort,
           sets: item.sets.map((setItem) => ({
             ...setItem,
             timedEffort: selectedTimedEffort,
