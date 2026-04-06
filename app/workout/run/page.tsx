@@ -7,13 +7,15 @@
 // - chips för snabb viktändring
 // - timer utan störande extralogik
 // - lokal sparstatus tydlig men diskret
-// - enhetliga färger med övriga appen
+// - delade knappstilar i stället för hårdkodade färger
+// - tydligare header och klickbar övningsbeskrivning
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
 import { clearActiveWorkoutSessionDraft } from "@/lib/active-workout-session-storage";
 import { useActiveWorkout } from "@/hooks/use-active-workout";
+import { uiButtonClasses } from "@/lib/ui/button-classes";
 import type { Workout } from "@/types/workout";
 
 type AuthUser = {
@@ -140,7 +142,7 @@ function SetDots({
             className={cn(
               "h-2.5 rounded-full transition-all",
               active
-                ? "w-8 bg-slate-900"
+                ? "w-8 bg-indigo-600"
                 : completed
                   ? "w-2.5 bg-slate-400"
                   : "w-2.5 bg-slate-200",
@@ -183,12 +185,12 @@ function WeightChipRow({
             type="button"
             onClick={() => onSelect(chip)}
             className={cn(
-              "min-h-11 rounded-full border px-3 py-2 text-sm font-medium transition",
+              uiButtonClasses.chip,
               isSelected
-                ? "border-slate-900 bg-slate-900 text-white"
+                ? uiButtonClasses.chipSelected
                 : isSuggested
-                  ? "border-sky-300 bg-sky-50 text-sky-800"
-                  : "border-slate-200 bg-white text-slate-700",
+                  ? uiButtonClasses.chipSuggested
+                  : uiButtonClasses.chipDefault,
             )}
           >
             {chip} kg
@@ -197,6 +199,52 @@ function WeightChipRow({
         );
       })}
     </div>
+  );
+}
+
+function DescriptionToggle({
+  description,
+}: {
+  description?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  if (!description?.trim()) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white">
+      <button
+        type="button"
+        onClick={() => setIsOpen((previous) => !previous)}
+        className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-3 text-left"
+      >
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+            Övningsbeskrivning
+          </p>
+          <p className="mt-1 text-sm font-medium text-slate-700">
+            {isOpen ? "Dölj beskrivning" : "Visa beskrivning"}
+          </p>
+        </div>
+
+        <span
+          className={cn(
+            "text-lg font-semibold text-slate-500 transition-transform",
+            isOpen ? "rotate-180" : "",
+          )}
+        >
+          ˅
+        </span>
+      </button>
+
+      {isOpen ? (
+        <div className="border-t border-slate-100 px-4 py-4">
+          <p className="text-sm leading-6 text-slate-600">{description}</p>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -238,8 +286,8 @@ function RepsFeedbackRow({
             className={cn(
               "min-h-11 rounded-2xl border px-3 py-3 text-sm font-medium transition",
               value === option.value
-                ? "border-slate-900 bg-slate-900 text-white"
-                : "border-slate-200 bg-white text-slate-700",
+                ? uiButtonClasses.feedbackSelected
+                : uiButtonClasses.feedbackDefault,
             )}
           >
             {option.label}
@@ -248,17 +296,13 @@ function RepsFeedbackRow({
       </div>
 
       <div className="flex gap-3">
-        <button
-          type="button"
-          onClick={onSkip}
-          className="min-h-11 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700"
-        >
+        <button type="button" onClick={onSkip} className={uiButtonClasses.secondary}>
           Hoppa över
         </button>
         <button
           type="button"
           onClick={onContinue}
-          className="min-h-11 flex-[1.3] rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+          className={cn(uiButtonClasses.primary, "flex-[1.3]")}
         >
           Fortsätt
         </button>
@@ -304,8 +348,8 @@ function TimedFeedbackRow({
             className={cn(
               "min-h-11 rounded-2xl border px-3 py-3 text-sm font-medium transition",
               value === option.value
-                ? "border-slate-900 bg-slate-900 text-white"
-                : "border-slate-200 bg-white text-slate-700",
+                ? uiButtonClasses.feedbackSelected
+                : uiButtonClasses.feedbackDefault,
             )}
           >
             {option.label}
@@ -314,17 +358,13 @@ function TimedFeedbackRow({
       </div>
 
       <div className="flex gap-3">
-        <button
-          type="button"
-          onClick={onSkip}
-          className="min-h-11 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700"
-        >
+        <button type="button" onClick={onSkip} className={uiButtonClasses.secondary}>
           Hoppa över
         </button>
         <button
           type="button"
           onClick={onContinue}
-          className="min-h-11 flex-[1.3] rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+          className={cn(uiButtonClasses.primary, "flex-[1.3]")}
         >
           Fortsätt
         </button>
@@ -342,7 +382,7 @@ export default function RunPage() {
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
 
-  // Ladda användare. Om nätet faller tillbaka använder vi lokal nyckel.
+  // Ladda användare. Om nätet faller tillbaka används lokal nyckel.
   useEffect(() => {
     let isMounted = true;
 
@@ -478,14 +518,7 @@ export default function RunPage() {
     return "Spara set";
   }, [timedExercise, timerState]);
 
-  // Tidsövning ska alltid kunna gå vidare mellan sina tre lägen.
-  const canUsePrimaryAction = useMemo(() => {
-    if (timedExercise) {
-      return true;
-    }
-
-    return true;
-  }, [timedExercise]);
+  const canUsePrimaryAction = true;
 
   function handlePrimaryAction() {
     if (timedExercise) {
@@ -538,7 +571,7 @@ export default function RunPage() {
             <button
               type="button"
               onClick={() => router.push("/home")}
-              className="mt-4 min-h-11 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+              className={cn(uiButtonClasses.primary, "mt-4")}
             >
               Till home
             </button>
@@ -604,7 +637,7 @@ export default function RunPage() {
           <button
             type="button"
             onClick={handleGoHome}
-            className="min-h-11 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+            className={cn(uiButtonClasses.primary, "w-full")}
           >
             Till home
           </button>
@@ -634,7 +667,7 @@ export default function RunPage() {
               <button
                 type="button"
                 onClick={() => router.push("/home")}
-                className="min-h-11 shrink-0 rounded-2xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-white"
+                className="min-h-11 shrink-0 rounded-2xl border border-white/30 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-100 active:scale-[0.99]"
               >
                 Avbryt
               </button>
@@ -681,11 +714,7 @@ export default function RunPage() {
 
                 <SetDots totalSets={currentExercise.sets} currentSet={currentSet} />
 
-                {currentExercise.description ? (
-                  <p className="text-sm leading-6 text-slate-600">
-                    {currentExercise.description}
-                  </p>
-                ) : null}
+                <DescriptionToggle description={currentExercise.description} />
 
                 {!showExerciseFeedback ? (
                   <>
@@ -797,7 +826,7 @@ export default function RunPage() {
                           <button
                             type="button"
                             onClick={() => setRestTimerRunning(!restTimerRunning)}
-                            className="min-h-11 rounded-2xl border border-sky-200 bg-white px-4 py-3 text-sm font-medium text-sky-800"
+                            className={uiButtonClasses.secondary}
                           >
                             {restTimerRunning ? "Pausa" : "Starta"}
                           </button>
@@ -870,7 +899,7 @@ export default function RunPage() {
             <button
               type="button"
               onClick={skipExercise}
-              className="min-h-11 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700"
+              className={cn(uiButtonClasses.secondary, "flex-1")}
             >
               Hoppa över
             </button>
@@ -879,7 +908,7 @@ export default function RunPage() {
               <button
                 type="button"
                 onClick={resetTimer}
-                className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700"
+                className={uiButtonClasses.secondary}
               >
                 Kör igen
               </button>
@@ -889,12 +918,7 @@ export default function RunPage() {
               type="button"
               onClick={handlePrimaryAction}
               disabled={!canUsePrimaryAction}
-              className={cn(
-                "min-h-11 flex-[1.4] rounded-2xl px-4 py-3 text-sm font-semibold shadow-sm",
-                canUsePrimaryAction
-                  ? "bg-slate-900 text-white"
-                  : "cursor-not-allowed bg-slate-300 text-slate-500",
-              )}
+              className={cn(uiButtonClasses.primary, "flex-[1.4]")}
             >
               {primaryButtonLabel}
             </button>
