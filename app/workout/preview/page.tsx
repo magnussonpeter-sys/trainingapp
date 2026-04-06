@@ -1,54 +1,99 @@
 "use client";
 
-// Preview sida = TUNN container
-// All logik ligger i hook
+// Preview-sida = tunn container.
+// All huvudsaklig logik ligger i hooken.
 
-import { useWorkoutPreview } from "@/hooks/use-workout-preview";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { useWorkoutPreview } from "@/hooks/use-workout-preview";
+
+type SessionUserWithId = {
+  id?: string;
+  name?: string | null;
+  email?: string | null;
+  image?: string | null;
+};
 
 export default function PreviewPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
 
-  const userId = session?.user?.id as string;
+  // NextAuths standardtyp saknar id, så vi läser ut det via en lokal typ.
+  const userId = (session?.user as SessionUserWithId | undefined)?.id ?? "";
 
-  const {
-    workout,
-    loading,
-    updateExercise,
-    removeExercise,
-  } = useWorkoutPreview({ userId });
+  const { workout, loading, updateExercise, removeExercise } =
+    useWorkoutPreview({
+      userId,
+    });
+
+  // Vänta tills sessionen är färdig innan vi försöker visa innehåll.
+  if (status === "loading") {
+    return <div className="p-4">Laddar...</div>;
+  }
+
+  // Om ingen användare finns ska sidan inte försöka jobba vidare.
+  if (!userId) {
+    return (
+      <main className="min-h-screen bg-slate-50 p-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm text-slate-600">
+            Kunde inte läsa in användaren.
+          </p>
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+          >
+            Till startsidan
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   if (loading) {
     return <div className="p-4">Laddar...</div>;
   }
 
   if (!workout) {
-    return <div className="p-4">Inget pass hittades</div>;
+    return (
+      <main className="min-h-screen bg-slate-50 p-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm text-slate-600">Inget pass hittades.</p>
+          <button
+            type="button"
+            onClick={() => router.push("/home")}
+            className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+          >
+            Till hem
+          </button>
+        </div>
+      </main>
+    );
   }
 
   return (
     <main className="min-h-screen bg-slate-50 p-4">
       {/* Header */}
-      <h1 className="text-xl font-semibold mb-2">{workout.name}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+      <h1 className="mb-2 text-xl font-semibold">{workout.name}</h1>
+      <p className="mb-4 text-sm text-slate-500">
         {workout.duration} min • {workout.exercises.length} övningar
       </p>
 
       {/* Lista */}
       <div className="space-y-3">
-        {workout.exercises.map((ex: any, i: number) => (
+        {workout.exercises.map((exercise: any, index: number) => (
           <div
-            key={ex.id}
-            className="rounded-xl bg-white p-4 shadow-sm border"
+            key={exercise.id}
+            className="rounded-xl border bg-white p-4 shadow-sm"
           >
-            <div className="flex justify-between items-center">
-              <h2 className="font-medium">{ex.name}</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-medium">{exercise.name}</h2>
 
               <button
-                onClick={() => removeExercise(i)}
-                className="text-red-500 text-sm"
+                type="button"
+                onClick={() => removeExercise(index)}
+                className="text-sm text-red-500"
               >
                 Ta bort
               </button>
@@ -56,21 +101,23 @@ export default function PreviewPage() {
 
             <div className="mt-2 flex gap-3 text-sm">
               <button
+                type="button"
                 onClick={() =>
-                  updateExercise(i, { sets: ex.sets + 1 })
+                  updateExercise(index, { sets: exercise.sets + 1 })
                 }
-                className="px-2 py-1 bg-slate-100 rounded"
+                className="rounded bg-slate-100 px-2 py-1"
               >
-                Sets: {ex.sets}
+                Sets: {exercise.sets}
               </button>
 
               <button
+                type="button"
                 onClick={() =>
-                  updateExercise(i, { rest: ex.rest + 10 })
+                  updateExercise(index, { rest: exercise.rest + 10 })
                 }
-                className="px-2 py-1 bg-slate-100 rounded"
+                className="rounded bg-slate-100 px-2 py-1"
               >
-                Vila: {ex.rest}s
+                Vila: {exercise.rest}s
               </button>
             </div>
           </div>
@@ -79,8 +126,9 @@ export default function PreviewPage() {
 
       {/* CTA */}
       <button
+        type="button"
         onClick={() => router.push("/workout/run")}
-        className="fixed bottom-4 left-4 right-4 rounded-xl bg-black text-white py-3"
+        className="fixed bottom-4 left-4 right-4 rounded-xl bg-black py-3 text-white"
       >
         Starta pass
       </button>
