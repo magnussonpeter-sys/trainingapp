@@ -565,13 +565,6 @@ const canUseStartActions =
     ).length;
   }, [workoutLogs]);
 
-  const canUseStartActions =
-    authChecked &&
-    !!authUser &&
-    !isLoadingGyms &&
-    !isStartingWorkout &&
-    !isOpeningPreview;
-
   async function loadSelectedGymDetail(params: {
     userId: string;
     gymId: string;
