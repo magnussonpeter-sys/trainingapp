@@ -1,7 +1,5 @@
 "use client";
 
-import Link from "next/link";
-
 import DurationSelector from "@/components/home/duration-selector";
 import GymSelector from "@/components/home/gym-selector";
 import SectionCard from "@/components/app-shell/section-card";
@@ -22,13 +20,10 @@ type HomeStartCardProps = {
   quickDurationOptions: readonly number[];
   bodyweightId: string;
   bodyweightLabel: string;
-  isLoadingGyms: boolean;
+  canUseStartActions: boolean;
   isStartingWorkout: boolean;
   isOpeningPreview: boolean;
-  isDisabled: boolean;
-  gymError?: string | null;
-  pageError?: string | null;
-  onQuickDurationSelect: (duration: number) => void;
+  onDurationSelect: (duration: number) => void;
   onDurationInputChange: (value: string) => void;
   onDurationInputBlur: () => void;
   onGymChange: (value: string) => void;
@@ -36,7 +31,7 @@ type HomeStartCardProps = {
   onReviewFirst: () => void;
 };
 
-// Huvudkortet på home med snabb väg till pass.
+// Huvudkortet på home med snabb väg till AI-pass eller manuell väg.
 export default function HomeStartCard({
   gyms,
   selectedDuration,
@@ -46,31 +41,26 @@ export default function HomeStartCard({
   quickDurationOptions,
   bodyweightId,
   bodyweightLabel,
-  isLoadingGyms,
+  canUseStartActions,
   isStartingWorkout,
   isOpeningPreview,
-  isDisabled,
-  gymError,
-  pageError,
-  onQuickDurationSelect,
+  onDurationSelect,
   onDurationInputChange,
   onDurationInputBlur,
   onGymChange,
   onStartWorkout,
   onReviewFirst,
 }: HomeStartCardProps) {
+  // En gemensam disabled-flagga gör CTA-logiken lättare att läsa.
+  const isStartDisabled = !canUseStartActions || isStartingWorkout;
+  const isPreviewDisabled = !canUseStartActions || isOpeningPreview;
+  const isAnyActionBusy = isStartingWorkout || isOpeningPreview;
+
   return (
     <SectionCard
-      kicker="Starta pass"
-      title="Dagens träning"
-      actions={
-        <Link
-          href="/gyms"
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
-        >
-          Redigera gym
-        </Link>
-      }
+      kicker="Dagens pass"
+      title="Välj upplägg"
+      subtitle="Starta direkt eller granska passet först. Utrustning och passlängd styr AI-förslaget."
       className="rounded-[28px] p-6"
       contentClassName="grid gap-5"
     >
@@ -78,7 +68,7 @@ export default function HomeStartCard({
         value={selectedDuration}
         inputValue={durationInput}
         quickOptions={quickDurationOptions}
-        onQuickSelect={onQuickDurationSelect}
+        onQuickSelect={onDurationSelect}
         onInputChange={onDurationInputChange}
         onInputBlur={onDurationInputBlur}
       />
@@ -87,33 +77,35 @@ export default function HomeStartCard({
         gyms={gyms}
         value={selectedGymId}
         selectedGymName={selectedGymName}
-        isLoading={isLoadingGyms}
-        error={gymError}
+        isLoading={false}
         bodyweightLabel={bodyweightLabel}
         bodyweightId={bodyweightId}
         onChange={onGymChange}
       />
 
-      {pageError ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {pageError}
-        </div>
-      ) : null}
-
-      <div className="grid gap-3">
-        <PrimaryButton onClick={onStartWorkout} disabled={isDisabled}>
+      <div className="grid gap-3 pt-1">
+        <PrimaryButton
+          onClick={onStartWorkout}
+          disabled={isStartDisabled}
+          className="w-full"
+        >
           {isStartingWorkout ? "Startar pass..." : "Starta pass"}
         </PrimaryButton>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <SecondaryButton onClick={onReviewFirst} disabled={isDisabled}>
-            {isOpeningPreview ? "Öppnar..." : "Granska först"}
-          </SecondaryButton>
+        <SecondaryButton
+          onClick={onReviewFirst}
+          disabled={isPreviewDisabled}
+          className="w-full"
+        >
+          {isOpeningPreview ? "Öppnar..." : "Granska först"}
+        </SecondaryButton>
 
-          <SecondaryButton href="/workout/custom">
-            Eget pass
-          </SecondaryButton>
-        </div>
+        <SecondaryButton
+          href="/workout/custom"
+          className={`w-full ${isAnyActionBusy ? "pointer-events-none opacity-60" : ""}`}
+        >
+          Eget pass
+        </SecondaryButton>
       </div>
     </SectionCard>
   );
