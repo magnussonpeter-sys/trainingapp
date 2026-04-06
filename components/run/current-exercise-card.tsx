@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+import ManualWeightInput from "@/components/run/manual-weight-input";
+import TimerPanel from "@/components/run/timer-panel";
 import WeightChipRow from "@/components/run/weight-chip-row";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 
@@ -11,21 +14,6 @@ function formatTimerClock(totalSeconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-function formatDuration(seconds: number) {
-  if (seconds < 60) {
-    return `${seconds} s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const restSeconds = seconds % 60;
-
-  if (!restSeconds) {
-    return `${minutes} min`;
-  }
-
-  return `${minutes} min ${restSeconds} s`;
-}
-
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -35,7 +23,8 @@ function DescriptionToggle({
 }: {
   description?: string;
 }) {
-  const [isOpen, setIsOpen] = React.useState(false);
+  // Lokal toggle för att visa/dölja övningsbeskrivning.
+  const [isOpen, setIsOpen] = useState(false);
 
   if (!description?.trim()) {
     return null;
@@ -90,6 +79,7 @@ type CurrentExerciseCardProps = {
   onWeightChipSelect: (value: string) => void;
   elapsedSeconds: number;
   targetDurationSeconds?: number;
+  timerState: "idle" | "running" | "ready_to_save";
   showRestTimer: boolean;
   restRemainingSeconds: number;
   restTimerRunning: boolean;
@@ -110,6 +100,7 @@ export default function CurrentExerciseCard({
   onWeightChipSelect,
   elapsedSeconds,
   targetDurationSeconds,
+  timerState,
   showRestTimer,
   restRemainingSeconds,
   restTimerRunning,
@@ -137,27 +128,11 @@ export default function CurrentExerciseCard({
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                Vikt
-              </p>
-              <div className="mt-2 flex items-end gap-2">
-                <input
-                  inputMode="decimal"
-                  value={weight}
-                  onChange={(event) => onWeightChange(event.target.value)}
-                  className="w-full border-none bg-transparent p-0 text-3xl font-semibold text-slate-900 outline-none"
-                />
-                <span className="pb-1 text-sm font-medium text-slate-500">
-                  kg
-                </span>
-              </div>
-              <p className="mt-1 text-sm text-slate-500">
-                {suggestedWeightValue
-                  ? `AI-förslag: ${suggestedWeightValue} kg`
-                  : "Ingen vikt föreslagen"}
-              </p>
-            </div>
+            <ManualWeightInput
+              value={weight}
+              onChange={onWeightChange}
+              suggestedWeightValue={suggestedWeightValue}
+            />
           </div>
 
           <WeightChipRow
@@ -169,39 +144,18 @@ export default function CurrentExerciseCard({
         </section>
       ) : (
         <section className="space-y-4 rounded-[28px] border border-slate-200 bg-slate-50 p-4">
-          <div className="rounded-[28px] border border-slate-200 bg-white p-5 text-center shadow-sm">
-            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-              Tid för set
-            </p>
-            <div className="mt-3 text-6xl font-semibold tracking-tight text-slate-900">
-              {formatTimerClock(elapsedSeconds)}
-            </div>
-            <p className="mt-3 text-sm text-slate-500">
-              Mål: {formatDuration(targetDurationSeconds ?? 0)}
-            </p>
-          </div>
+          <TimerPanel
+            elapsedSeconds={elapsedSeconds}
+            targetDurationSeconds={targetDurationSeconds}
+            timerState={timerState}
+          />
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-              Vikt
-            </p>
-            <div className="mt-2 flex items-end gap-2">
-              <input
-                inputMode="decimal"
-                value={weight}
-                onChange={(event) => onWeightChange(event.target.value)}
-                className="w-full border-none bg-transparent p-0 text-3xl font-semibold text-slate-900 outline-none"
-              />
-              <span className="pb-1 text-sm font-medium text-slate-500">
-                kg
-              </span>
-            </div>
-            <p className="mt-1 text-sm text-slate-500">
-              {suggestedWeightValue
-                ? `AI-förslag: ${suggestedWeightValue} kg`
-                : "Valfri vikt"}
-            </p>
-          </div>
+          <ManualWeightInput
+            value={weight}
+            onChange={onWeightChange}
+            suggestedWeightValue={suggestedWeightValue}
+            label="Vikt"
+          />
 
           <WeightChipRow
             chips={weightChipOptions}

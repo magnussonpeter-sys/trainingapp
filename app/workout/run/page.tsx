@@ -393,6 +393,7 @@ export default function RunPage() {
                     onWeightChipSelect={chooseWeightChip}
                     elapsedSeconds={elapsedSeconds}
                     targetDurationSeconds={currentExercise.duration}
+                    timerState={timerState}
                     showRestTimer={showRestTimer}
                     restRemainingSeconds={restRemainingSeconds}
                     restTimerRunning={restTimerRunning}
