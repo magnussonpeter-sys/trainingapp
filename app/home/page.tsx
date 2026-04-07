@@ -7,6 +7,7 @@
 // - resume + pending sync tydligt
 // - ljus grön, lugn design
 // - tydlig knapp för att logga ut
+// - förvalda passlängder tillbaka
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -109,7 +110,7 @@ export default function HomePage() {
   const userId = authUser?.id ? String(authUser.id) : "";
 
   const [selectedGymId, setSelectedGymId] = useState<string>("bodyweight");
-  const [durationMinutes, setDurationMinutes] = useState<number>(45);
+  const [durationMinutes, setDurationMinutes] = useState<number>(30);
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [hasDraft, setHasDraft] = useState(false);
@@ -142,7 +143,6 @@ export default function HomePage() {
       return;
     }
 
-    // Behåll valt gym om det fortfarande finns.
     const stillExists = gymOptions.some(
       (gym) => String(gym.id) === String(selectedGymId),
     );
@@ -232,7 +232,6 @@ export default function HomePage() {
     try {
       setIsLoggingOut(true);
 
-      // Först försök med appens egen logout-route.
       const response = await fetch("/api/auth/logout", {
         method: "POST",
         credentials: "include",
@@ -242,7 +241,7 @@ export default function HomePage() {
         throw new Error("Logout misslyckades");
       }
     } catch {
-      // Fallback: gå ändå till startsidan.
+      // Gå ändå till startsidan som fallback.
     } finally {
       router.push("/");
       router.refresh();
@@ -348,9 +347,9 @@ export default function HomePage() {
                 onChange={(event) => setDurationMinutes(Number(event.target.value))}
                 className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none"
               >
+                <option value={15}>15 min</option>
                 <option value={20}>20 min</option>
                 <option value={30}>30 min</option>
-                <option value={45}>45 min</option>
                 <option value={60}>60 min</option>
               </select>
             </label>

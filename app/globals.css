@@ -1,32 +1,73 @@
-// Delade knappstilar för hela appen.
-// Uppdaterat mot en ljus, lugn grön design med mörk text.
+@import "tailwindcss";
 
-export const uiButtonClasses = {
-  // Primärknapp: ljus grön bakgrund + mörk text.
-  primary:
-    "min-h-11 rounded-2xl !bg-emerald-300 px-4 py-3 text-sm font-semibold !text-slate-900 shadow-sm transition hover:!bg-emerald-400 active:scale-[0.99] disabled:cursor-not-allowed disabled:!bg-slate-300 disabled:!text-slate-500",
+:root {
+  --background: #f3f8f3;
+  --foreground: #0f172a;
 
-  // Sekundärknapp: vit knapp med diskret border.
-  secondary:
-    "min-h-11 rounded-2xl border border-slate-200 !bg-white px-4 py-3 text-sm font-medium !text-slate-800 transition hover:!bg-slate-50 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60",
+  --app-page-bg: #f3f8f3;
+  --app-surface: #ffffff;
+  --app-surface-muted: #f6faf6;
+  --app-input-bg: #ffffff;
 
-  // Mörk bakgrund används inte lika mycket längre, men behåll en variant.
-  ghostDark:
-    "min-h-11 rounded-2xl border border-slate-900/10 !bg-white/60 px-3 py-2 text-sm font-medium !text-slate-900 transition hover:!bg-white/80 active:scale-[0.99]",
+  --app-text-strong: #0f172a;
+  --app-text: #334155;
+  --app-text-muted: #64748b;
 
-  // Diskret textknapp.
-  ghost:
-    "min-h-11 rounded-2xl px-3 py-2 text-sm font-medium !text-slate-700 transition hover:!bg-slate-100 active:scale-[0.99]",
+  --app-border: #d8e6d9;
+  --app-border-strong: #c7d7c8;
 
-  // Chips.
-  chip:
-    "min-h-11 rounded-full border px-3 py-2 text-sm font-medium transition active:scale-[0.99]",
+  --app-accent: #86efac;
+  --app-accent-strong: #4ade80;
+  --app-accent-soft: #ecfdf3;
+  --app-accent-ring: rgba(74, 222, 128, 0.18);
 
-  chipSelected: "!border-emerald-500 !bg-emerald-300 !text-slate-900",
-  chipSuggested: "!border-emerald-300 !bg-emerald-50 !text-slate-800",
-  chipDefault: "!border-slate-200 !bg-white !text-slate-700",
+  --app-danger-bg: #fef2f2;
+  --app-danger-border: #fecaca;
+  --app-danger-text: #991b1b;
+}
 
-  // Feedback.
-  feedbackSelected: "!border-emerald-500 !bg-emerald-300 !text-slate-900",
-  feedbackDefault: "!border-slate-200 !bg-white !text-slate-700",
-};
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: linear-gradient(180deg, #f6fbf6 0%, #eef7ef 100%);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f6fbf6 0%, #eef7ef 100%);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--app-text-strong);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--app-text-muted);
+  opacity: 1;
+}
+
+dialog {
+  color: var(--app-text-strong);
+}
+
+::selection {
+  background: rgba(74, 222, 128, 0.2);
+}
