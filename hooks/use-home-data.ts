@@ -5,6 +5,10 @@ import {
   getWorkoutLogs,
   type WorkoutLog,
 } from "@/lib/workout-log-storage";
+import {
+  resetStaleSyncingItems,
+  syncPendingWorkoutQueue,
+} from "@/lib/workout-flow/pending-sync-service";
 
 export type HomeAuthUser = {
   id: number | string;
@@ -72,12 +76,10 @@ type UseHomeDataParams = {
 export function useHomeData({ router }: UseHomeDataParams) {
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<HomeAuthUser | null>(null);
-
   const [gyms, setGyms] = useState<HomeGym[]>([]);
   const [settings, setSettings] = useState<HomeUserSettings | null>(null);
   const [workoutLogs, setWorkoutLogs] = useState<WorkoutLog[]>([]);
   const [logsSource, setLogsSource] = useState<"api" | "local">("api");
-
   const [isLoadingGyms, setIsLoadingGyms] = useState(false);
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -115,6 +117,18 @@ export function useHomeData({ router }: UseHomeDataParams) {
         setAuthChecked(true);
         setIsLoadingGyms(true);
         setGymError(null);
+
+        // Om något tidigare fastnat i syncing återställs det först.
+        resetStaleSyncingItems();
+
+        // Försök synka offline-kön innan vi hämtar loggarna.
+        // Då hinner nyligen avslutade offline-pass komma in i historiken.
+        try {
+          const syncResult = await syncPendingWorkoutQueue();
+          console.log("Home pending sync result:", syncResult);
+        } catch (error) {
+          console.error("Kunde inte synka pending queue på home:", error);
+        }
 
         // Home behöver bara gym, settings och senaste loggar.
         const [gymsRes, settingsRes] = await Promise.all([
@@ -156,7 +170,7 @@ export function useHomeData({ router }: UseHomeDataParams) {
           setSettings(settingsData.settings ?? null);
         }
 
-        // Läs historik från API, annars lokal fallback.
+        // Läs historik från API efter att sync-försök redan gjorts.
         try {
           const logsRes = await fetch(
             `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=12`,
@@ -210,8 +224,21 @@ export function useHomeData({ router }: UseHomeDataParams) {
 
     void loadHome();
 
+    // Kör en extra sync när nätet kommer tillbaka medan användaren redan är på home.
+    async function handleOnline() {
+      try {
+        const result = await syncPendingWorkoutQueue();
+        console.log("Online sync result:", result);
+      } catch (error) {
+        console.error("Kunde inte köra online-sync:", error);
+      }
+    }
+
+    window.addEventListener("online", handleOnline);
+
     return () => {
       isMounted = false;
+      window.removeEventListener("online", handleOnline);
     };
   }, [router]);
 
