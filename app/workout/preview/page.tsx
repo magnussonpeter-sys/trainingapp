@@ -170,7 +170,7 @@ function PreviewPageContent() {
           durationMinutes={workout.duration}
           exerciseCount={summary.exerciseCount}
           totalSets={summary.totalSets}
-          gymLabel={workout.gymLabel}
+          gymLabel={workout.gym?.trim() || "Valt gym"}
         />
 
         <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">

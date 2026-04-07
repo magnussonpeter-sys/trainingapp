@@ -35,7 +35,7 @@ export default function PreviewHeader({
           <button
             type="button"
             onClick={onBack}
-            className={uiButtonClasses.ghostInverted}
+            className={uiButtonClasses.secondary}
           >
             Tillbaka
           </button>

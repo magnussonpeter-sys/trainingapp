@@ -47,16 +47,17 @@ function normalizeSearch(value: string) {
 
 // Försöker hitta utrustningsfrön från draft.
 function getEquipmentSeedFromWorkout(workout: Workout | null) {
-  if (!workout?.gymLabel) {
+  // Använder workout.gym istället för gym (matchar typen)
+  if (!workout?.gym) {
     return ["bodyweight"];
   }
 
-  const gymLabel = workout.gymLabel.trim().toLowerCase();
+  const gym = workout.gym.trim().toLowerCase();
 
   if (
-    gymLabel.includes("kroppsvikt") ||
-    gymLabel.includes("utan gym") ||
-    gymLabel === "bodyweight"
+    gym.includes("kroppsvikt") ||
+    gym.includes("utan gym") ||
+    gym === "bodyweight"
   ) {
     return ["bodyweight"];
   }
