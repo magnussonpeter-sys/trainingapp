@@ -46,18 +46,18 @@ function normalizeSearch(value: string) {
 }
 
 // Försöker hitta utrustningsfrön från draft.
+// Tills vidare bodyweight som trygg fallback om vi saknar bättre metadata.
 function getEquipmentSeedFromWorkout(workout: Workout | null) {
-  // Använder workout.gym istället för gym (matchar typen)
   if (!workout?.gym) {
     return ["bodyweight"];
   }
 
-  const gym = workout.gym.trim().toLowerCase();
+  const gymLabel = workout.gym.trim().toLowerCase();
 
   if (
-    gym.includes("kroppsvikt") ||
-    gym.includes("utan gym") ||
-    gym === "bodyweight"
+    gymLabel.includes("kroppsvikt") ||
+    gymLabel.includes("utan gym") ||
+    gymLabel === "bodyweight"
   ) {
     return ["bodyweight"];
   }

@@ -1,7 +1,7 @@
 "use client";
 
 // Renderar hela övningslistan i preview.
-// Håller page.tsx tunn genom att all list-rendering bor här.
+// Håller page.tsx tunn genom att list-rendering bor här.
 
 import PreviewExerciseCard from "@/components/preview/preview-exercise-card";
 import type { Exercise } from "@/types/workout";
@@ -24,6 +24,7 @@ type PreviewExerciseListProps = {
   onMoveExerciseDown: (exerciseId: string) => void;
   onReplaceExercise: (exerciseId: string) => void;
   onRemoveExercise: (exerciseId: string) => void;
+  onAddFirstExercise: () => void;
 };
 
 function isTimedExercise(exercise: Exercise) {
@@ -48,16 +49,26 @@ export default function PreviewExerciseList({
   onMoveExerciseDown,
   onReplaceExercise,
   onRemoveExercise,
+  onAddFirstExercise,
 }: PreviewExerciseListProps) {
   if (exercises.length === 0) {
     return (
       <section className="rounded-[28px] border border-dashed border-slate-300 bg-white p-6 text-center shadow-sm">
-        <p className="text-sm font-medium text-slate-700">
-          Inga övningar i passet ännu.
+        <p className="text-base font-semibold tracking-tight text-slate-900">
+          Inga övningar ännu
         </p>
+
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Lägg till eller generera ett pass för att komma vidare.
+          Lägg till första övningen innan du startar passet.
         </p>
+
+        <button
+          type="button"
+          onClick={onAddFirstExercise}
+          className="mt-4 rounded-2xl border border-slate-900 bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+        >
+          Lägg till första övningen
+        </button>
       </section>
     );
   }

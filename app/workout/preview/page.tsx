@@ -4,7 +4,8 @@
 // Fokus:
 // - samma draft hela vägen
 // - snabb mobilvänlig justering
-// - en tydlig huvudhandling
+// - tydlig huvudhandling
+// - färdigare UX i preview
 
 import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -96,7 +97,26 @@ function PreviewPageContent() {
     return "Stabilt pass med tydlig struktur.";
   }, [summary, workout]);
 
+  function scrollToBottomSoon() {
+    requestAnimationFrame(() => {
+      window.scrollTo({
+        top: document.body.scrollHeight,
+        behavior: "smooth",
+      });
+    });
+  }
+
+  function handleOpenAddSheet(mode: "catalog" | "custom" = "catalog") {
+    setAddMode(mode);
+    setError(null);
+    setShowAddSheet(true);
+  }
+
   function handleStartWorkout() {
+    if (!workout || workout.exercises.length === 0) {
+      return;
+    }
+
     router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);
   }
 
@@ -158,6 +178,8 @@ function PreviewPageContent() {
     );
   }
 
+  const startDisabled = workout.exercises.length === 0;
+
   return (
     <main className="min-h-screen bg-slate-50 pb-28">
       <div className="mx-auto max-w-3xl space-y-4 px-4 py-5 sm:px-6">
@@ -170,7 +192,8 @@ function PreviewPageContent() {
           durationMinutes={workout.duration}
           exerciseCount={summary.exerciseCount}
           totalSets={summary.totalSets}
-          gymLabel={workout.gym?.trim() || "Valt gym"}
+          timedExercises={summary.timedExercises}
+          gymLabel={workout.gym}
         />
 
         <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
@@ -181,17 +204,23 @@ function PreviewPageContent() {
             {dynamicSubtitle}
           </p>
 
-          <button
-            type="button"
-            onClick={() => {
-              setAddMode("catalog");
-              setError(null);
-              setShowAddSheet(true);
-            }}
-            className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-900"
-          >
-            Lägg till övning
-          </button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => handleOpenAddSheet("catalog")}
+              className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-900"
+            >
+              Lägg till övning
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleOpenAddSheet("custom")}
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+            >
+              Egen övning
+            </button>
+          </div>
         </section>
 
         {error ? (
@@ -220,6 +249,7 @@ function PreviewPageContent() {
             setError(null);
             setRemoveExerciseId(exerciseId);
           }}
+          onAddFirstExercise={() => handleOpenAddSheet("catalog")}
         />
       </div>
 
@@ -236,7 +266,12 @@ function PreviewPageContent() {
           <button
             type="button"
             onClick={handleStartWorkout}
-            className={cn(uiButtonClasses.primary, "flex-[1.4]")}
+            disabled={startDisabled}
+            className={cn(
+              uiButtonClasses.primary,
+              "flex-[1.4]",
+              startDisabled && "pointer-events-none opacity-50",
+            )}
           >
             Starta pass
           </button>
@@ -256,6 +291,7 @@ function PreviewPageContent() {
 
           if (didAdd) {
             setShowAddSheet(false);
+            scrollToBottomSoon();
           }
         }}
         customName={customName}
@@ -275,6 +311,7 @@ function PreviewPageContent() {
 
           if (didAdd) {
             setShowAddSheet(false);
+            scrollToBottomSoon();
           }
         }}
         error={error}
@@ -295,6 +332,7 @@ function PreviewPageContent() {
 
           if (didReplace) {
             setReplaceExerciseId(null);
+            scrollToBottomSoon();
           }
         }}
         onClose={() => setReplaceExerciseId(null)}
