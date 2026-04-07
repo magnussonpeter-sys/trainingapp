@@ -1,5 +1,8 @@
 "use client";
 
+// Hook för preview-flödet.
+// Håller preview/page.tsx tunn och sparar alltid tillbaka till samma draft.
+
 import { useEffect, useMemo, useState } from "react";
 import {
   getWorkoutDraft,
@@ -10,24 +13,7 @@ import {
   getAvailableExercises,
   type ExerciseCatalogItem,
 } from "@/lib/exercise-catalog";
-
-type WorkoutExercise = {
-  id: string;
-  name: string;
-  sets: number;
-  reps?: number;
-  duration?: number;
-  rest: number;
-  description?: string;
-};
-
-type PreviewWorkout = {
-  id: string;
-  name: string;
-  duration: number;
-  gymLabel?: string;
-  exercises: WorkoutExercise[];
-};
+import type { Exercise, Workout } from "@/types/workout";
 
 type UseWorkoutPreviewProps = {
   userId: string;
@@ -54,13 +40,13 @@ function createExerciseId() {
   return Math.random().toString(36).slice(2);
 }
 
-// Söknormalisering för kataloglistan.
+// Söknormalisering.
 function normalizeSearch(value: string) {
   return value.trim().toLowerCase();
 }
 
-// Plockar fram en rimlig utrustningslista från workout-draften.
-function getEquipmentSeedFromWorkout(workout: PreviewWorkout | null) {
+// Försöker hitta utrustningsfrön från draft.
+function getEquipmentSeedFromWorkout(workout: Workout | null) {
   if (!workout?.gymLabel) {
     return ["bodyweight"];
   }
@@ -75,12 +61,10 @@ function getEquipmentSeedFromWorkout(workout: PreviewWorkout | null) {
     return ["bodyweight"];
   }
 
-  // Tills vidare använder vi bodyweight som säker fallback om vi inte har bättre metadata.
   return ["bodyweight"];
 }
 
-// Gör om katalogövning till vanlig workout-övning.
-function createExerciseFromCatalog(item: ExerciseCatalogItem): WorkoutExercise {
+function createExerciseFromCatalog(item: ExerciseCatalogItem): Exercise {
   const isTimed =
     typeof item.defaultDuration === "number" &&
     item.defaultDuration > 0 &&
@@ -97,7 +81,6 @@ function createExerciseFromCatalog(item: ExerciseCatalogItem): WorkoutExercise {
   };
 }
 
-// Skapar customövning från formuläret.
 function createCustomExercise(params: {
   name: string;
   sets: string;
@@ -105,7 +88,7 @@ function createCustomExercise(params: {
   duration: string;
   rest: string;
   description: string;
-}): WorkoutExercise {
+}): Exercise {
   const parsedSets = Math.max(1, Number(params.sets) || 3);
   const parsedReps = Math.max(0, Number(params.reps) || 0);
   const parsedDuration = Math.max(0, Number(params.duration) || 0);
@@ -123,11 +106,12 @@ function createCustomExercise(params: {
 }
 
 export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
-  const [workout, setWorkout] = useState<PreviewWorkout | null>(null);
+  const [workout, setWorkout] = useState<Workout | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [catalogSearch, setCatalogSearch] = useState("");
+
   const [customName, setCustomName] = useState("");
   const [customSets, setCustomSets] = useState("3");
   const [customReps, setCustomReps] = useState("10");
@@ -143,31 +127,43 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     }
 
     const draft = getWorkoutDraft(userId);
-    const normalized = normalizePreviewWorkout(draft) as PreviewWorkout | null;
+    const normalized = normalizePreviewWorkout(draft) as Workout | null;
 
     setWorkout(normalized);
     setLoading(false);
   }, [userId]);
 
-  function updateWorkout(next: PreviewWorkout) {
-    setWorkout(next);
+  function updateWorkout(nextWorkout: Workout) {
+    setWorkout(nextWorkout);
 
     if (userId) {
-      saveWorkoutDraft(userId, next);
+      saveWorkoutDraft(userId, nextWorkout);
     }
   }
 
-  function updateExercise(index: number, patch: Partial<WorkoutExercise>) {
-    if (!workout) return;
+  function findExerciseIndex(exerciseId: string) {
+    if (!workout) {
+      return -1;
+    }
 
-    const nextExercises = [...workout.exercises];
-    const current = nextExercises[index];
-    if (!current) return;
+    return workout.exercises.findIndex((exercise) => exercise.id === exerciseId);
+  }
 
-    nextExercises[index] = {
-      ...current,
-      ...patch,
-    };
+  function updateExercise(exerciseId: string, patch: Partial<Exercise>) {
+    if (!workout) {
+      return;
+    }
+
+    const nextExercises = workout.exercises.map((exercise) => {
+      if (exercise.id !== exerciseId) {
+        return exercise;
+      }
+
+      return {
+        ...exercise,
+        ...patch,
+      };
+    });
 
     updateWorkout({
       ...workout,
@@ -175,12 +171,14 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     });
   }
 
-  function removeExercise(index: number) {
-    if (!workout) return;
+  function removeExercise(exerciseId: string) {
+    if (!workout) {
+      return;
+    }
 
-    const nextExercises = workout.exercises.filter((_, itemIndex) => {
-      return itemIndex !== index;
-    });
+    const nextExercises = workout.exercises.filter(
+      (exercise) => exercise.id !== exerciseId,
+    );
 
     updateWorkout({
       ...workout,
@@ -188,10 +186,19 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     });
   }
 
-  function moveExercise(index: number, direction: "up" | "down") {
-    if (!workout) return;
+  function moveExercise(exerciseId: string, direction: "up" | "down") {
+    if (!workout) {
+      return;
+    }
+
+    const index = findExerciseIndex(exerciseId);
+
+    if (index === -1) {
+      return;
+    }
 
     const targetIndex = direction === "up" ? index - 1 : index + 1;
+
     if (targetIndex < 0 || targetIndex >= workout.exercises.length) {
       return;
     }
@@ -209,46 +216,110 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     });
   }
 
-  function incrementSets(index: number) {
-    if (!workout) return;
+  function incrementSets(exerciseId: string) {
+    const index = findExerciseIndex(exerciseId);
+    const exercise = index >= 0 ? workout?.exercises[index] : null;
 
-    const exercise = workout.exercises[index];
-    if (!exercise) return;
+    if (!exercise) {
+      return;
+    }
 
-    updateExercise(index, {
+    updateExercise(exerciseId, {
       sets: clampNumber(exercise.sets + 1, 1, 12),
     });
   }
 
-  function decrementSets(index: number) {
-    if (!workout) return;
+  function decrementSets(exerciseId: string) {
+    const index = findExerciseIndex(exerciseId);
+    const exercise = index >= 0 ? workout?.exercises[index] : null;
 
-    const exercise = workout.exercises[index];
-    if (!exercise) return;
+    if (!exercise) {
+      return;
+    }
 
-    updateExercise(index, {
+    updateExercise(exerciseId, {
       sets: clampNumber(exercise.sets - 1, 1, 12),
     });
   }
 
-  function incrementRest(index: number) {
-    if (!workout) return;
+  function incrementReps(exerciseId: string) {
+    const index = findExerciseIndex(exerciseId);
+    const exercise = index >= 0 ? workout?.exercises[index] : null;
 
-    const exercise = workout.exercises[index];
-    if (!exercise) return;
+    if (!exercise) {
+      return;
+    }
 
-    updateExercise(index, {
+    updateExercise(exerciseId, {
+      reps: clampNumber((exercise.reps ?? 8) + 1, 1, 30),
+      duration: undefined,
+    });
+  }
+
+  function decrementReps(exerciseId: string) {
+    const index = findExerciseIndex(exerciseId);
+    const exercise = index >= 0 ? workout?.exercises[index] : null;
+
+    if (!exercise) {
+      return;
+    }
+
+    updateExercise(exerciseId, {
+      reps: clampNumber((exercise.reps ?? 8) - 1, 1, 30),
+      duration: undefined,
+    });
+  }
+
+  function incrementDuration(exerciseId: string) {
+    const index = findExerciseIndex(exerciseId);
+    const exercise = index >= 0 ? workout?.exercises[index] : null;
+
+    if (!exercise) {
+      return;
+    }
+
+    updateExercise(exerciseId, {
+      duration: clampNumber((exercise.duration ?? 30) + 5, 5, 300),
+      reps: undefined,
+    });
+  }
+
+  function decrementDuration(exerciseId: string) {
+    const index = findExerciseIndex(exerciseId);
+    const exercise = index >= 0 ? workout?.exercises[index] : null;
+
+    if (!exercise) {
+      return;
+    }
+
+    updateExercise(exerciseId, {
+      duration: clampNumber((exercise.duration ?? 30) - 5, 5, 300),
+      reps: undefined,
+    });
+  }
+
+  function incrementRest(exerciseId: string) {
+    const index = findExerciseIndex(exerciseId);
+    const exercise = index >= 0 ? workout?.exercises[index] : null;
+
+    if (!exercise) {
+      return;
+    }
+
+    updateExercise(exerciseId, {
       rest: clampNumber(exercise.rest + 15, 0, 300),
     });
   }
 
-  function decrementRest(index: number) {
-    if (!workout) return;
+  function decrementRest(exerciseId: string) {
+    const index = findExerciseIndex(exerciseId);
+    const exercise = index >= 0 ? workout?.exercises[index] : null;
 
-    const exercise = workout.exercises[index];
-    if (!exercise) return;
+    if (!exercise) {
+      return;
+    }
 
-    updateExercise(index, {
+    updateExercise(exerciseId, {
       rest: clampNumber(exercise.rest - 15, 0, 300),
     });
   }
@@ -283,12 +354,16 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }, [availableCatalogExercises, catalogSearch]);
 
   function addCatalogExercise(item: ExerciseCatalogItem) {
-    if (!workout) return;
+    if (!workout) {
+      return false;
+    }
 
     const nextExercise = createExerciseFromCatalog(item);
-
     const alreadyExists = workout.exercises.some((exercise) => {
-      return exercise.name.trim().toLowerCase() === nextExercise.name.trim().toLowerCase();
+      return (
+        exercise.name.trim().toLowerCase() ===
+        nextExercise.name.trim().toLowerCase()
+      );
     });
 
     if (alreadyExists) {
@@ -306,20 +381,30 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     return true;
   }
 
-  function replaceWithCatalogExercise(index: number, item: ExerciseCatalogItem) {
-    if (!workout) return false;
+  function replaceWithCatalogExercise(
+    exerciseId: string,
+    item: ExerciseCatalogItem,
+  ) {
+    if (!workout) {
+      return false;
+    }
 
     const nextExercise = createExerciseFromCatalog(item);
-    const current = workout.exercises[index];
+    const currentIndex = findExerciseIndex(exerciseId);
 
-    if (!current) return false;
+    if (currentIndex === -1) {
+      return false;
+    }
 
-    const alreadyExists = workout.exercises.some((exercise, exerciseIndex) => {
-      if (exerciseIndex === index) {
+    const alreadyExists = workout.exercises.some((exercise, index) => {
+      if (index === currentIndex) {
         return false;
       }
 
-      return exercise.name.trim().toLowerCase() === nextExercise.name.trim().toLowerCase();
+      return (
+        exercise.name.trim().toLowerCase() ===
+        nextExercise.name.trim().toLowerCase()
+      );
     });
 
     if (alreadyExists) {
@@ -327,14 +412,22 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return false;
     }
 
-    updateExercise(index, nextExercise);
+    const currentExercise = workout.exercises[currentIndex];
+
+    updateExercise(exerciseId, {
+      ...nextExercise,
+      id: currentExercise.id,
+    });
+
     setError(null);
     setCatalogSearch("");
     return true;
   }
 
   function addCustomExercise() {
-    if (!workout) return false;
+    if (!workout) {
+      return false;
+    }
 
     if (!customName.trim()) {
       setError("Ange namn på övningen.");
@@ -362,7 +455,6 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     setCustomRest("45");
     setCustomDescription("");
     setError(null);
-
     return true;
   }
 
@@ -392,11 +484,14 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     error,
     setError,
     summary,
-    updateExercise,
     removeExercise,
     moveExercise,
     incrementSets,
     decrementSets,
+    incrementReps,
+    decrementReps,
+    incrementDuration,
+    decrementDuration,
     incrementRest,
     decrementRest,
     catalogSearch,
