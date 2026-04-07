@@ -1,8 +1,6 @@
 import type { Workout } from "@/types/workout";
 
-// Lagrar den aktiva sessionens lätta metadata.
-// Den här filen ska vara mycket enkel och tålig eftersom den används ofta.
-
+// Lätt snapshot för snabb resume-koll av aktivt pass.
 const ACTIVE_WORKOUT_STORE_KEY = "active_workout_store";
 const ACTIVE_WORKOUT_STORE_VERSION = 1;
 
@@ -78,7 +76,9 @@ function normalizeSnapshot(raw: unknown): ActiveWorkoutSnapshot | null {
     startedAt: asString(raw.startedAt, new Date().toISOString()),
     updatedAt: asString(raw.updatedAt, new Date().toISOString()),
     status:
-      raw.status === "finished" || raw.status === "aborted" ? raw.status : "active",
+      raw.status === "finished" || raw.status === "aborted"
+        ? raw.status
+        : "active",
   };
 }
 
@@ -106,7 +106,9 @@ export function saveActiveWorkoutSnapshot(
   }
 }
 
-export function getActiveWorkoutSnapshot(userId: string): ActiveWorkoutSnapshot | null {
+export function getActiveWorkoutSnapshot(
+  userId: string,
+): ActiveWorkoutSnapshot | null {
   const storage = getStorage();
 
   if (!storage) {

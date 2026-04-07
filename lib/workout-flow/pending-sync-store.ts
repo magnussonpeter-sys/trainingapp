@@ -1,9 +1,8 @@
 import type { CompletedExercise } from "@/lib/workout-log-storage";
 import type { Workout } from "@/types/workout";
 
-// Här lägger vi färdiga eller avbrutna pass som väntar på backend.
-// Kön ska vara append-only i normalfallet så att vi inte tappar något.
-
+// Kö för avslutade/avbrutna pass som ska synkas senare.
+// Målet är att inget loggat pass ska tappas vid nätverksproblem.
 const PENDING_SYNC_STORE_KEY = "workout_pending_sync_queue";
 const PENDING_SYNC_STORE_VERSION = 1;
 
@@ -168,7 +167,14 @@ export function getPendingSyncCount(userId?: string) {
 export function enqueuePendingSyncItem(
   item: Omit<
     PendingSyncItem,
-    "id" | "version" | "syncStatus" | "attemptCount" | "lastAttemptAt" | "errorMessage" | "createdAt" | "updatedAt"
+    | "id"
+    | "version"
+    | "syncStatus"
+    | "attemptCount"
+    | "lastAttemptAt"
+    | "errorMessage"
+    | "createdAt"
+    | "updatedAt"
   >,
 ) {
   const now = new Date().toISOString();
@@ -199,7 +205,7 @@ export function markPendingSyncItemSyncing(id: string) {
       item.id === id
         ? {
             ...item,
-            syncStatus: "syncing",
+            syncStatus: "syncing" as const,
             attemptCount: item.attemptCount + 1,
             lastAttemptAt: now,
             updatedAt: now,
@@ -218,7 +224,7 @@ export function markPendingSyncItemFailed(id: string, errorMessage?: string) {
       item.id === id
         ? {
             ...item,
-            syncStatus: "failed",
+            syncStatus: "failed" as const,
             updatedAt: now,
             errorMessage: errorMessage?.trim() || "Okänt synkfel",
           }
@@ -235,7 +241,7 @@ export function markPendingSyncItemQueued(id: string) {
       item.id === id
         ? {
             ...item,
-            syncStatus: "queued",
+            syncStatus: "queued" as const,
             updatedAt: now,
           }
         : item,

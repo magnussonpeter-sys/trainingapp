@@ -4,9 +4,8 @@ import type {
 } from "@/lib/workout-log-storage";
 import type { TimedEffortOption } from "@/types/exercise-feedback";
 
-// Den här filen innehåller den fulla lokala sanningen om pågående pass.
-// Tanken är att UI alltid kan återställas från detta objekt.
-
+// Fullt lokalt utkast av pågående pass.
+// Detta är den viktigaste offline-kopian för exakt återställning av UI.
 const SESSION_DRAFT_STORE_KEY = "workout_session_draft";
 const SESSION_DRAFT_STORE_VERSION = 1;
 
@@ -84,7 +83,10 @@ function normalizeLastWeightByExercise(raw: unknown) {
   }
 
   return Object.fromEntries(
-    Object.entries(raw).map(([key, value]) => [key, typeof value === "string" ? value : ""]),
+    Object.entries(raw).map(([key, value]) => [
+      key,
+      typeof value === "string" ? value : "",
+    ]),
   );
 }
 
@@ -144,10 +146,14 @@ function normalizeDraft(raw: unknown): SessionDraft | null {
       raw.selectedRating === 5
         ? raw.selectedRating
         : null,
-    lastWeightByExercise: normalizeLastWeightByExercise(raw.lastWeightByExercise),
+    lastWeightByExercise: normalizeLastWeightByExercise(
+      raw.lastWeightByExercise,
+    ),
     completedExercises: asArray<CompletedExercise>(raw.completedExercises, []),
     status:
-      raw.status === "finished" || raw.status === "aborted" ? raw.status : "active",
+      raw.status === "finished" || raw.status === "aborted"
+        ? raw.status
+        : "active",
     updatedAt: asString(raw.updatedAt, new Date().toISOString()),
   };
 }
