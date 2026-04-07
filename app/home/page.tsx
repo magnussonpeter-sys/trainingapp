@@ -410,7 +410,7 @@ export default function HomePage() {
     }
   }
 
-  function handleReviewFirst() {
+  async function handleReviewFirst() {
     if (!authUser?.id) {
       setPageError("Användaren är inte färdigladdad ännu.");
       return;
@@ -420,20 +420,37 @@ export default function HomePage() {
       setIsOpeningPreview(true);
       setPageError(null);
 
-      const params = new URLSearchParams();
-      params.set("duration", String(selectedDuration));
-      params.set("userId", String(authUser.id));
+      // Preview behöver ett faktiskt workout-draft för att kunna ladda något.
+      const request = await buildSelectedWorkoutRequest();
 
-      // Preview är valfritt sidospår.
-      if (selectedGymId === BODYWEIGHT_GYM_ID) {
-        params.set("gymMode", "bodyweight");
-      } else if (selectedGymId) {
-        params.set("gymId", selectedGymId);
-      }
+      const result = await generateWorkout({
+        userId: request.userId,
+        goal: request.goal,
+        durationMinutes: request.durationMinutes,
+        equipment: request.equipment,
+      });
+
+      const normalizedWorkout = normalizePreviewWorkout({
+        ...result.workout,
+        duration: request.durationMinutes,
+        gymLabel: request.gymLabel,
+      });
+
+      // Vi sparar samma draft som /run använder, men leder till preview i stället.
+      saveWorkoutDraft(request.userId, normalizedWorkout);
+
+      const params = new URLSearchParams();
+      params.set("userId", request.userId);
 
       router.push(`/workout/preview?${params.toString()}`);
+    } catch (error) {
+      console.error("Kunde inte öppna preview:", error);
+      setPageError(
+        error instanceof Error
+          ? error.message
+          : "Kunde inte öppna preview just nu.",
+      );
     } finally {
-      // Navigation sker direkt.
       setIsOpeningPreview(false);
     }
   }
