@@ -20,11 +20,11 @@
   --app-border: #dbe3ee;
   --app-border-strong: #cbd5e1;
 
-  /* Accent */
-  --app-accent: #0f766e;
-  --app-accent-strong: #115e59;
-  --app-accent-soft: #ecfdf5;
-  --app-accent-ring: rgba(15, 118, 110, 0.14);
+  /* Accent – mer neutral/mörk riktning som passar login-stilen bättre */
+  --app-accent: #0f172a;
+  --app-accent-strong: #020617;
+  --app-accent-soft: #eef2f7;
+  --app-accent-ring: rgba(15, 23, 42, 0.12);
 
   /* Felmeddelanden/dialogliknande rutor */
   --app-danger-bg: #fef2f2;
@@ -76,5 +76,5 @@ dialog {
 }
 
 ::selection {
-  background: rgba(15, 118, 110, 0.18);
+  background: rgba(15, 23, 42, 0.12);
 }

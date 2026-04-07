@@ -1,7 +1,10 @@
 "use client";
 
 // AI + historikbaserad avslutssammanfattning.
-// Har alltid en lokal fallback så att UX inte blir skör.
+// Fokus:
+// - kort, kärnfull och lättläst feedback
+// - större text för mobil
+// - alltid en stabil lokal fallback
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -37,33 +40,33 @@ function getLocalFallback({
 
   if (heavySession) {
     return {
-      title: "Stark träningsstimulans",
+      title: "Stark träningsstimulus",
       achieved:
-        "Du genomförde ett relativt krävande pass som sannolikt ger tydlig signal för fortsatt utveckling.",
+        "Du genomförde ett tungt pass som sannolikt ger bra effekt för fortsatt utveckling.",
       historicalContext:
-        "Den lokala fallbacken saknar full historikanalys, men själva passbelastningen ser hög ut.",
+        "Passet ser tyngre ut än ett genomsnittligt vardagspass och talar för att belastningen var hög.",
       nextStep:
-        "Nästa liknande pass bör antingen matcha dagens kvalitet eller vara något lättare för att hålla progressionen hållbar över veckan.",
+        "Nästa pass bör vara lika bra tekniskt, men inte nödvändigtvis tyngre.",
       nextSessionTiming:
-        "Ett nytt liknande styrkepass passar ofta bäst om ungefär 48 timmar.",
+        "Sikta på nästa liknande pass om ungefär 48 timmar.",
       coachNote:
-        "För långsiktig progression är det ofta bättre med jämn kvalitet över flera pass än att pressa maximal belastning varje gång.",
+        "Bygg vidare med små steg i belastning eller volym, inte stora hopp.",
     };
   }
 
   return {
     title: "Bra genomfört pass",
     achieved:
-      "Du har byggt vidare på träningsvanan och skapat en användbar träningssignal.",
+      "Du skapade en användbar träningsstimulus och byggde vidare på din träningsnivå.",
     historicalContext:
-      "Den lokala fallbacken saknar full historikanalys, så råden bygger främst på dagens pass.",
+      "Passet ser ut att ligga i ett rimligt spann för fortsatt progression.",
     nextStep:
-      "Nästa pass bör försöka skapa liten progression i minst en huvuddel, till exempel fler set, högre vikt eller bättre kvalitet.",
+      "Försök skapa liten progression nästa gång i en huvudövning.",
     nextSessionTiming:
-      "Nästa pass kan ofta fungera inom 24–48 timmar beroende på hur kroppen känns.",
+      "Nästa pass kan ofta fungera inom 24–48 timmar.",
     coachNote:
-      "Små, upprepade förbättringar över tid är ofta mer effektiva än stora hopp mellan enstaka pass.",
-  };
+      "Jämn kvalitet över flera pass är ofta viktigare än ett enstaka toppass.",
+    };
 }
 
 function AnalysisBlock({
@@ -75,10 +78,12 @@ function AnalysisBlock({
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
         {label}
       </p>
-      <p className="mt-2 text-sm leading-6 text-slate-700">{text}</p>
+      <p className="mt-2 text-base leading-7 text-slate-800 sm:text-[17px]">
+        {text}
+      </p>
     </div>
   );
 }
@@ -178,25 +183,22 @@ export default function RunFinishSummary({
     <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
             Träningsanalys
           </p>
-          <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-900">
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-[30px]">
             {analysis.title}
           </h2>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">
           {loading ? "Analyserar..." : source === "ai" ? "AI + historik" : "Fallback"}
         </div>
       </div>
 
       <div className="mt-4 grid gap-3">
-        <AnalysisBlock label="Det här uppnådde du" text={analysis.achieved} />
-        <AnalysisBlock
-          label="I relation till din historik"
-          text={analysis.historicalContext}
-        />
+        <AnalysisBlock label="Det här gav passet" text={analysis.achieved} />
+        <AnalysisBlock label="Jämfört med din historik" text={analysis.historicalContext} />
         <AnalysisBlock label="Plan framåt" text={analysis.nextStep} />
         <AnalysisBlock label="När nästa pass?" text={analysis.nextSessionTiming} />
         <AnalysisBlock label="PT-råd" text={analysis.coachNote} />

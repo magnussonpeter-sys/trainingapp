@@ -271,6 +271,8 @@ Viktiga regler:
   - rimlig frekvens per muskelgrupp över veckan
   - att passen behöver vara tillräckligt utmanande för progression
 - Svara kort, konkret och pedagogiskt.
+- Varje fält ska helst vara 1–2 meningar.
+- Undvik upprepningar mellan fälten.
 - Anpassa råden till målet om det finns.
 - Anpassa råden till historiken om den finns.
 - Undvik att låtsas veta detaljer som inte finns i datan.
