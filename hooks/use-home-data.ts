@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getWorkoutLogs,
   type WorkoutLog,
 } from "@/lib/workout-log-storage";
 import {
-  resetStaleSyncingItems,
   syncPendingWorkoutQueue,
 } from "@/lib/workout-flow/pending-sync-service";
 
@@ -35,7 +34,6 @@ export type HomeUserSettings = {
   training_goal?: HomeGoal | null;
 };
 
-// Håller gym-listan robust även om API-formatet varierar lite.
 function normalizeGyms(data: unknown): HomeGym[] {
   if (Array.isArray(data)) {
     return data
@@ -84,6 +82,9 @@ export function useHomeData({ router }: UseHomeDataParams) {
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
 
+  // Skyddar mot dubbla home-syncar i samma mount.
+  const hasRunInitialSyncRef = useRef(false);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -91,7 +92,6 @@ export function useHomeData({ router }: UseHomeDataParams) {
       try {
         setPageError(null);
 
-        // Börja alltid med aktuell användare.
         const authRes = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
@@ -118,19 +118,18 @@ export function useHomeData({ router }: UseHomeDataParams) {
         setIsLoadingGyms(true);
         setGymError(null);
 
-        // Om något tidigare fastnat i syncing återställs det först.
-        resetStaleSyncingItems();
+        // Kör bara initial sync en gång per mount.
+        if (!hasRunInitialSyncRef.current) {
+          hasRunInitialSyncRef.current = true;
 
-        // Försök synka offline-kön innan vi hämtar loggarna.
-        // Då hinner nyligen avslutade offline-pass komma in i historiken.
-        try {
-          const syncResult = await syncPendingWorkoutQueue();
-          console.log("Home pending sync result:", syncResult);
-        } catch (error) {
-          console.error("Kunde inte synka pending queue på home:", error);
+          try {
+            const syncResult = await syncPendingWorkoutQueue();
+            console.log("Home pending sync result:", syncResult);
+          } catch (error) {
+            console.error("Kunde inte synka pending queue på home:", error);
+          }
         }
 
-        // Home behöver bara gym, settings och senaste loggar.
         const [gymsRes, settingsRes] = await Promise.all([
           fetch(`/api/gyms?userId=${encodeURIComponent(userId)}`, {
             cache: "no-store",
@@ -170,7 +169,6 @@ export function useHomeData({ router }: UseHomeDataParams) {
           setSettings(settingsData.settings ?? null);
         }
 
-        // Läs historik från API efter att sync-försök redan gjorts.
         try {
           const logsRes = await fetch(
             `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=12`,
@@ -224,7 +222,6 @@ export function useHomeData({ router }: UseHomeDataParams) {
 
     void loadHome();
 
-    // Kör en extra sync när nätet kommer tillbaka medan användaren redan är på home.
     async function handleOnline() {
       try {
         const result = await syncPendingWorkoutQueue();

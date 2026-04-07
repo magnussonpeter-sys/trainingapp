@@ -7,8 +7,7 @@ import {
   type PendingSyncItem,
 } from "@/lib/workout-flow/pending-sync-store";
 
-// Resultat för hela sync-körningen.
-// Användbart både för debug och framtida UI-status.
+// Resultat från en körning av synk-loopen.
 export type PendingSyncRunResult = {
   attempted: number;
   succeeded: number;
@@ -16,7 +15,11 @@ export type PendingSyncRunResult = {
   skipped: number;
 };
 
-// Bygger payload i formatet som /api/workout-logs redan accepterar.
+// Globalt lås i klienten så att flera sync-loopar inte kör parallellt.
+let activeSyncPromise: Promise<PendingSyncRunResult> | null = null;
+
+// Bygger payload till workout-logs.
+// Viktigt: vi skickar med en stabil klientnyckel för dedupe.
 function buildWorkoutLogPayload(item: PendingSyncItem) {
   const startedAtMs = new Date(item.sessionStartedAt).getTime();
   const completedAtMs = new Date(item.completedAt).getTime();
@@ -35,17 +38,24 @@ function buildWorkoutLogPayload(item: PendingSyncItem) {
     durationSeconds,
     status: item.status,
     exercises: item.completedExercises,
-    // Metadata gör det lättare att debugga senare.
     metadata: {
       offlineSync: true,
-      pendingSyncId: item.id,
+      clientSyncId: item.id, // Stabil nyckel för att undvika dubletter.
       syncedAt: new Date().toISOString(),
     },
   };
 }
 
-// Synkar ett enskilt köat pass till backend.
 export async function syncPendingWorkoutItem(item: PendingSyncItem) {
+  // Bara queued/failed ska försöka synkas på nytt.
+  if (item.syncStatus !== "queued" && item.syncStatus !== "failed") {
+    return {
+      ok: false as const,
+      skipped: true as const,
+      error: "Item är inte redo för synk",
+    };
+  }
+
   markPendingSyncItemSyncing(item.id);
 
   try {
@@ -70,7 +80,7 @@ export async function syncPendingWorkoutItem(item: PendingSyncItem) {
       throw new Error(message);
     }
 
-    // Vid lyckad sync tas posten bort ur kön.
+    // Vid lyckad synk tas posten bort ur kön.
     removePendingSyncItem(item.id);
 
     return { ok: true as const };
@@ -82,65 +92,96 @@ export async function syncPendingWorkoutItem(item: PendingSyncItem) {
 
     return {
       ok: false as const,
+      skipped: false as const,
       error: message,
     };
   }
 }
 
-// Kör igenom hela kön.
-// Vi tar queued + failed så att gamla fel också får en ny chans.
-export async function syncPendingWorkoutQueue(): Promise<PendingSyncRunResult> {
-  if (typeof window === "undefined") {
-    return {
-      attempted: 0,
-      succeeded: 0,
-      failed: 0,
-      skipped: 0,
-    };
-  }
-
-  if (!navigator.onLine) {
-    return {
-      attempted: 0,
-      succeeded: 0,
-      failed: 0,
-      skipped: getPendingSyncQueue().length,
-    };
-  }
-
-  const queue = getPendingSyncQueue();
-  const candidates = queue.filter(
-    (item) => item.syncStatus === "queued" || item.syncStatus === "failed",
-  );
-
-  let succeeded = 0;
-  let failed = 0;
-
-  for (const item of candidates) {
-    const result = await syncPendingWorkoutItem(item);
-
-    if (result.ok) {
-      succeeded += 1;
-    } else {
-      failed += 1;
-    }
-  }
-
-  return {
-    attempted: candidates.length,
-    succeeded,
-    failed,
-    skipped: Math.max(0, queue.length - candidates.length),
-  };
-}
-
-// Hjälper future-proof återköning om något fastnat i syncing.
-export function resetStaleSyncingItems() {
+// Återställ fastnade syncing-poster, men bara om de är gamla.
+// Då undviker vi att en pågående synk direkt återköas av en annan trigger.
+export function resetStaleSyncingItems(maxAgeMs = 60_000) {
+  const now = Date.now();
   const queue = getPendingSyncQueue();
 
   for (const item of queue) {
-    if (item.syncStatus === "syncing") {
+    if (item.syncStatus !== "syncing") {
+      continue;
+    }
+
+    const lastAttemptMs = item.lastAttemptAt
+      ? new Date(item.lastAttemptAt).getTime()
+      : 0;
+
+    const isStale =
+      !Number.isFinite(lastAttemptMs) || now - lastAttemptMs > maxAgeMs;
+
+    if (isStale) {
       markPendingSyncItemQueued(item.id);
     }
+  }
+}
+
+// Kör en enda synk-loop åt gången.
+export async function syncPendingWorkoutQueue(): Promise<PendingSyncRunResult> {
+  if (activeSyncPromise) {
+    return activeSyncPromise;
+  }
+
+  activeSyncPromise = (async () => {
+    if (typeof window === "undefined") {
+      return {
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        skipped: 0,
+      };
+    }
+
+    if (!navigator.onLine) {
+      return {
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        skipped: getPendingSyncQueue().length,
+      };
+    }
+
+    // Bara gamla syncing får återställas.
+    resetStaleSyncingItems();
+
+    const queue = getPendingSyncQueue();
+    const candidates = queue.filter(
+      (item) => item.syncStatus === "queued" || item.syncStatus === "failed",
+    );
+
+    let succeeded = 0;
+    let failed = 0;
+    let skipped = Math.max(0, queue.length - candidates.length);
+
+    for (const item of candidates) {
+      const result = await syncPendingWorkoutItem(item);
+
+      if (result.ok) {
+        succeeded += 1;
+      } else if (result.skipped) {
+        skipped += 1;
+      } else {
+        failed += 1;
+      }
+    }
+
+    return {
+      attempted: candidates.length,
+      succeeded,
+      failed,
+      skipped,
+    };
+  })();
+
+  try {
+    return await activeSyncPromise;
+  } finally {
+    activeSyncPromise = null;
   }
 }
