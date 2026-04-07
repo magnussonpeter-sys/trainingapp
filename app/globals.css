@@ -1,80 +1,32 @@
-@import "tailwindcss";
+// Delade knappstilar för hela appen.
+// Uppdaterat mot en ljus, lugn grön design med mörk text.
 
-:root {
-  /* Grundfärger */
-  --background: #f4f7fb;
-  --foreground: #0f172a;
+export const uiButtonClasses = {
+  // Primärknapp: ljus grön bakgrund + mörk text.
+  primary:
+    "min-h-11 rounded-2xl !bg-emerald-300 px-4 py-3 text-sm font-semibold !text-slate-900 shadow-sm transition hover:!bg-emerald-400 active:scale-[0.99] disabled:cursor-not-allowed disabled:!bg-slate-300 disabled:!text-slate-500",
 
-  /* App-ytor */
-  --app-page-bg: #f4f7fb;
-  --app-surface: #ffffff;
-  --app-surface-muted: #f8fafc;
-  --app-input-bg: #ffffff;
+  // Sekundärknapp: vit knapp med diskret border.
+  secondary:
+    "min-h-11 rounded-2xl border border-slate-200 !bg-white px-4 py-3 text-sm font-medium !text-slate-800 transition hover:!bg-slate-50 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60",
 
-  /* Text */
-  --app-text-strong: #0f172a;
-  --app-text: #334155;
-  --app-text-muted: #64748b;
+  // Mörk bakgrund används inte lika mycket längre, men behåll en variant.
+  ghostDark:
+    "min-h-11 rounded-2xl border border-slate-900/10 !bg-white/60 px-3 py-2 text-sm font-medium !text-slate-900 transition hover:!bg-white/80 active:scale-[0.99]",
 
-  /* Borders */
-  --app-border: #dbe3ee;
-  --app-border-strong: #cbd5e1;
+  // Diskret textknapp.
+  ghost:
+    "min-h-11 rounded-2xl px-3 py-2 text-sm font-medium !text-slate-700 transition hover:!bg-slate-100 active:scale-[0.99]",
 
-  /* Accent – mer neutral/mörk riktning som passar login-stilen bättre */
-  --app-accent: #0f172a;
-  --app-accent-strong: #020617;
-  --app-accent-soft: #eef2f7;
-  --app-accent-ring: rgba(15, 23, 42, 0.12);
+  // Chips.
+  chip:
+    "min-h-11 rounded-full border px-3 py-2 text-sm font-medium transition active:scale-[0.99]",
 
-  /* Felmeddelanden/dialogliknande rutor */
-  --app-danger-bg: #fef2f2;
-  --app-danger-border: #fecaca;
-  --app-danger-text: #991b1b;
-}
+  chipSelected: "!border-emerald-500 !bg-emerald-300 !text-slate-900",
+  chipSuggested: "!border-emerald-300 !bg-emerald-50 !text-slate-800",
+  chipDefault: "!border-slate-200 !bg-white !text-slate-700",
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-
-  /* Globala fonter från layout.tsx */
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html {
-  background: var(--background);
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  color: var(--app-text-strong);
-}
-
-input::placeholder,
-textarea::placeholder {
-  color: var(--app-text-muted);
-  opacity: 1;
-}
-
-dialog {
-  color: var(--app-text-strong);
-}
-
-::selection {
-  background: rgba(15, 23, 42, 0.12);
-}
+  // Feedback.
+  feedbackSelected: "!border-emerald-500 !bg-emerald-300 !text-slate-900",
+  feedbackDefault: "!border-slate-200 !bg-white !text-slate-700",
+};

@@ -3,10 +3,10 @@
 // Home-sidan ska vara navet i appen.
 // Fokus här:
 // - behålla fungerande logik
-// - generera AI-pass på ett säkert sätt
-// - spara draft innan preview
-// - visa resume + pending sync tydligt
-// - hålla designen lugn och konsekvent
+// - AI-pass ska fungera
+// - resume + pending sync tydligt
+// - ljus grön, lugn design
+// - tydlig knapp för att logga ut
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -20,6 +20,14 @@ import {
   getWorkoutDraft,
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
+
+type AuthUser = {
+  id?: string | number | null;
+  name?: string | null;
+  displayName?: string | null;
+  username?: string | null;
+  email?: string | null;
+};
 
 type GymEquipmentItem = {
   equipment_type?: string | null;
@@ -39,12 +47,7 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function getDisplayName(user: {
-  displayName?: string | null;
-  name?: string | null;
-  username?: string | null;
-  email?: string | null;
-} | null) {
+function getDisplayName(user: AuthUser | null) {
   if (!user) {
     return "där";
   }
@@ -101,7 +104,6 @@ export default function HomePage() {
     isLoadingGyms,
     gymError,
     pageError,
-    setPageError,
   } = useHomeData({ router });
 
   const userId = authUser?.id ? String(authUser.id) : "";
@@ -112,6 +114,7 @@ export default function HomePage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [hasDraft, setHasDraft] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const gymOptions = useMemo(() => {
     const normalizedGyms = (gyms as GymWithEquipment[]) ?? [];
@@ -139,7 +142,7 @@ export default function HomePage() {
       return;
     }
 
-    // Behåll valt gym om det fortfarande finns, annars välj första.
+    // Behåll valt gym om det fortfarande finns.
     const stillExists = gymOptions.some(
       (gym) => String(gym.id) === String(selectedGymId),
     );
@@ -188,7 +191,7 @@ export default function HomePage() {
         equipment,
       });
 
-      // Spara alltid draft innan preview öppnas.
+      // Spara draft innan preview öppnas.
       saveWorkoutDraft(userId, {
         ...workout,
         duration: durationMinutes,
@@ -225,6 +228,28 @@ export default function HomePage() {
     router.push(`/workout/custom?userId=${encodeURIComponent(userId)}`);
   }
 
+  async function handleLogout() {
+    try {
+      setIsLoggingOut(true);
+
+      // Först försök med appens egen logout-route.
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("Logout misslyckades");
+      }
+    } catch {
+      // Fallback: gå ändå till startsidan.
+    } finally {
+      router.push("/");
+      router.refresh();
+      setIsLoggingOut(false);
+    }
+  }
+
   if (!authChecked) {
     return (
       <main className={uiPageShellClasses.page}>
@@ -241,16 +266,29 @@ export default function HomePage() {
     <main className={uiPageShellClasses.page}>
       <div className={cn(uiPageShellClasses.content, uiPageShellClasses.stack)}>
         <section className={cn(uiCardClasses.section, "overflow-hidden")}>
-          <div className="bg-slate-900 px-6 py-6 text-white">
-            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-300">
-              Hej
-            </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-              {getDisplayName(authUser)}
-            </h1>
-            <p className="mt-3 text-sm leading-6 text-slate-200">
-              Vad vill du göra idag?
-            </p>
+          <div className="bg-gradient-to-br from-emerald-100 via-emerald-50 to-lime-50 px-6 py-6 text-slate-900">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
+                  Hej
+                </p>
+                <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+                  {getDisplayName(authUser)}
+                </h1>
+                <p className="mt-3 text-sm leading-6 text-slate-700">
+                  Vad vill du göra idag?
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={isLoggingOut}
+                className={uiButtonClasses.secondary}
+              >
+                {isLoggingOut ? "Loggar ut..." : "Logga ut"}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3 px-6 py-5">
@@ -278,7 +316,7 @@ export default function HomePage() {
         </section>
 
         <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">
             Skapa pass
           </p>
 
@@ -354,7 +392,7 @@ export default function HomePage() {
         <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">
                 Senaste aktivitet
               </p>
               {latestWorkout ? (
