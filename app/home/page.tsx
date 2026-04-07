@@ -87,8 +87,8 @@ export default function HomePage() {
       const draft = getWorkoutDraft(userId);
       setHasDraft(!!draft);
 
-      const queue = getPendingSyncQueue(userId);
-      setPendingCount(queue.length);
+const queue = getPendingSyncQueue();
+setPendingCount(queue.filter((item) => item.userId === userId).length);
     } catch {
       setHasDraft(false);
       setPendingCount(0);
