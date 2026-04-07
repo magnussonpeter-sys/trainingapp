@@ -4,7 +4,8 @@
 // Fokus:
 // - tunn huvudvy
 // - robust offline-first
-// - enkel debugpanel för Sprint 3-testning
+// - tydlig huvudhandling
+// - inga debugpaneler i standardläge
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -13,8 +14,10 @@ import EffortFeedbackRow from "@/components/run/effort-feedback-row";
 import NextExerciseHint from "@/components/run/next-exercise-hint";
 import RunHeader from "@/components/run/run-header";
 import RunOptionsSheet from "@/components/run/run-options-sheet";
+import RunResumeBanner from "@/components/run/run-resume-banner";
 import RunSaveStatus from "@/components/run/run-save-status";
 import SetProgress from "@/components/run/set-progress";
+import ConfirmSheet from "@/components/shared/confirm-sheet";
 import { clearActiveWorkoutSessionDraft } from "@/lib/active-workout-session-storage";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
@@ -23,15 +26,6 @@ import {
   getWorkoutDraft,
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
-import {
-  getActiveWorkoutSnapshot,
-} from "@/lib/workout-flow/active-workout-store";
-import {
-  getSessionDraft,
-} from "@/lib/workout-flow/session-draft-store";
-import {
-  getPendingSyncQueue,
-} from "@/lib/workout-flow/pending-sync-store";
 import { useActiveWorkout } from "@/hooks/use-active-workout";
 import type { Workout } from "@/types/workout";
 
@@ -41,18 +35,6 @@ type AuthUser = {
   displayName?: string | null;
   username?: string | null;
   email?: string | null;
-};
-
-type DebugSnapshot = {
-  origin: string;
-  href: string;
-  resolvedUserId: string;
-  pendingSyncQueue: unknown;
-  sessionDraft: unknown;
-  activeWorkoutSnapshot: unknown;
-  workoutDraft: unknown;
-  localStorageAccessible: boolean;
-  readError: string | null;
 };
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -117,213 +99,6 @@ function clampNumber(value: number, min: number, max?: number) {
   return Math.max(value, min);
 }
 
-// Läser debugdata säkert via våra store-funktioner.
-// Då slipper vi problem med att DevTools ibland hamnar i fel frame/context.
-function readRunDebugSnapshot(userId: string): DebugSnapshot {
-  if (typeof window === "undefined") {
-    return {
-      origin: "",
-      href: "",
-      resolvedUserId: userId,
-      pendingSyncQueue: null,
-      sessionDraft: null,
-      activeWorkoutSnapshot: null,
-      workoutDraft: null,
-      localStorageAccessible: false,
-      readError: "window saknas",
-    };
-  }
-
-  try {
-    // Bara för att verifiera att localStorage faktiskt går att nå i denna context.
-    void window.localStorage;
-
-    return {
-      origin: window.location.origin,
-      href: window.location.href,
-      resolvedUserId: userId,
-      pendingSyncQueue: getPendingSyncQueue(),
-      sessionDraft: userId ? getSessionDraft(userId) : null,
-      activeWorkoutSnapshot: userId ? getActiveWorkoutSnapshot(userId) : null,
-      workoutDraft: userId ? getWorkoutDraft(userId) : null,
-      localStorageAccessible: true,
-      readError: null,
-    };
-  } catch (error) {
-    return {
-      origin: window.location.origin,
-      href: window.location.href,
-      resolvedUserId: userId,
-      pendingSyncQueue: null,
-      sessionDraft: null,
-      activeWorkoutSnapshot: null,
-      workoutDraft: null,
-      localStorageAccessible: false,
-      readError: error instanceof Error ? error.message : "Okänt debugfel",
-    };
-  }
-}
-
-function DebugPanel({
-  resolvedUserId,
-}: {
-  resolvedUserId: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [debugSnapshot, setDebugSnapshot] = useState<DebugSnapshot | null>(null);
-
-  function refreshDebug() {
-    setDebugSnapshot(readRunDebugSnapshot(resolvedUserId));
-  }
-
-  useEffect(() => {
-    // Läs direkt när panelen öppnas eller userId ändras.
-    if (!open) {
-      return;
-    }
-
-    refreshDebug();
-  }, [open, resolvedUserId]);
-
-  return (
-    <section className="mt-4 rounded-[28px] border border-amber-200 bg-amber-50 shadow-sm">
-      <div className="flex items-center justify-between gap-3 px-4 py-4 sm:px-5">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-amber-700">
-            Debug
-          </p>
-          <p className="mt-1 text-sm text-amber-900">
-            Använd detta för att kontrollera offline-lager utan DevTools-problem.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={refreshDebug}
-            className={uiButtonClasses.secondary}
-          >
-            Uppdatera
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setOpen((previous) => !previous)}
-            className={uiButtonClasses.secondary}
-          >
-            {open ? "Dölj" : "Visa"}
-          </button>
-        </div>
-      </div>
-
-      {open ? (
-        <div className="space-y-3 border-t border-amber-200 px-4 py-4 sm:px-5">
-          {debugSnapshot ? (
-            <>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-amber-200 bg-white p-3 text-sm text-slate-700">
-                  <p className="font-medium text-slate-900">Context</p>
-                  <p className="mt-2 break-all">
-                    <span className="font-medium">origin:</span>{" "}
-                    {debugSnapshot.origin || "saknas"}
-                  </p>
-                  <p className="mt-1 break-all">
-                    <span className="font-medium">href:</span>{" "}
-                    {debugSnapshot.href || "saknas"}
-                  </p>
-                  <p className="mt-1 break-all">
-                    <span className="font-medium">resolvedUserId:</span>{" "}
-                    {debugSnapshot.resolvedUserId || "saknas"}
-                  </p>
-                  <p className="mt-1">
-                    <span className="font-medium">localStorage:</span>{" "}
-                    {debugSnapshot.localStorageAccessible ? "ok" : "ej åtkomlig"}
-                  </p>
-                  {debugSnapshot.readError ? (
-                    <p className="mt-2 text-rose-700">
-                      <span className="font-medium">fel:</span>{" "}
-                      {debugSnapshot.readError}
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="rounded-2xl border border-amber-200 bg-white p-3 text-sm text-slate-700">
-                  <p className="font-medium text-slate-900">Snabbkontroll</p>
-                  <p className="mt-2">
-                    <span className="font-medium">Pending queue count:</span>{" "}
-                    {Array.isArray(debugSnapshot.pendingSyncQueue)
-                      ? debugSnapshot.pendingSyncQueue.length
-                      : 0}
-                  </p>
-                  <p className="mt-1">
-                    <span className="font-medium">Session draft:</span>{" "}
-                    {debugSnapshot.sessionDraft ? "finns" : "saknas"}
-                  </p>
-                  <p className="mt-1">
-                    <span className="font-medium">Active snapshot:</span>{" "}
-                    {debugSnapshot.activeWorkoutSnapshot ? "finns" : "saknas"}
-                  </p>
-                  <p className="mt-1">
-                    <span className="font-medium">Workout draft:</span>{" "}
-                    {debugSnapshot.workoutDraft ? "finns" : "saknas"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <div className="rounded-2xl border border-amber-200 bg-white p-3">
-                  <p className="text-sm font-medium text-slate-900">
-                    Pending sync queue
-                  </p>
-                  <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">
-                    {JSON.stringify(debugSnapshot.pendingSyncQueue, null, 2)}
-                  </pre>
-                </div>
-
-                <div className="rounded-2xl border border-amber-200 bg-white p-3">
-                  <p className="text-sm font-medium text-slate-900">
-                    Session draft
-                  </p>
-                  <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">
-                    {JSON.stringify(debugSnapshot.sessionDraft, null, 2)}
-                  </pre>
-                </div>
-
-                <div className="rounded-2xl border border-amber-200 bg-white p-3">
-                  <p className="text-sm font-medium text-slate-900">
-                    Active workout snapshot
-                  </p>
-                  <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">
-                    {JSON.stringify(
-                      debugSnapshot.activeWorkoutSnapshot,
-                      null,
-                      2,
-                    )}
-                  </pre>
-                </div>
-
-                <div className="rounded-2xl border border-amber-200 bg-white p-3">
-                  <p className="text-sm font-medium text-slate-900">
-                    Workout draft
-                  </p>
-                  <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">
-                    {JSON.stringify(debugSnapshot.workoutDraft, null, 2)}
-                  </pre>
-                </div>
-              </div>
-            </>
-          ) : (
-            <p className="text-sm text-slate-700">
-              Tryck på <span className="font-medium">Uppdatera</span> för att läsa
-              debugdata.
-            </p>
-          )}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 export default function RunPage() {
   const router = useRouter();
 
@@ -333,6 +108,7 @@ export default function RunPage() {
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [abortConfirmOpen, setAbortConfirmOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -617,6 +393,11 @@ export default function RunPage() {
 
   function handleAbortFromSheet() {
     setOptionsOpen(false);
+    setAbortConfirmOpen(true);
+  }
+
+  function confirmAbortWorkout() {
+    setAbortConfirmOpen(false);
     abortWorkout();
     router.push("/home");
   }
@@ -662,8 +443,6 @@ export default function RunPage() {
               {pageError}
             </section>
           ) : null}
-
-          <DebugPanel resolvedUserId={resolvedUserId} />
         </div>
       </main>
     );
@@ -690,6 +469,7 @@ export default function RunPage() {
               <RunSaveStatus
                 status={saveStatus}
                 restoreNotice={restoreNotice}
+                pendingSyncCount={pendingSyncCount}
               />
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -738,8 +518,6 @@ export default function RunPage() {
               Till home
             </button>
           </div>
-
-          <DebugPanel resolvedUserId={resolvedUserId} />
         </div>
       </main>
     );
@@ -752,7 +530,7 @@ export default function RunPage() {
           <RunHeader
             workoutName={workout.name}
             displayName={getDisplayName(authUser)}
-            onAbort={handleGoHome}
+            onAbort={() => setAbortConfirmOpen(true)}
             onOpenOptions={() => setOptionsOpen(true)}
           />
 
@@ -763,7 +541,13 @@ export default function RunPage() {
               </div>
             ) : null}
 
-            <RunSaveStatus status={saveStatus} restoreNotice={restoreNotice} />
+            <RunResumeBanner restoreNotice={restoreNotice} />
+
+            <RunSaveStatus
+              status={saveStatus}
+              restoreNotice={null}
+              pendingSyncCount={pendingSyncCount}
+            />
 
             {currentExercise ? (
               <>
@@ -859,8 +643,6 @@ export default function RunPage() {
             ) : null}
           </div>
         </section>
-
-        <DebugPanel resolvedUserId={resolvedUserId} />
       </div>
 
       {!showExerciseFeedback ? (
@@ -916,6 +698,16 @@ export default function RunPage() {
         onDecreaseDuration={handleDecreaseDuration}
         onIncreaseRest={handleIncreaseRest}
         onDecreaseRest={handleDecreaseRest}
+      />
+
+      <ConfirmSheet
+        open={abortConfirmOpen}
+        title="Avsluta pass?"
+        description="Ditt nuvarande läge sparas lokalt och passet markeras som avbrutet."
+        confirmLabel="Avsluta pass"
+        destructive
+        onConfirm={confirmAbortWorkout}
+        onCancel={() => setAbortConfirmOpen(false)}
       />
     </main>
   );
