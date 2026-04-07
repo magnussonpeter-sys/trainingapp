@@ -5,13 +5,15 @@
 // - tunn huvudvy
 // - robust offline-first
 // - tydlig huvudhandling
-// - inga debugpaneler i standardläge
+// - auto-finish när passet är klart
+// - AI + historik i avslutssammanfattning
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import CurrentExerciseCard from "@/components/run/current-exercise-card";
 import EffortFeedbackRow from "@/components/run/effort-feedback-row";
 import NextExerciseHint from "@/components/run/next-exercise-hint";
+import RunFinishSummary from "@/components/run/run-finish-summary";
 import RunHeader from "@/components/run/run-header";
 import RunOptionsSheet from "@/components/run/run-options-sheet";
 import RunResumeBanner from "@/components/run/run-resume-banner";
@@ -109,6 +111,7 @@ export default function RunPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [abortConfirmOpen, setAbortConfirmOpen] = useState(false);
+  const [hasTriggeredAutoFinish, setHasTriggeredAutoFinish] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -251,6 +254,26 @@ export default function RunPage() {
     return "Spara set";
   }, [timedExercise, timerState]);
 
+  const timedExercisesCount = useMemo(() => {
+    if (!workout) {
+      return 0;
+    }
+
+    return workout.exercises.filter((exercise) => {
+      return typeof exercise.duration === "number" && exercise.duration > 0;
+    }).length;
+  }, [workout]);
+
+  // Auto-finish när passet första gången går i mål.
+  useEffect(() => {
+    if (!isWorkoutComplete || hasTriggeredAutoFinish) {
+      return;
+    }
+
+    setHasTriggeredAutoFinish(true);
+    finishWorkout();
+  }, [finishWorkout, hasTriggeredAutoFinish, isWorkoutComplete]);
+
   function persistWorkoutDraft(nextWorkout: Workout | null) {
     if (!resolvedUserId || !nextWorkout) {
       return;
@@ -381,11 +404,6 @@ export default function RunPage() {
     router.push("/home");
   }
 
-  function handleFinishWorkout() {
-    // Kör hookens finish-flöde först så att pending sync verkligen skrivs.
-    finishWorkout();
-  }
-
   function handleSkipExerciseFromSheet() {
     setOptionsOpen(false);
     skipExercise();
@@ -491,33 +509,25 @@ export default function RunPage() {
                   </p>
                 </div>
               </div>
-
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-                <p className="font-medium">Pending sync just nu</p>
-                <p className="mt-1">
-                  {pendingSyncCount} objekt i lokal kö.
-                </p>
-              </div>
             </div>
           </section>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={handleFinishWorkout}
-              className={cn(uiButtonClasses.primary, "w-full")}
-            >
-              Spara avslutat pass
-            </button>
+          <RunFinishSummary
+            userId={resolvedUserId}
+            totalCompletedSets={totalCompletedSets}
+            totalVolume={totalVolume}
+            timedExercises={timedExercisesCount}
+            durationMinutes={workout.duration}
+            workoutName={workout.name}
+          />
 
-            <button
-              type="button"
-              onClick={handleGoHome}
-              className={cn(uiButtonClasses.secondary, "w-full")}
-            >
-              Till home
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleGoHome}
+            className={cn(uiButtonClasses.primary, "w-full")}
+          >
+            Till home
+          </button>
         </div>
       </main>
     );
