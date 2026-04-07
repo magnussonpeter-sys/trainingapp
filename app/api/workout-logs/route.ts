@@ -59,7 +59,7 @@ const createWorkoutLogSchema = z.object({
         eventAt: z.string().optional(),
         payload: z.record(z.string(), z.unknown()).optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
-      })
+      }),
     )
     .optional(),
 });
@@ -80,6 +80,10 @@ export async function POST(request: Request) {
       workoutName: parsed.workoutName,
       status: parsed.status,
       exerciseCount: parsed.exercises.length,
+      clientSyncId:
+        typeof parsed.metadata?.clientSyncId === "string"
+          ? parsed.metadata.clientSyncId
+          : null,
     });
 
     const result = await insertWorkoutLog(parsed);
@@ -90,8 +94,9 @@ export async function POST(request: Request) {
       {
         ok: true,
         id: result.id,
+        deduped: Boolean(result.deduped),
       },
-      { status: 201 }
+      { status: result.deduped ? 200 : 201 },
     );
   } catch (error) {
     console.error("POST /api/workout-logs error:", error);
@@ -103,7 +108,7 @@ export async function POST(request: Request) {
           error: "Invalid workout log payload",
           issues: error.issues,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -116,7 +121,7 @@ export async function POST(request: Request) {
         error: "Failed to save workout log",
         details: message,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -126,14 +131,13 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-
     const userId = searchParams.get("userId");
     const limitParam = searchParams.get("limit");
 
     if (!userId) {
       return NextResponse.json(
         { ok: false, error: "Missing userId" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -142,7 +146,7 @@ export async function GET(request: Request) {
     if (!Number.isFinite(limit) || limit <= 0) {
       return NextResponse.json(
         { ok: false, error: "Invalid limit" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -168,7 +172,7 @@ export async function GET(request: Request) {
         error: "Failed to fetch workout logs",
         details: message,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -183,7 +187,7 @@ export async function DELETE(request: Request) {
     if (!userId) {
       return NextResponse.json(
         { ok: false, error: "Missing userId" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -205,7 +209,7 @@ export async function DELETE(request: Request) {
         error: "Failed to delete workout logs",
         details: message,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

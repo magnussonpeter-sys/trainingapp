@@ -7,7 +7,8 @@ import {
   type PendingSyncItem,
 } from "@/lib/workout-flow/pending-sync-store";
 
-// Resultat från en körning av synk-loopen.
+// Resultat från en sync-körning.
+// Bra både för debug och framtida UI.
 export type PendingSyncRunResult = {
   attempted: number;
   succeeded: number;
@@ -15,11 +16,12 @@ export type PendingSyncRunResult = {
   skipped: number;
 };
 
-// Globalt lås i klienten så att flera sync-loopar inte kör parallellt.
+// Globalt klientlås.
+// Hindrar att flera sync-loopar kör samtidigt.
 let activeSyncPromise: Promise<PendingSyncRunResult> | null = null;
 
-// Bygger payload till workout-logs.
-// Viktigt: vi skickar med en stabil klientnyckel för dedupe.
+// Bygger payload i samma format som workout-logs API redan använder.
+// Viktigt: clientSyncId skickas i metadata för dedupe på servern.
 function buildWorkoutLogPayload(item: PendingSyncItem) {
   const startedAtMs = new Date(item.sessionStartedAt).getTime();
   const completedAtMs = new Date(item.completedAt).getTime();
@@ -40,14 +42,15 @@ function buildWorkoutLogPayload(item: PendingSyncItem) {
     exercises: item.completedExercises,
     metadata: {
       offlineSync: true,
-      clientSyncId: item.id, // Stabil nyckel för att undvika dubletter.
+      clientSyncId: item.id, // Stabil dedupe-nyckel.
       syncedAt: new Date().toISOString(),
     },
   };
 }
 
+// Synkar ett enskilt item.
 export async function syncPendingWorkoutItem(item: PendingSyncItem) {
-  // Bara queued/failed ska försöka synkas på nytt.
+  // Bara queued och failed ska synkas.
   if (item.syncStatus !== "queued" && item.syncStatus !== "failed") {
     return {
       ok: false as const,
@@ -71,7 +74,7 @@ export async function syncPendingWorkoutItem(item: PendingSyncItem) {
     });
 
     const data = (await response.json().catch(() => null)) as
-      | { ok?: boolean; error?: string; details?: string }
+      | { ok?: boolean; error?: string; details?: string; deduped?: boolean }
       | null;
 
     if (!response.ok || !data?.ok) {
@@ -80,10 +83,14 @@ export async function syncPendingWorkoutItem(item: PendingSyncItem) {
       throw new Error(message);
     }
 
-    // Vid lyckad synk tas posten bort ur kön.
+    // Vid lyckad sync, även om servern returnerade dedupe,
+    // tas item bort från kön.
     removePendingSyncItem(item.id);
 
-    return { ok: true as const };
+    return {
+      ok: true as const,
+      deduped: Boolean(data?.deduped),
+    };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Okänt synkfel";
@@ -98,8 +105,8 @@ export async function syncPendingWorkoutItem(item: PendingSyncItem) {
   }
 }
 
-// Återställ fastnade syncing-poster, men bara om de är gamla.
-// Då undviker vi att en pågående synk direkt återköas av en annan trigger.
+// Återställer bara gamla syncing-poster.
+// På så sätt återköar vi inte något som precis håller på att skickas.
 export function resetStaleSyncingItems(maxAgeMs = 60_000) {
   const now = Date.now();
   const queue = getPendingSyncQueue();
@@ -122,7 +129,7 @@ export function resetStaleSyncingItems(maxAgeMs = 60_000) {
   }
 }
 
-// Kör en enda synk-loop åt gången.
+// Kör bara en sync-loop åt gången.
 export async function syncPendingWorkoutQueue(): Promise<PendingSyncRunResult> {
   if (activeSyncPromise) {
     return activeSyncPromise;
@@ -147,7 +154,7 @@ export async function syncPendingWorkoutQueue(): Promise<PendingSyncRunResult> {
       };
     }
 
-    // Bara gamla syncing får återställas.
+    // Bara gamla syncing-poster återställs.
     resetStaleSyncingItems();
 
     const queue = getPendingSyncQueue();
