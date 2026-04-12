@@ -50,20 +50,6 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function getDisplayName(user: AuthUser | null) {
-  if (!user) {
-    return "där";
-  }
-
-  return (
-    user.displayName?.trim() ||
-    user.name?.trim() ||
-    user.username?.trim() ||
-    user.email?.split("@")[0]?.trim() ||
-    "där"
-  );
-}
-
 // Fallback om auth inte är färdig men lokala run-nycklar finns.
 // Viktigt för resume/offline.
 function resolveLocalFallbackUserId() {
@@ -499,14 +485,24 @@ export default function RunPage() {
   if (isWorkoutComplete) {
     return (
       <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
-        <RunFinishSummary
-          workoutName={workout.name}
-          displayName={getDisplayName(authUser)}
-          totalCompletedSets={totalCompletedSets}
-          totalVolume={Math.round(totalVolume)}
-          timedExercisesCount={timedExercisesCount}
-          onGoHome={handleGoHome}
-        />
+        <div className="space-y-6">
+          <RunFinishSummary
+            userId={resolvedUserId}
+            workoutName={workout.name}
+            totalCompletedSets={totalCompletedSets}
+            totalVolume={Math.round(totalVolume)}
+            timedExercises={timedExercisesCount}
+            durationMinutes={workout.duration}
+          />
+
+          <button
+            type="button"
+            onClick={handleGoHome}
+            className={cn(uiButtonClasses.primary, "w-full")}
+          >
+            Till home
+          </button>
+        </div>
       </main>
     );
   }
@@ -540,10 +536,7 @@ export default function RunPage() {
               </h2>
 
               <div className="mt-4">
-                <SetProgress
-                  currentSet={currentSet}
-                  totalSets={currentExercise.sets}
-                />
+                <SetProgress currentSet={currentSet} totalSets={currentExercise.sets} />
               </div>
 
               {!showExerciseFeedback ? (
