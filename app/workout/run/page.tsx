@@ -538,7 +538,11 @@ export default function RunPage() {
         ) : null}
 
 <RunResumeBanner restoreNotice={restoreNotice} />
-        <RunSaveStatus saveStatus={saveStatus} />
+<RunSaveStatus
+  status={saveStatus}
+  restoreNotice={restoreNotice}
+  pendingSyncCount={pendingSyncCount}
+/>
 
         {currentExercise ? (
           <>
