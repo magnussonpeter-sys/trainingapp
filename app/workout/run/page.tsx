@@ -7,9 +7,16 @@
 // - tydlig huvudhandling
 // - auto-finish när passet är klart
 // - AI + historik i avslutssammanfattning
+//
+// Sprint 1:
+// - Workout använder blocks i stället för platt exercises-lista
+// - vi håller kvar linjär körning av övningar för att minimera risk
+// - sidan plattar därför ut blocks till en övningslista där det behövs
+// - ändringar i aktuell övning skrivs tillbaka till rätt block
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+
 import CurrentExerciseCard from "@/components/run/current-exercise-card";
 import EffortFeedbackRow from "@/components/run/effort-feedback-row";
 import NextExerciseHint from "@/components/run/next-exercise-hint";
@@ -29,7 +36,7 @@ import {
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
 import { useActiveWorkout } from "@/hooks/use-active-workout";
-import type { Workout } from "@/types/workout";
+import type { Exercise, Workout } from "@/types/workout";
 
 type AuthUser = {
   id?: string | number | null;
@@ -76,7 +83,6 @@ function resolveLocalFallbackUserId() {
     for (const prefix of prefixes) {
       for (let index = 0; index < storage.length; index += 1) {
         const key = storage.key(index);
-
         if (key && key.startsWith(prefix)) {
           return key.slice(prefix.length);
         }
@@ -99,6 +105,39 @@ function clampNumber(value: number, min: number, max?: number) {
   }
 
   return Math.max(value, min);
+}
+
+// Sprint 1-hjälpare:
+// Plattar ut blocks till en linjär lista så att run-logiken kan fortsätta
+// fungera ungefär som tidigare tills vi gör riktig blocknavigering senare.
+function getAllExercises(workout: Workout | null): Exercise[] {
+  if (!workout?.blocks?.length) {
+    return [];
+  }
+
+  return workout.blocks.flatMap((block) => block.exercises ?? []);
+}
+
+// Hitta var en övning ligger i blocks-strukturen.
+// Behövs när användaren ändrar sets/reps/rest/duration under passet.
+function findExerciseLocation(
+  workout: Workout | null,
+  exerciseId: string,
+): { blockIndex: number; exerciseIndex: number } | null {
+  if (!workout?.blocks?.length) {
+    return null;
+  }
+
+  for (let blockIndex = 0; blockIndex < workout.blocks.length; blockIndex += 1) {
+    const block = workout.blocks[blockIndex];
+    const exerciseIndex = block.exercises.findIndex((exercise) => exercise.id === exerciseId);
+
+    if (exerciseIndex !== -1) {
+      return { blockIndex, exerciseIndex };
+    }
+  }
+
+  return null;
 }
 
 export default function RunPage() {
@@ -166,9 +205,7 @@ export default function RunPage() {
 
     try {
       const storedWorkout = getWorkoutDraft(resolvedUserId) as Workout | null;
-      const normalizedWorkout = normalizePreviewWorkout(
-        storedWorkout,
-      ) as Workout | null;
+      const normalizedWorkout = normalizePreviewWorkout(storedWorkout) as Workout | null;
 
       setWorkout(normalizedWorkout);
       setLoading(false);
@@ -222,32 +259,30 @@ export default function RunPage() {
     workout,
   });
 
+  const allExercises = useMemo(() => getAllExercises(workout), [workout]);
+
   const nextExerciseName = useMemo(() => {
-    if (!workout || !currentExercise) {
+    if (!currentExercise || allExercises.length === 0) {
       return "";
     }
 
-    const currentIndex = workout.exercises.findIndex(
-      (item) => item.id === currentExercise.id,
-    );
+    const currentIndex = allExercises.findIndex((item) => item.id === currentExercise.id);
 
     if (currentIndex === -1) {
       return "";
     }
 
-    return workout.exercises[currentIndex + 1]?.name ?? "";
-  }, [currentExercise, workout]);
+    return allExercises[currentIndex + 1]?.name ?? "";
+  }, [allExercises, currentExercise]);
 
   const primaryButtonLabel = useMemo(() => {
     if (timedExercise) {
       if (timerState === "idle") {
         return "Starta set";
       }
-
       if (timerState === "running") {
         return "Stoppa set";
       }
-
       return "Spara set";
     }
 
@@ -255,14 +290,10 @@ export default function RunPage() {
   }, [timedExercise, timerState]);
 
   const timedExercisesCount = useMemo(() => {
-    if (!workout) {
-      return 0;
-    }
-
-    return workout.exercises.filter((exercise) => {
+    return allExercises.filter((exercise) => {
       return typeof exercise.duration === "number" && exercise.duration > 0;
     }).length;
-  }, [workout]);
+  }, [allExercises]);
 
   // Auto-finish när passet första gången går i mål.
   useEffect(() => {
@@ -295,26 +326,35 @@ export default function RunPage() {
     clearWorkoutDraft(resolvedUserId);
   }
 
-  function updateCurrentExerciseField(field: string, value: number) {
+  function updateCurrentExerciseField(field: keyof Exercise, value: number) {
     setWorkout((previous) => {
       if (!previous || !currentExercise) {
         return previous;
       }
 
-      const nextExercises = previous.exercises.map((exercise) => {
-        if (exercise.id !== currentExercise.id) {
-          return exercise;
-        }
+      const location = findExerciseLocation(previous, currentExercise.id);
+      if (!location) {
+        return previous;
+      }
 
-        return {
-          ...exercise,
-          [field]: value,
-        };
-      });
+      const nextBlocks = [...previous.blocks];
+      const targetBlock = nextBlocks[location.blockIndex];
+      const nextExercises = [...targetBlock.exercises];
+      const targetExercise = nextExercises[location.exerciseIndex];
 
-      const nextWorkout = {
-        ...previous,
+      nextExercises[location.exerciseIndex] = {
+        ...targetExercise,
+        [field]: value,
+      };
+
+      nextBlocks[location.blockIndex] = {
+        ...targetBlock,
         exercises: nextExercises,
+      };
+
+      const nextWorkout: Workout = {
+        ...previous,
+        blocks: nextBlocks,
       };
 
       // Viktigt för offline-first så att planändringar inte tappas.
@@ -426,238 +466,154 @@ export default function RunPage() {
   }
 
   if (loading) {
-    return (
-      <main className="min-h-screen bg-slate-50 px-4 py-6">
-        <div className="mx-auto max-w-3xl">
-          <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm text-slate-600">Laddar pass...</p>
-          </section>
-        </div>
-      </main>
-    );
+    return <div className="p-6">Laddar pass...</div>;
   }
 
   if (!workout || !resolvedUserId) {
     return (
-      <main className="min-h-screen bg-slate-50 px-4 py-6">
-        <div className="mx-auto max-w-3xl space-y-4">
-          <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm leading-6 text-slate-600">
-              Inget aktivt pass hittades. Gå tillbaka till home och starta ett
-              nytt pass.
-            </p>
+      <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
+        <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Inget aktivt pass hittades</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Gå tillbaka till home och starta ett nytt pass.
+          </p>
 
-            <button
-              type="button"
-              onClick={() => router.push("/home")}
-              className={cn(uiButtonClasses.primary, "mt-4")}
-            >
-              Till home
-            </button>
-          </section>
+          <button
+            type="button"
+            onClick={() => router.push("/home")}
+            className={cn(uiButtonClasses.primary, "mt-4")}
+          >
+            Till home
+          </button>
 
           {pageError ? (
-            <section className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {pageError}
-            </section>
+            </div>
           ) : null}
-        </div>
+        </section>
       </main>
     );
   }
 
   if (isWorkoutComplete) {
     return (
-      <main className="min-h-screen bg-slate-50 px-4 py-6">
-        <div className="mx-auto max-w-3xl space-y-4">
-          <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-            <div className="bg-slate-900 px-6 py-6 text-white">
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-300">
-                Pass klart
-              </p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-                {workout.name}
-              </h1>
-              <p className="mt-3 text-sm leading-6 text-slate-200">
-                Bra jobbat, {getDisplayName(authUser)}.
-              </p>
-            </div>
-
-            <div className="space-y-4 px-6 py-5">
-              <RunSaveStatus
-                status={saveStatus}
-                restoreNotice={restoreNotice}
-                pendingSyncCount={pendingSyncCount}
-              />
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                    Genomförda set
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">
-                    {totalCompletedSets}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                    Total volym
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">
-                    {Math.round(totalVolume)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <RunFinishSummary
-            userId={resolvedUserId}
-            totalCompletedSets={totalCompletedSets}
-            totalVolume={totalVolume}
-            timedExercises={timedExercisesCount}
-            durationMinutes={workout.duration}
-            workoutName={workout.name}
-          />
-
-          <button
-            type="button"
-            onClick={handleGoHome}
-            className={cn(uiButtonClasses.primary, "w-full")}
-          >
-            Till home
-          </button>
-        </div>
+      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+        <RunFinishSummary
+          workoutName={workout.name}
+          displayName={getDisplayName(authUser)}
+          totalCompletedSets={totalCompletedSets}
+          totalVolume={Math.round(totalVolume)}
+          timedExercisesCount={timedExercisesCount}
+          onGoHome={handleGoHome}
+        />
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 pb-32">
-      <div className="mx-auto max-w-3xl px-4 py-5 sm:px-6">
-        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <RunHeader
-            workoutName={workout.name}
-            displayName={getDisplayName(authUser)}
-            onAbort={() => setAbortConfirmOpen(true)}
-            onOpenOptions={() => setOptionsOpen(true)}
-          />
+    <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+      <div className="space-y-6">
+        <RunHeader
+          workoutName={workout.name}
+          onAbort={() => setAbortConfirmOpen(true)}
+          onOpenOptions={() => setOptionsOpen(true)}
+        />
 
-          <div className="space-y-4 px-5 py-5">
-            {pageError ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-                {pageError}
-              </div>
-            ) : null}
-
-            <RunResumeBanner restoreNotice={restoreNotice} />
-
-            <RunSaveStatus
-              status={saveStatus}
-              restoreNotice={null}
-              pendingSyncCount={pendingSyncCount}
-            />
-
-            {currentExercise ? (
-              <>
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-                      Aktuell övning
-                    </p>
-                    <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">
-                      {currentExercise.name}
-                    </h2>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-right">
-                    <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                      Set
-                    </p>
-                    <p className="mt-1 text-base font-semibold text-slate-900">
-                      {currentSet} / {currentExercise.sets}
-                    </p>
-                  </div>
-                </div>
-
-                <SetProgress
-                  totalSets={currentExercise.sets}
-                  currentSet={currentSet}
-                />
-
-                {!showExerciseFeedback ? (
-                  <CurrentExerciseCard
-                    description={currentExercise.description}
-                    timedExercise={timedExercise}
-                    reps={reps}
-                    onRepsChange={setReps}
-                    plannedReps={currentExercise.reps}
-                    weight={weight}
-                    onWeightChange={updateWeight}
-                    suggestedWeightValue={suggestedWeightValue}
-                    weightChipOptions={weightChipOptions}
-                    onWeightChipSelect={chooseWeightChip}
-                    elapsedSeconds={elapsedSeconds}
-                    targetDurationSeconds={currentExercise.duration}
-                    timerState={timerState}
-                    showRestTimer={showRestTimer}
-                    restRemainingSeconds={restRemainingSeconds}
-                    restTimerRunning={restTimerRunning}
-                    onToggleRestTimer={() =>
-                      setRestTimerRunning(!restTimerRunning)
-                    }
-                  />
-                ) : timedExercise ? (
-                  <EffortFeedbackRow
-                    mode="timed"
-                    value={selectedTimedEffort}
-                    onChange={setSelectedTimedEffort}
-                    onSkip={moveToNextExercise}
-                    onContinue={submitExerciseFeedback}
-                  />
-                ) : (
-                  <EffortFeedbackRow
-                    mode="reps"
-                    value={selectedExtraReps}
-                    onChange={setSelectedExtraReps}
-                    onSkip={moveToNextExercise}
-                    onContinue={submitExerciseFeedback}
-                  />
-                )}
-
-                {!showExerciseFeedback ? (
-                  <NextExerciseHint nextExerciseName={nextExerciseName} />
-                ) : null}
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                      Genomförda set
-                    </p>
-                    <p className="mt-2 text-2xl font-semibold text-slate-900">
-                      {totalCompletedSets}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                      Total volym
-                    </p>
-                    <p className="mt-2 text-2xl font-semibold text-slate-900">
-                      {Math.round(totalVolume)}
-                    </p>
-                  </div>
-                </div>
-              </>
-            ) : null}
+        {pageError ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {pageError}
           </div>
-        </section>
-      </div>
+        ) : null}
 
-      {!showExerciseFeedback ? (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-4 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-3 backdrop-blur">
-          <div className="mx-auto flex max-w-3xl items-center gap-3">
+        <RunResumeBanner restoreNotice={restoreNotice} pendingSyncCount={pendingSyncCount} />
+        <RunSaveStatus saveStatus={saveStatus} />
+
+        {currentExercise ? (
+          <>
+            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Aktuell övning
+              </p>
+              <h2 className="mt-2 text-2xl font-bold text-slate-950">
+                {currentExercise.name}
+              </h2>
+
+              <div className="mt-4">
+                <SetProgress
+                  currentSet={currentSet}
+                  totalSets={currentExercise.sets}
+                />
+              </div>
+
+              {!showExerciseFeedback ? (
+                <CurrentExerciseCard
+                  currentExercise={currentExercise}
+                  reps={reps}
+                  setReps={setReps}
+                  weight={weight}
+                  updateWeight={updateWeight}
+                  chooseWeightChip={chooseWeightChip}
+                  suggestedWeightValue={suggestedWeightValue}
+                  weightChipOptions={weightChipOptions}
+                  timedExercise={timedExercise}
+                  timerState={timerState}
+                  elapsedSeconds={elapsedSeconds}
+                  startTimer={startTimer}
+                  stopTimer={stopTimer}
+                  resetTimer={resetTimer}
+                  showRestTimer={showRestTimer}
+                  restTimerRunning={restTimerRunning}
+                  restRemainingSeconds={restRemainingSeconds}
+                  onToggleRestTimer={() => {
+                    setRestTimerRunning(!restTimerRunning);
+                  }}
+                />
+              ) : timedExercise ? (
+                <EffortFeedbackRow
+                  timedExercise
+                  selectedTimedEffort={selectedTimedEffort}
+                  onSelectTimedEffort={setSelectedTimedEffort}
+                />
+              ) : (
+                <EffortFeedbackRow
+                  timedExercise={false}
+                  selectedExtraReps={selectedExtraReps}
+                  onSelectExtraReps={setSelectedExtraReps}
+                />
+              )}
+
+              {!showExerciseFeedback ? (
+                <div className="mt-5">
+                  <NextExerciseHint nextExerciseName={nextExerciseName} />
+                </div>
+              ) : null}
+            </section>
+
+            <section className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-slate-50 px-4 py-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Genomförda set
+                </p>
+                <p className="mt-1 text-xl font-semibold text-slate-900">
+                  {totalCompletedSets}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 px-4 py-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Total volym
+                </p>
+                <p className="mt-1 text-xl font-semibold text-slate-900">
+                  {Math.round(totalVolume)}
+                </p>
+              </div>
+            </section>
+          </>
+        ) : null}
+
+        {!showExerciseFeedback ? (
+          <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
               onClick={skipExercise}
@@ -670,7 +626,7 @@ export default function RunPage() {
               <button
                 type="button"
                 onClick={resetTimer}
-                className={uiButtonClasses.secondary}
+                className={cn(uiButtonClasses.secondary, "flex-1")}
               >
                 Kör igen
               </button>
@@ -679,23 +635,35 @@ export default function RunPage() {
             <button
               type="button"
               onClick={handlePrimaryAction}
-              className={cn(uiButtonClasses.primary, "flex-[1.4]")}
+              className={cn(uiButtonClasses.primary, "flex-1")}
             >
               {primaryButtonLabel}
             </button>
           </div>
-        </div>
-      ) : null}
+        ) : (
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={moveToNextExercise}
+              className={cn(uiButtonClasses.secondary, "flex-1")}
+            >
+              Hoppa över feedback
+            </button>
+
+            <button
+              type="button"
+              onClick={submitExerciseFeedback}
+              className={cn(uiButtonClasses.primary, "flex-1")}
+            >
+              Fortsätt
+            </button>
+          </div>
+        )}
+      </div>
 
       <RunOptionsSheet
         open={optionsOpen}
-        currentExerciseName={currentExercise?.name}
-        plannedSets={currentExercise?.sets}
-        plannedReps={currentExercise?.reps}
-        plannedDuration={currentExercise?.duration}
-        plannedRest={currentExercise?.rest}
-        timedExercise={timedExercise}
-        timerState={timerState}
+        currentExercise={currentExercise}
         onClose={() => setOptionsOpen(false)}
         onSkipExercise={handleSkipExerciseFromSheet}
         onAbortWorkout={handleAbortFromSheet}
@@ -712,10 +680,10 @@ export default function RunPage() {
 
       <ConfirmSheet
         open={abortConfirmOpen}
-        title="Avsluta pass?"
-        description="Ditt nuvarande läge sparas lokalt och passet markeras som avbrutet."
-        confirmLabel="Avsluta pass"
-        destructive
+        title="Avbryt passet?"
+        description="Passet markeras som avbrutet. Du kan starta ett nytt pass från hem."
+        confirmLabel="Avbryt pass"
+        cancelLabel="Fortsätt träna"
         onConfirm={confirmAbortWorkout}
         onCancel={() => setAbortConfirmOpen(false)}
       />
