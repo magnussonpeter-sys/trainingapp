@@ -176,6 +176,24 @@ function createCompletedExercise(exercise: WorkoutExercise): CompletedExercise {
   };
 }
 
+function mapTimedEffortForProgression(
+  value: TimedEffortOption | null,
+): "easy" | "moderate" | "hard" | null {
+  if (value === "light") {
+    return "easy";
+  }
+
+  if (value === "just_right") {
+    return "moderate";
+  }
+
+  if (value === "tough") {
+    return "hard";
+  }
+
+  return null;
+}
+
 export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
   const allExercises = useMemo(() => getAllExercises(workout), [workout]);
 
@@ -517,7 +535,9 @@ function submitExerciseFeedback() {
     lastWeight: lastSet?.actualWeight ?? null,
     lastReps: lastSet?.actualReps ?? null,
     lastExtraReps: timedExercise ? null : selectedExtraReps ?? null,
-    lastTimedEffort: timedExercise ? selectedTimedEffort ?? null : null,
+    lastTimedEffort: timedExercise
+  ? mapTimedEffortForProgression(selectedTimedEffort)
+  : null,
   });
 
   // gamla logiken
