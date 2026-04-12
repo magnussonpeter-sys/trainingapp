@@ -8,6 +8,7 @@
 // - detta gör nästa steg mot cirkelträning mycket enklare
 
 import { useEffect, useMemo, useState } from "react";
+import { getSuggestedWeight } from "@/lib/progression-engine";
 
 import { getAvailableExercises, type ExerciseCatalogItem } from "@/lib/exercise-catalog";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";

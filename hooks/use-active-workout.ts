@@ -8,6 +8,7 @@
 // - Liten mängd kommentarer på viktiga ställen för att göra vidare steg lättare
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { saveExerciseProgression } from "@/lib/progression-store";
 
 import type {
   CompletedExercise,
@@ -500,33 +501,43 @@ const completedSet: CompletedSet = {
     moveToNextExercise();
   }
 
-  function submitExerciseFeedback() {
-    if (!currentExercise) {
-      moveToNextExercise();
-      return;
-    }
-
-    setCompletedExercises((previous) => {
-      const next = [...previous];
-      const index = findCompletedExerciseIndex(next, currentExercise.id);
-
-      if (index === -1) {
-        return next;
-      }
-
-      const existing = next[index];
-
-next[index] = {
-  ...existing,
-  extraReps: timedExercise ? null : selectedExtraReps ?? null,
-  timedEffort: timedExercise ? selectedTimedEffort ?? null : null,
-};
-
-      return next;
-    });
-
+function submitExerciseFeedback() {
+  if (!currentExercise) {
     moveToNextExercise();
+    return;
   }
+
+  // 🔥 NYTT: spara progression
+  const lastSet =
+    completedExercises
+      .find((e) => e.exerciseId === currentExercise.id)
+      ?.sets.slice(-1)[0];
+
+  saveExerciseProgression(userId, currentExercise.id, {
+    lastWeight: lastSet?.actualWeight ?? null,
+    lastReps: lastSet?.actualReps ?? null,
+    lastExtraReps: timedExercise ? null : selectedExtraReps ?? null,
+    lastTimedEffort: timedExercise ? selectedTimedEffort ?? null : null,
+  });
+
+  // gamla logiken
+  setCompletedExercises((previous) => {
+    const next = [...previous];
+    const index = findCompletedExerciseIndex(next, currentExercise.id);
+
+    if (index === -1) return next;
+
+    next[index] = {
+      ...next[index],
+      extraReps: timedExercise ? null : selectedExtraReps ?? null,
+      timedEffort: timedExercise ? selectedTimedEffort ?? null : null,
+    };
+
+    return next;
+  });
+
+  moveToNextExercise();
+}
 
   function finishWorkout() {
     // Sprint 1: run/page styr själva finish-vyn via isWorkoutComplete.
