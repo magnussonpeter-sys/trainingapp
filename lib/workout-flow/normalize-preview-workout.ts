@@ -1,14 +1,15 @@
 // lib/workout-flow/normalize-preview-workout.ts
+// Normaliserar workout-data till appens nya blocks-modell.
+// Viktigt i sprint 1:
+// - gamla workouts med toppnivå `exercises` ska fortfarande fungera
+// - nya workouts ska alltid lämna denna funktion med `blocks`
+// - beskrivningar fylls på där det går för att hålla preview/run konsekvent
+
 import { resolveExerciseDescription } from "@/lib/workout-flow/exercise-description";
 import type { Exercise, Workout, WorkoutBlock, WorkoutLike } from "@/types/workout";
 
-// Säkerställer att workout alltid har rätt struktur.
-// Skyddar mot AI-fel, manuella inputs och äldre format.
-// Fyller också på katalogbeskrivning för vanliga övningar.
-// Viktigt i sprint 1: äldre workouts med `exercises` mappas till `blocks`.
-
+// Liten hjälpfunktion så vi alltid får ett id även om datan är ofullständig.
 function createSafeId(prefix: string, index: number) {
-  // Liten helper så vi inte kraschar om crypto saknas i någon miljö.
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
@@ -36,6 +37,7 @@ function normalizeExercise(exercise: any, index: number): Exercise {
       typeof exercise?.rest === "number" && Number.isFinite(exercise.rest)
         ? exercise.rest
         : 60,
+    // Vi accepterar flera möjliga fältnamn för framtida progression/AI-förslag.
     suggestedWeight:
       exercise?.suggestedWeight ??
       exercise?.plannedWeight ??
@@ -60,12 +62,12 @@ function normalizeBlock(block: any, blockIndex: number): WorkoutBlock {
 }
 
 function getRawBlocks(workout: any): any[] {
-  // Ny modell: använd blocks om de finns.
+  // Ny modell: använd blocks om de redan finns.
   if (Array.isArray(workout?.blocks) && workout.blocks.length > 0) {
     return workout.blocks;
   }
 
-  // Gammal modell: konvertera exercises till ett straight_sets-block.
+  // Gammal modell: mappa exercises till ett enda straight_sets-block.
   if (Array.isArray(workout?.exercises)) {
     return [
       {
@@ -80,7 +82,9 @@ function getRawBlocks(workout: any): any[] {
 }
 
 export function normalizePreviewWorkout(workout: WorkoutLike | any): Workout | null {
-  if (!workout) return null;
+  if (!workout) {
+    return null;
+  }
 
   const rawBlocks = getRawBlocks(workout);
 
@@ -92,7 +96,9 @@ export function normalizePreviewWorkout(workout: WorkoutLike | any): Workout | n
         ? workout.duration
         : 45,
     goal:
-      typeof workout.goal === "string" && workout.goal.trim() ? workout.goal.trim() : undefined,
+      typeof workout.goal === "string" && workout.goal.trim()
+        ? workout.goal.trim()
+        : undefined,
     gym: workout.gym ?? workout.gymLabel ?? null,
     gymLabel: workout.gymLabel ?? workout.gym ?? null,
     aiComment:
