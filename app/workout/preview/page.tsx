@@ -6,25 +6,49 @@
 // - snabb mobilvänlig justering
 // - tydlig huvudhandling
 // - färdigare UX i preview
+// Sprint 1:
+// - läs workout via blocks i stället för platt exercises-lista
+// - behåll samma UI och globalt styrbar design
 
 import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+
 import AddExerciseSheet from "@/components/preview/add-exercise-sheet";
 import PreviewExerciseList from "@/components/preview/preview-exercise-list";
 import PreviewHeader from "@/components/preview/preview-header";
 import PreviewMetaRow from "@/components/preview/preview-meta-row";
 import ReplaceExerciseSheet from "@/components/preview/replace-exercise-sheet";
 import ConfirmSheet from "@/components/shared/confirm-sheet";
-import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { useWorkoutPreview } from "@/hooks/use-workout-preview";
+import { uiButtonClasses } from "@/lib/ui/button-classes";
+import type { Exercise } from "@/types/workout";
 
+// Liten klass-hjälpare för att hålla sidan ren.
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+// Plattar ut alla övningar från samtliga block.
+// I sprint 1 används i praktiken bara straight_sets,
+// men detta gör sidan redo för framtida blocktyper.
+function getAllExercises(
+  workout: {
+    blocks?: Array<{
+      exercises?: Exercise[];
+    }>;
+  } | null,
+): Exercise[] {
+  if (!workout?.blocks?.length) {
+    return [];
+  }
+
+  return workout.blocks.flatMap((block) => block.exercises ?? []);
 }
 
 function PreviewPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+
   const userId = searchParams.get("userId") ?? "";
 
   const [showAddSheet, setShowAddSheet] = useState(false);
@@ -70,16 +94,16 @@ function PreviewPageContent() {
     userId,
   });
 
+  // Alla övningar i passet, oavsett block.
+  const allExercises = useMemo(() => getAllExercises(workout), [workout]);
+
   const currentReplaceExerciseName = useMemo(() => {
-    if (!workout || !replaceExerciseId) {
+    if (!replaceExerciseId) {
       return "";
     }
 
-    return (
-      workout.exercises.find((exercise) => exercise.id === replaceExerciseId)
-        ?.name ?? ""
-    );
-  }, [replaceExerciseId, workout]);
+    return allExercises.find((exercise) => exercise.id === replaceExerciseId)?.name ?? "";
+  }, [allExercises, replaceExerciseId]);
 
   const dynamicSubtitle = useMemo(() => {
     if (!workout) {
@@ -113,7 +137,7 @@ function PreviewPageContent() {
   }
 
   function handleStartWorkout() {
-    if (!workout || workout.exercises.length === 0) {
+    if (!workout || allExercises.length === 0) {
       return;
     }
 
@@ -122,123 +146,116 @@ function PreviewPageContent() {
 
   if (!userId) {
     return (
-      <main className="min-h-screen bg-slate-50 px-4 py-6">
-        <div className="mx-auto max-w-3xl">
-          <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm leading-6 text-slate-600">
-              Kunde inte läsa in användaren för preview.
-            </p>
-
-            <button
-              type="button"
-              onClick={() => router.push("/home")}
-              className={cn(uiButtonClasses.primary, "mt-4")}
-            >
-              Till hem
-            </button>
-          </section>
-        </div>
+      <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
+        <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Preview saknar användare</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Kunde inte läsa in användaren för preview.
+          </p>
+          <button
+            type="button"
+            onClick={() => router.push("/home")}
+            className={cn(uiButtonClasses.primary, "mt-4")}
+          >
+            Till hem
+          </button>
+        </section>
       </main>
     );
   }
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-50 px-4 py-6">
-        <div className="mx-auto max-w-3xl">
-          <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm leading-6 text-slate-600">
-              Laddar preview...
-            </p>
-          </section>
-        </div>
+      <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
+        <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm text-slate-600">Laddar preview...</p>
+        </section>
       </main>
     );
   }
 
   if (!workout) {
     return (
-      <main className="min-h-screen bg-slate-50 px-4 py-6">
-        <div className="mx-auto max-w-3xl">
-          <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm leading-6 text-slate-600">
-              Inget pass hittades. Gå tillbaka till hem och skapa ett nytt pass.
-            </p>
-
-            <button
-              type="button"
-              onClick={() => router.push("/home")}
-              className={cn(uiButtonClasses.primary, "mt-4")}
-            >
-              Till hem
-            </button>
-          </section>
-        </div>
+      <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
+        <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Inget pass hittades</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Inget pass hittades. Gå tillbaka till hem och skapa ett nytt pass.
+          </p>
+          <button
+            type="button"
+            onClick={() => router.push("/home")}
+            className={cn(uiButtonClasses.primary, "mt-4")}
+          >
+            Till hem
+          </button>
+        </section>
       </main>
     );
   }
 
-  const startDisabled = workout.exercises.length === 0;
+  const startDisabled = allExercises.length === 0;
 
   return (
-    <main className="min-h-screen bg-slate-50 pb-28">
-      <div className="mx-auto max-w-3xl space-y-4 px-4 py-5 sm:px-6">
-        <PreviewHeader
-          workoutName={workout.name}
-          onBack={() => router.push("/home")}
-        />
+    <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+      <div className="space-y-6">
+        <PreviewHeader onBack={() => router.push("/home")} />
 
-        <PreviewMetaRow
-          durationMinutes={workout.duration}
-          exerciseCount={summary.exerciseCount}
-          totalSets={summary.totalSets}
-          timedExercises={summary.timedExercises}
-          gymLabel={workout.gym}
-        />
+        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+          <div className="flex flex-col gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-600">
+                Känsla
+              </p>
+              <h1 className="mt-2 text-2xl font-bold text-slate-950 sm:text-3xl">
+                {workout.name}
+              </h1>
+              <p className="mt-2 text-sm leading-6 text-slate-600">{dynamicSubtitle}</p>
+            </div>
 
-        <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-            Känsla
-          </p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">
-            {dynamicSubtitle}
-          </p>
+            <PreviewMetaRow
+              duration={workout.duration}
+              exerciseCount={summary.exerciseCount}
+              setCount={summary.setCount}
+              timedExercises={summary.timedExercises}
+            />
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => handleOpenAddSheet("catalog")}
-              className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-900"
-            >
-              Lägg till övning
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => handleOpenAddSheet("catalog")}
+                className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-900"
+              >
+                Lägg till övning
+              </button>
 
-            <button
-              type="button"
-              onClick={() => handleOpenAddSheet("custom")}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
-            >
-              Egen övning
-            </button>
+              <button
+                type="button"
+                onClick={() => handleOpenAddSheet("custom")}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+              >
+                Egen övning
+              </button>
+            </div>
+
+            {error ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {error}
+              </div>
+            ) : null}
           </div>
         </section>
 
-        {error ? (
-          <section className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-            {error}
-          </section>
-        ) : null}
-
         <PreviewExerciseList
-          exercises={workout.exercises}
-          onIncreaseSets={incrementSets}
-          onDecreaseSets={decrementSets}
-          onIncreaseReps={incrementReps}
-          onDecreaseReps={decrementReps}
-          onIncreaseDuration={incrementDuration}
-          onDecreaseDuration={decrementDuration}
-          onIncreaseRest={incrementRest}
-          onDecreaseRest={decrementRest}
+          workout={workout}
+          onIncrementSets={incrementSets}
+          onDecrementSets={decrementSets}
+          onIncrementReps={incrementReps}
+          onDecrementReps={decrementReps}
+          onIncrementDuration={incrementDuration}
+          onDecrementDuration={decrementDuration}
+          onIncrementRest={incrementRest}
+          onDecrementRest={decrementRest}
           onMoveExerciseUp={(exerciseId) => moveExercise(exerciseId, "up")}
           onMoveExerciseDown={(exerciseId) => moveExercise(exerciseId, "down")}
           onReplaceExercise={(exerciseId) => {
@@ -251,10 +268,8 @@ function PreviewPageContent() {
           }}
           onAddFirstExercise={() => handleOpenAddSheet("catalog")}
         />
-      </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-4 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-3 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center gap-3">
+        <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={() => router.push("/home")}
@@ -267,11 +282,7 @@ function PreviewPageContent() {
             type="button"
             onClick={handleStartWorkout}
             disabled={startDisabled}
-            className={cn(
-              uiButtonClasses.primary,
-              "flex-[1.4]",
-              startDisabled && "pointer-events-none opacity-50",
-            )}
+            className={cn(uiButtonClasses.primary, "flex-1")}
           >
             Starta pass
           </button>
@@ -288,7 +299,6 @@ function PreviewPageContent() {
         catalogItems={filteredCatalogExercises}
         onAddCatalogExercise={(item) => {
           const didAdd = addCatalogExercise(item);
-
           if (didAdd) {
             setShowAddSheet(false);
             scrollToBottomSoon();
@@ -308,7 +318,6 @@ function PreviewPageContent() {
         onCustomDescriptionChange={setCustomDescription}
         onAddCustomExercise={() => {
           const didAdd = addCustomExercise();
-
           if (didAdd) {
             setShowAddSheet(false);
             scrollToBottomSoon();
@@ -319,17 +328,16 @@ function PreviewPageContent() {
 
       <ReplaceExerciseSheet
         open={Boolean(replaceExerciseId)}
-        currentExerciseName={currentReplaceExerciseName}
-        search={catalogSearch}
-        onSearchChange={setCatalogSearch}
+        exerciseName={currentReplaceExerciseName}
+        catalogSearch={catalogSearch}
+        onCatalogSearchChange={setCatalogSearch}
         catalogItems={filteredCatalogExercises}
-        onReplace={(item) => {
+        onReplaceWithCatalogExercise={(item) => {
           if (!replaceExerciseId) {
             return;
           }
 
           const didReplace = replaceWithCatalogExercise(replaceExerciseId, item);
-
           if (didReplace) {
             setReplaceExerciseId(null);
             scrollToBottomSoon();
@@ -342,9 +350,9 @@ function PreviewPageContent() {
       <ConfirmSheet
         open={Boolean(removeExerciseId)}
         title="Ta bort övning?"
-        description="Övningen tas bort från passet, men du kan lägga till en ny direkt efteråt."
+        description="Övningen tas bort från passet. Du kan lägga till den igen senare."
         confirmLabel="Ta bort"
-        destructive
+        cancelLabel="Avbryt"
         onConfirm={() => {
           if (!removeExerciseId) {
             return;
@@ -361,7 +369,15 @@ function PreviewPageContent() {
 
 export default function PreviewPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense
+      fallback={
+        <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
+          <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-sm text-slate-600">Laddar preview...</p>
+          </section>
+        </main>
+      }
+    >
       <PreviewPageContent />
     </Suspense>
   );

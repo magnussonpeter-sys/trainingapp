@@ -147,7 +147,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return -1;
     }
 
-    return workout.exercises.findIndex((exercise) => exercise.id === exerciseId);
+    return workout.blocks[0].exercises.findIndex((exercise) => exercise.id === exerciseId);
   }
 
   function updateExercise(exerciseId: string, patch: Partial<Exercise>) {
@@ -155,7 +155,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return;
     }
 
-    const nextExercises = workout.exercises.map((exercise) => {
+    const nextExercises = workout.blocks[0].exercises.map((exercise) => {
       if (exercise.id !== exerciseId) {
         return exercise;
       }
@@ -177,7 +177,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return;
     }
 
-    const nextExercises = workout.exercises.filter(
+    const nextExercises = workout.blocks[0].exercises.filter(
       (exercise) => exercise.id !== exerciseId,
     );
 
@@ -200,11 +200,11 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
     const targetIndex = direction === "up" ? index - 1 : index + 1;
 
-    if (targetIndex < 0 || targetIndex >= workout.exercises.length) {
+    if (targetIndex < 0 || targetIndex >= workout.blocks[0].exercises.length) {
       return;
     }
 
-    const nextExercises = [...workout.exercises];
+    const nextExercises = [...workout.blocks[0].exercises];
     const current = nextExercises[index];
     const target = nextExercises[targetIndex];
 
@@ -360,7 +360,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     }
 
     const nextExercise = createExerciseFromCatalog(item);
-    const alreadyExists = workout.exercises.some((exercise) => {
+    const alreadyExists = workout.blocks[0].exercises.some((exercise) => {
       return (
         exercise.name.trim().toLowerCase() ===
         nextExercise.name.trim().toLowerCase()
@@ -374,7 +374,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
     updateWorkout({
       ...workout,
-      exercises: [...workout.exercises, nextExercise],
+      exercises: [...workout.blocks[0].exercises, nextExercise],
     });
 
     setError(null);
@@ -397,7 +397,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return false;
     }
 
-    const alreadyExists = workout.exercises.some((exercise, index) => {
+    const alreadyExists = workout.blocks[0].exercises.some((exercise, index) => {
       if (index === currentIndex) {
         return false;
       }
@@ -413,7 +413,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return false;
     }
 
-    const currentExercise = workout.exercises[currentIndex];
+    const currentExercise = workout.blocks[0].exercises[currentIndex];
 
     updateExercise(exerciseId, {
       ...nextExercise,
@@ -446,7 +446,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
     updateWorkout({
       ...workout,
-      exercises: [...workout.exercises, nextExercise],
+      exercises: [...workout.blocks[0].exercises, nextExercise],
     });
 
     setCustomName("");
@@ -469,11 +469,11 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     }
 
     return {
-      exerciseCount: workout.exercises.length,
-      totalSets: workout.exercises.reduce((sum, exercise) => {
+      exerciseCount: workout.blocks[0].exercises.length,
+      totalSets: workout.blocks[0].exercises.reduce((sum, exercise) => {
         return sum + exercise.sets;
       }, 0),
-      timedExercises: workout.exercises.filter((exercise) => {
+      timedExercises: workout.blocks[0].exercises.filter((exercise) => {
         return typeof exercise.duration === "number" && exercise.duration > 0;
       }).length,
     };
