@@ -426,21 +426,22 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
     const parsedWeight = normalizedWeight ? Number(normalizedWeight) : null;
     const parsedReps = reps.trim() ? Number(reps.trim()) : null;
 
-    const completedSet: CompletedSet = {
-      setNumber: currentSet,
-      plannedReps: currentExercise.reps ?? null,
-      plannedDuration: currentExercise.duration ?? null,
-      plannedWeight: suggestedWeightValue ? Number(suggestedWeightValue) : null,
-      actualReps:
-        !timedExercise && parsedReps !== null && Number.isFinite(parsedReps)
-          ? parsedReps
-          : null,
-      actualDuration: timedExercise ? elapsedSeconds : null,
-      actualWeight:
-        parsedWeight !== null && Number.isFinite(parsedWeight) ? parsedWeight : null,
-      repsLeft: null,
-      completedAt: new Date().toISOString(),
-    };
+const completedSet: CompletedSet = {
+  setNumber: currentSet,
+  plannedReps: currentExercise.reps ?? null,
+  plannedDuration: currentExercise.duration ?? null,
+  plannedWeight: suggestedWeightValue ? Number(suggestedWeightValue) : null,
+  actualReps:
+    !timedExercise && parsedReps !== null && Number.isFinite(parsedReps)
+      ? parsedReps
+      : null,
+  actualDuration: timedExercise ? elapsedSeconds : null,
+  actualWeight:
+    parsedWeight !== null && Number.isFinite(parsedWeight) ? parsedWeight : null,
+  repsLeft: null,
+  timedEffort: timedExercise ? selectedTimedEffort ?? null : null,
+  completedAt: new Date().toISOString(),
+};
 
     setCompletedExercises((previous) => {
       const next = [...previous];
