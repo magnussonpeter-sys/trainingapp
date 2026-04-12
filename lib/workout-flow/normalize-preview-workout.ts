@@ -1,14 +1,21 @@
 // lib/workout-flow/normalize-preview-workout.ts
 // Normaliserar workout-data till appens nya blocks-modell.
-// Viktigt i sprint 1:
+// Viktigt i denna version:
 // - gamla workouts med toppnivå `exercises` ska fortfarande fungera
 // - nya workouts ska alltid lämna denna funktion med `blocks`
-// - beskrivningar fylls på där det går för att hålla preview/run konsekvent
+// - equipment-fält bevaras så preview/debug kan läsa dem vidare
+// - om `blocks` finns men är tomma ska vi kunna falla tillbaka till legacy `exercises`
 
 import { resolveExerciseDescription } from "@/lib/workout-flow/exercise-description";
 import type { Exercise, Workout, WorkoutBlock, WorkoutLike } from "@/types/workout";
 
-// Liten hjälpfunktion så vi alltid får ett id även om datan är ofullständig.
+type WorkoutWithMetadata = Workout & {
+  availableEquipment?: string[];
+  equipment?: string[];
+  equipmentList?: string[];
+  gymEquipment?: string[];
+};
+
 function createSafeId(prefix: string, index: number) {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -17,32 +24,72 @@ function createSafeId(prefix: string, index: number) {
   return `${prefix}-${index}-${Date.now()}`;
 }
 
+function normalizeOptionalNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeSuggestedWeight(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  return null;
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function getBlockExerciseCount(blocks: unknown) {
+  if (!Array.isArray(blocks)) {
+    return 0;
+  }
+
+  return blocks.reduce((sum, block) => {
+    const exercises = Array.isArray((block as { exercises?: unknown[] })?.exercises)
+      ? (block as { exercises?: unknown[] }).exercises
+      : [];
+
+    return sum + exercises.length;
+  }, 0);
+}
+
 function normalizeExercise(exercise: any, index: number): Exercise {
   return {
     id: exercise?.id ?? createSafeId("exercise", index),
     name: exercise?.name ?? "Okänd övning",
     description: resolveExerciseDescription(exercise),
-    isCustom: exercise?.isCustom ?? false,
-    isNewExercise: exercise?.isNewExercise ?? false,
-    sets: typeof exercise?.sets === "number" && exercise.sets > 0 ? exercise.sets : 3,
-    reps:
-      typeof exercise?.reps === "number" && Number.isFinite(exercise.reps)
-        ? exercise.reps
-        : null,
-    duration:
-      typeof exercise?.duration === "number" && Number.isFinite(exercise.duration)
-        ? exercise.duration
-        : null,
+    isCustom: Boolean(exercise?.isCustom),
+    isNewExercise: Boolean(exercise?.isNewExercise),
+    sets:
+      typeof exercise?.sets === "number" && exercise.sets > 0
+        ? exercise.sets
+        : 3,
+    reps: normalizeOptionalNumber(exercise?.reps),
+    duration: normalizeOptionalNumber(exercise?.duration),
     rest:
       typeof exercise?.rest === "number" && Number.isFinite(exercise.rest)
         ? exercise.rest
         : 60,
     // Vi accepterar flera möjliga fältnamn för framtida progression/AI-förslag.
-    suggestedWeight:
+    suggestedWeight: normalizeSuggestedWeight(
       exercise?.suggestedWeight ??
-      exercise?.plannedWeight ??
-      exercise?.weightSuggestion ??
-      null,
+        exercise?.plannedWeight ??
+        exercise?.weightSuggestion,
+    ),
   };
 }
 
@@ -62,23 +109,58 @@ function normalizeBlock(block: any, blockIndex: number): WorkoutBlock {
 }
 
 function getRawBlocks(workout: any): any[] {
-  // Ny modell: använd blocks om de redan finns.
-  if (Array.isArray(workout?.blocks) && workout.blocks.length > 0) {
-    return workout.blocks;
+  const rawBlocks = Array.isArray(workout?.blocks) ? workout.blocks : [];
+  const legacyExercises = Array.isArray(workout?.exercises)
+    ? workout.exercises
+    : [];
+
+  const blockExerciseCount = getBlockExerciseCount(rawBlocks);
+
+  // Om blocks faktiskt innehåller övningar litar vi på nya modellen.
+  if (blockExerciseCount > 0) {
+    return rawBlocks;
   }
 
-  // Gammal modell: mappa exercises till ett enda straight_sets-block.
-  if (Array.isArray(workout?.exercises)) {
+  // Om blocks finns men i praktiken är tomma, fall tillbaka till legacy exercises.
+  if (legacyExercises.length > 0) {
     return [
       {
         type: "straight_sets",
         title: "Huvuddel",
-        exercises: workout.exercises,
+        exercises: legacyExercises,
       },
     ];
   }
 
+  // Finns blocks men utan övningar, behåll ändå strukturen som sista fallback.
+  if (rawBlocks.length > 0) {
+    return rawBlocks;
+  }
+
   return [];
+}
+
+function copyEquipmentMetadata(source: any, target: WorkoutWithMetadata) {
+  const availableEquipment = normalizeStringArray(source?.availableEquipment);
+  const equipment = normalizeStringArray(source?.equipment);
+  const equipmentList = normalizeStringArray(source?.equipmentList);
+  const gymEquipment = normalizeStringArray(source?.gymEquipment);
+
+  if (availableEquipment) {
+    target.availableEquipment = availableEquipment;
+  }
+
+  if (equipment) {
+    target.equipment = equipment;
+  }
+
+  if (equipmentList) {
+    target.equipmentList = equipmentList;
+  }
+
+  if (gymEquipment) {
+    target.gymEquipment = gymEquipment;
+  }
 }
 
 export function normalizePreviewWorkout(workout: WorkoutLike | any): Workout | null {
@@ -88,7 +170,7 @@ export function normalizePreviewWorkout(workout: WorkoutLike | any): Workout | n
 
   const rawBlocks = getRawBlocks(workout);
 
-  return {
+  const normalized: WorkoutWithMetadata = {
     id: workout.id ?? createSafeId("workout", 0),
     name: workout.name ?? "Träningspass",
     duration:
@@ -111,4 +193,9 @@ export function normalizePreviewWorkout(workout: WorkoutLike | any): Workout | n
         ? workout.createdAt
         : undefined,
   };
+
+  // Behåll equipment-info så preview/debug och katalogfiltrering får samma data.
+  copyEquipmentMetadata(workout, normalized);
+
+  return normalized;
 }
