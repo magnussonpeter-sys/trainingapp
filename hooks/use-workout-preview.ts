@@ -1,14 +1,13 @@
 "use client";
 
 // Hook för preview-flödet.
-// Målet här är att göra preview robust även efter refaktor till blocks.
-//
-// Viktiga principer i denna version:
-// - workout normaliseras alltid till blocks
-// - progression läggs på här, inte i UI-komponenterna
-// - equipment-context beräknas separat och tydligt
-// - valt gyms utrustning får företräde framför bodyweight-fallback i workout
-// - draft sparas tillbaka i samma format som preview använder
+// Håller preview/page.tsx tunn och sparar alltid tillbaka till samma draft.
+// Denna version:
+// - stödjer blocks
+// - räknar fram robust equipment-context
+// - exponerar setError + summary
+// - returnerar boolean från add/replace-funktioner så sidan kan stänga sheets korrekt
+// - håller UI-kompatibilitet med preview/page.tsx
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -46,6 +45,13 @@ type EffectiveEquipmentContext = {
   matchedGymEquipment: string[];
   workoutEmbeddedEquipment: string[];
   effectiveEquipment: string[];
+};
+
+type PreviewSummary = {
+  exerciseCount: number;
+  totalSets: number;
+  timedExercises: number;
+  estimatedMinutes: number;
 };
 
 const KNOWN_EQUIPMENT_TYPES = [
@@ -87,7 +93,6 @@ function normalizeGymName(value: string) {
   return value.trim().toLowerCase();
 }
 
-// Normaliserar utrustningsnamn till samma ID som exercise-catalog använder.
 function normalizeEquipmentName(value: string): string | null {
   const normalized = value.trim().toLowerCase();
 
@@ -107,8 +112,7 @@ function normalizeEquipmentName(value: string): string | null {
   if (
     normalized.includes("dumbbell") ||
     normalized.includes("dumbbells") ||
-    normalized.includes("hantel") ||
-    normalized.includes("hantlar")
+    normalized.includes("hantel")
   ) {
     return "dumbbells";
   }
@@ -190,14 +194,12 @@ function extractEquipmentArray(candidate: unknown): string[] {
   return uniqueStrings(normalizedValues);
 }
 
-// Läser embedded equipment från workout-objektet om det finns där.
-function extractEquipmentFromWorkout(workout: Workout | null): string[] {
+function extractEquipmentFromWorkoutInternal(workout: Workout | null): string[] {
   if (!workout) {
     return [];
   }
 
   const record = workout as WorkoutWithEquipmentMeta;
-
   const candidates: unknown[] = [
     record.availableEquipment,
     record.equipment,
@@ -218,14 +220,13 @@ function getWorkoutGymName(workout: Workout | null) {
     return null;
   }
 
-  const values = [workout.gymLabel, workout.gym]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const values = [workout.gymLabel, workout.gym].filter(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
 
   return values[0] ?? null;
 }
 
-// Hämtar gym-listan från backend.
-// Preview ska inte lita på att AI-pass eller draft alltid har korrekt equipment inbäddat.
 async function fetchGyms(): Promise<GymSummary[]> {
   const response = await fetch("/api/gyms", {
     method: "GET",
@@ -255,6 +256,7 @@ async function fetchGyms(): Promise<GymSummary[]> {
     }
 
     const record = item as Record<string, unknown>;
+
     const id =
       typeof record.id === "string" && record.id.trim()
         ? record.id
@@ -314,6 +316,7 @@ function matchGymByWorkout(workout: Workout | null, gyms: GymSummary[]) {
     gyms.find((gym) => {
       const gymName = normalizeGymName(gym.name);
       const gymId = normalizeGymName(gym.id);
+
       return (
         gymName.includes(normalizedWorkoutGym) ||
         normalizedWorkoutGym.includes(gymName) ||
@@ -323,13 +326,6 @@ function matchGymByWorkout(workout: Workout | null, gyms: GymSummary[]) {
   );
 }
 
-// Här bestäms vilken utrustning preview faktiskt ska använda.
-// Prioritet:
-// 1. Matchat gyms utrustning om gym finns och faktiskt har utrustning
-// 2. workoutens embedded equipment om den är rimlig
-// 3. bodyweight om workout uttryckligen är ett kroppsviktsgym
-// 4. bred fallback för "okänt men riktigt gym"
-// 5. sista fallback bodyweight
 function deriveEffectiveEquipmentContext(
   workout: Workout | null,
   gyms: GymSummary[],
@@ -337,7 +333,7 @@ function deriveEffectiveEquipmentContext(
   const workoutGymName = getWorkoutGymName(workout);
   const matchedGym = matchGymByWorkout(workout, gyms);
   const matchedGymEquipment = uniqueStrings(matchedGym?.equipment ?? []);
-  const workoutEmbeddedEquipment = extractEquipmentFromWorkout(workout);
+  const workoutEmbeddedEquipment = extractEquipmentFromWorkoutInternal(workout);
 
   const workoutGymText = (workoutGymName ?? "").toLowerCase();
   const isExplicitBodyweightGym =
@@ -356,8 +352,6 @@ function deriveEffectiveEquipmentContext(
   }
 
   if (workoutEmbeddedEquipment.length > 0) {
-    // Om workout säger bodyweight men vi har ett riktigt gym valt utan laddad utrustning,
-    // ska bodyweight inte låsa hela previewn.
     if (
       !isExplicitBodyweightGym &&
       workoutGymName &&
@@ -437,7 +431,9 @@ function toNumberOrNull(value: unknown): number | null {
 }
 
 function applyProgressionToExercise(userId: string, exercise: Exercise): Exercise {
-  const fallbackWeight = toNumberOrNull(exercise.suggestedWeight ?? null);
+  const fallbackWeight = toNumberOrNull(
+    (exercise as Exercise & { suggestedWeight?: unknown }).suggestedWeight ?? null,
+  );
 
   const suggestedWeight = getSuggestedWeight({
     userId,
@@ -448,7 +444,7 @@ function applyProgressionToExercise(userId: string, exercise: Exercise): Exercis
   return {
     ...exercise,
     suggestedWeight,
-  };
+  } as Exercise;
 }
 
 function createExerciseFromCatalog(
@@ -546,6 +542,39 @@ function applyProgressionToWorkout(userId: string, workout: Workout): Workout {
   return {
     ...safeWorkout,
     blocks: nextBlocks,
+  };
+}
+
+function buildSummary(workout: Workout | null): PreviewSummary {
+  const exercises = getPrimaryExercises(workout);
+
+  const exerciseCount = exercises.length;
+  const totalSets = exercises.reduce((sum, exercise) => sum + (exercise.sets ?? 0), 0);
+  const timedExercises = exercises.filter(
+    (exercise) => typeof exercise.duration === "number" && exercise.duration > 0,
+  ).length;
+
+  const workSeconds = exercises.reduce((sum, exercise) => {
+    const setCount = exercise.sets ?? 0;
+
+    if (typeof exercise.duration === "number" && exercise.duration > 0) {
+      return sum + exercise.duration * setCount;
+    }
+
+    // Enkel uppskattning för repsbaserade övningar.
+    return sum + 40 * setCount;
+  }, 0);
+
+  const restSeconds = exercises.reduce((sum, exercise) => {
+    const setCount = Math.max(0, (exercise.sets ?? 1) - 1);
+    return sum + (exercise.rest ?? 0) * setCount;
+  }, 0);
+
+  return {
+    exerciseCount,
+    totalSets,
+    timedExercises,
+    estimatedMinutes: Math.max(1, Math.round((workSeconds + restSeconds) / 60)),
   };
 }
 
@@ -647,10 +676,10 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return null;
     }
 
-    // Vi skapar ett derived preview-objekt med tydlig equipment-meta.
-    // Detta gör att resten av UI:t kan läsa workout.availableEquipment tryggt.
     return withEquipmentMetadata(workout, effectiveEquipment);
   }, [effectiveEquipment, workout]);
+
+  const summary = useMemo(() => buildSummary(previewWorkout), [previewWorkout]);
 
   function persistWorkout(nextWorkout: Workout) {
     const safeWorkout = applyProgressionToWorkout(
@@ -661,7 +690,6 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     setWorkout(safeWorkout);
 
     if (userId) {
-      // Spara även effective equipment in i draften så preview blir stabil efter reload.
       const workoutToSave = withEquipmentMetadata(safeWorkout, effectiveEquipment);
       saveWorkoutDraft(userId, workoutToSave);
     }
@@ -727,6 +755,36 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
     const nextExercises = exercises.filter((exercise) => exercise.id !== exerciseId);
     updatePrimaryExercises(nextExercises);
+  }
+
+  function replaceWithCatalogExercise(
+    exerciseId: string,
+    item: ExerciseCatalogItem,
+  ): boolean {
+    const exercises = getPrimaryExercises(previewWorkout);
+
+    if (!workout || exercises.length === 0) {
+      setError("Kunde inte ersätta övningen.");
+      return false;
+    }
+
+    const replacement = createExerciseFromCatalog(userId, item);
+    const index = exercises.findIndex((exercise) => exercise.id === exerciseId);
+
+    if (index === -1) {
+      setError("Kunde inte hitta övningen som skulle ersättas.");
+      return false;
+    }
+
+    const nextExercises = [...exercises];
+    nextExercises[index] = {
+      ...replacement,
+      id: exerciseId, // Behåll id för stabil UI-hantering i preview.
+    };
+
+    updatePrimaryExercises(nextExercises);
+    setError(null);
+    return true;
   }
 
   function moveExercise(exerciseId: string, direction: "up" | "down") {
@@ -891,8 +949,6 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       const isPureBodyweight =
         required.length === 1 && required[0] === "bodyweight";
 
-      // Prioritera övningar som faktiskt matchar gymutrustningen.
-      // Rena kroppsviktsövningar ska hamna längre ned i riktiga gym.
       let score = matchesSelected * 10;
 
       if (
@@ -939,18 +995,33 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       .sort((a, b) => getExerciseScore(b) - getExerciseScore(a));
   }, [availableCatalogExercises, catalogSearch, effectiveEquipment]);
 
-  function addCatalogExercise(item: ExerciseCatalogItem) {
+  function addCatalogExercise(item: ExerciseCatalogItem): boolean {
     const currentExercises = getPrimaryExercises(previewWorkout);
+
+    if (!workout) {
+      setError("Kunde inte lägga till övningen.");
+      return false;
+    }
+
     const nextExercise = createExerciseFromCatalog(userId, item);
     updatePrimaryExercises([...currentExercises, nextExercise]);
+    setError(null);
+    return true;
   }
 
-  function addCustomExercise() {
+  function addCustomExercise(): boolean {
     if (!customName.trim()) {
-      return;
+      setError("Du behöver ange ett namn på övningen.");
+      return false;
     }
 
     const currentExercises = getPrimaryExercises(previewWorkout);
+
+    if (!workout) {
+      setError("Kunde inte lägga till egen övning.");
+      return false;
+    }
+
     const nextExercise = createCustomExercise({
       name: customName,
       sets: customSets,
@@ -962,28 +1033,30 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
     updatePrimaryExercises([...currentExercises, nextExercise]);
 
-    // Rensa formuläret efter att egen övning lagts till.
     setCustomName("");
     setCustomSets("3");
     setCustomReps("10");
     setCustomDuration("");
     setCustomRest("45");
     setCustomDescription("");
+    setError(null);
+    return true;
   }
 
   return {
     workout: previewWorkout,
     loading,
     error,
+    setError,
+    summary,
 
-    // Catalog / add exercise
     catalogSearch,
     setCatalogSearch,
     availableCatalogExercises,
     filteredCatalogExercises,
     addCatalogExercise,
+    replaceWithCatalogExercise,
 
-    // Custom exercise form
     customName,
     setCustomName,
     customSets,
@@ -998,7 +1071,6 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     setCustomDescription,
     addCustomExercise,
 
-    // Exercise editing
     updateExercise,
     removeExercise,
     moveExercise,
@@ -1011,12 +1083,12 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     incrementRest,
     decrementRest,
 
-    // Debug / preview context
     gymsLoaded,
     gymsCount: gyms.length,
     matchedGymName: equipmentContext.matchedGymName,
     matchedGymEquipment: equipmentContext.matchedGymEquipment,
     effectiveEquipment,
-    extractEquipmentFromWorkout: () => extractEquipmentFromWorkout(previewWorkout),
+    extractEquipmentFromWorkout: () =>
+      extractEquipmentFromWorkoutInternal(previewWorkout),
   };
 }
