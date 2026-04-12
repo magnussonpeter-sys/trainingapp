@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import AddExerciseSheet from "@/components/preview/add-exercise-sheet";
@@ -12,6 +12,13 @@ import ConfirmSheet from "@/components/shared/confirm-sheet";
 import { useWorkoutPreview } from "@/hooks/use-workout-preview";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import type { Exercise } from "@/types/workout";
+
+type AuthUser = {
+  id?: string | number | null;
+  name?: string | null;
+  username?: string | null;
+  email?: string | null;
+};
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -35,13 +42,65 @@ function PreviewPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const userId = searchParams.get("userId") ?? "";
+  const urlUserId = searchParams.get("userId") ?? "";
   const showDebug = searchParams.get("debug") === "1";
+
+  const [resolvedUserId, setResolvedUserId] = useState(urlUserId);
+  const [authLookupDone, setAuthLookupDone] = useState(Boolean(urlUserId));
 
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [addMode, setAddMode] = useState<"catalog" | "custom">("catalog");
   const [replaceExerciseId, setReplaceExerciseId] = useState<string | null>(null);
   const [removeExerciseId, setRemoveExerciseId] = useState<string | null>(null);
+
+  // Om userId saknas eller tappas vid reload, försök hämta från auth.
+  useEffect(() => {
+    let isMounted = true;
+
+    async function resolveUser() {
+      if (urlUserId) {
+        setResolvedUserId(urlUserId);
+        setAuthLookupDone(true);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/auth/me", {
+          credentials: "include",
+          cache: "no-store",
+        });
+
+        const data = (await response.json().catch(() => null)) as
+          | { user?: AuthUser | null }
+          | null;
+
+        const authUserId =
+          data?.user?.id !== undefined && data?.user?.id !== null
+            ? String(data.user.id)
+            : "";
+
+        if (!isMounted) {
+          return;
+        }
+
+        setResolvedUserId(authUserId);
+        setAuthLookupDone(true);
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+
+        setResolvedUserId("");
+        setAuthLookupDone(true);
+      }
+    }
+
+    void resolveUser();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [urlUserId]);
 
   const {
     workout,
@@ -79,7 +138,7 @@ function PreviewPageContent() {
     addCustomExercise,
     debugInfo,
   } = useWorkoutPreview({
-    userId,
+    userId: resolvedUserId,
   });
 
   const allExercises = useMemo(() => getAllExercises(workout), [workout]);
@@ -124,14 +183,24 @@ function PreviewPageContent() {
   }
 
   function handleStartWorkout() {
-    if (!workout || allExercises.length === 0) {
+    if (!workout || allExercises.length === 0 || !resolvedUserId) {
       return;
     }
 
-    router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);
+    router.push(`/workout/run?userId=${encodeURIComponent(resolvedUserId)}`);
   }
 
-  if (!userId) {
+  if (!authLookupDone || loading) {
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
+        <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm text-slate-600">Laddar preview...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!resolvedUserId) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
         <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -146,16 +215,6 @@ function PreviewPageContent() {
           >
             Till hem
           </button>
-        </section>
-      </main>
-    );
-  }
-
-  if (loading) {
-    return (
-      <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
-        <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-sm text-slate-600">Laddar preview...</p>
         </section>
       </main>
     );
@@ -244,6 +303,13 @@ function PreviewPageContent() {
             </h2>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-white/80 p-3">
+                <p className="text-xs font-medium text-slate-500">resolvedUserId</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {resolvedUserId}
+                </p>
+              </div>
+
               <div className="rounded-2xl bg-white/80 p-3">
                 <p className="text-xs font-medium text-slate-500">workout.gym</p>
                 <p className="mt-1 text-sm font-semibold text-slate-900">

@@ -9,11 +9,10 @@
 //
 // Progression v1:
 // - suggestedWeight sätts här, innan workout visas i preview
-// - vi använder historik från progression-engine om den finns
 //
-// Debug:
-// - exponerar exakt vilken gym/utrustningskontext preview använder
-// - hjälper oss förstå varför katalogen ser ut som den gör
+// Viktig fix:
+// - om workout saknar explicit availableEquipment hämtar vi gymmets utrustning från /api/gyms
+// - då får preview rätt utrustningsfilter även om generatorn inte sparat equipment på workout
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -31,6 +30,19 @@ import type { Exercise, Workout, WorkoutBlock } from "@/types/workout";
 
 type UseWorkoutPreviewProps = {
   userId: string;
+};
+
+type GymEquipmentApiItem = {
+  equipment_type?: string | null;
+  type?: string | null;
+  label?: string | null;
+  name?: string | null;
+};
+
+type GymApiItem = {
+  id?: string | number;
+  name?: string;
+  equipment?: GymEquipmentApiItem[] | null;
 };
 
 function clampNumber(value: number, min: number, max?: number) {
@@ -57,7 +69,6 @@ function normalizeSearch(value: string) {
   return value.trim().toLowerCase();
 }
 
-// Korrekt lista enligt exercise-catalog.ts
 const KNOWN_EQUIPMENT_TYPES = [
   "bodyweight",
   "bench",
@@ -127,6 +138,47 @@ function normalizeEquipmentName(value: string): string | null {
   return null;
 }
 
+function extractEquipmentFromUnknownArray(candidate: unknown): string[] {
+  if (!Array.isArray(candidate)) {
+    return [];
+  }
+
+  const normalizedValues = new Set<string>();
+
+  for (const item of candidate) {
+    if (typeof item === "string") {
+      const normalized = normalizeEquipmentName(item);
+      if (normalized) {
+        normalizedValues.add(normalized);
+      }
+      continue;
+    }
+
+    if (item && typeof item === "object") {
+      const record = item as Record<string, unknown>;
+
+      const possibleValues = [
+        record.equipment_type,
+        record.type,
+        record.label,
+        record.name,
+      ];
+
+      for (const possibleValue of possibleValues) {
+        if (typeof possibleValue === "string") {
+          const normalized = normalizeEquipmentName(possibleValue);
+          if (normalized) {
+            normalizedValues.add(normalized);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(normalizedValues);
+}
+
 function extractEquipmentFromWorkout(workout: Workout | null): string[] {
   if (!workout) {
     return [];
@@ -139,52 +191,79 @@ function extractEquipmentFromWorkout(workout: Workout | null): string[] {
     (workout as Record<string, unknown>).gymEquipment,
   ];
 
-  const normalizedValues = new Set<string>();
+  const merged = new Set<string>();
 
   for (const candidate of candidateArrays) {
-    if (!Array.isArray(candidate)) {
-      continue;
-    }
-
-    for (const item of candidate) {
-      if (typeof item === "string") {
-        const normalized = normalizeEquipmentName(item);
-        if (normalized) {
-          normalizedValues.add(normalized);
-        }
-        continue;
-      }
-
-      if (item && typeof item === "object") {
-        const record = item as Record<string, unknown>;
-
-        const possibleValues = [
-          record.equipment_type,
-          record.type,
-          record.label,
-          record.name,
-        ];
-
-        for (const possibleValue of possibleValues) {
-          if (typeof possibleValue === "string") {
-            const normalized = normalizeEquipmentName(possibleValue);
-            if (normalized) {
-              normalizedValues.add(normalized);
-              break;
-            }
-          }
-        }
-      }
+    for (const item of extractEquipmentFromUnknownArray(candidate)) {
+      merged.add(item);
     }
   }
 
-  return Array.from(normalizedValues);
+  return Array.from(merged);
 }
 
-function getEquipmentSeedFromWorkout(workout: Workout | null) {
+function normalizeGymIdentity(value: unknown) {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return "";
+  }
+
+  return String(value).trim().toLowerCase();
+}
+
+function findMatchingGym(
+  gyms: GymApiItem[],
+  workout: Workout | null,
+): GymApiItem | null {
+  if (!workout || gyms.length === 0) {
+    return null;
+  }
+
+  const candidates = [
+    normalizeGymIdentity(workout.gym),
+    normalizeGymIdentity(workout.gymLabel),
+  ].filter(Boolean);
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  for (const gym of gyms) {
+    const gymId = normalizeGymIdentity(gym.id);
+    const gymName = normalizeGymIdentity(gym.name);
+
+    if (candidates.includes(gymId) || candidates.includes(gymName)) {
+      return gym;
+    }
+  }
+
+  return null;
+}
+
+function extractEquipmentFromMatchedGym(
+  gyms: GymApiItem[],
+  workout: Workout | null,
+): string[] {
+  const matchedGym = findMatchingGym(gyms, workout);
+  if (!matchedGym) {
+    return [];
+  }
+
+  return extractEquipmentFromUnknownArray(matchedGym.equipment ?? []);
+}
+
+function getEquipmentSeedFromWorkout(params: {
+  workout: Workout | null;
+  matchedGymEquipment: string[];
+}) {
+  const { workout, matchedGymEquipment } = params;
+
   const explicitEquipment = extractEquipmentFromWorkout(workout);
   if (explicitEquipment.length > 0) {
     return explicitEquipment;
+  }
+
+  if (matchedGymEquipment.length > 0) {
+    return matchedGymEquipment;
   }
 
   const gymValue = [workout?.gym, workout?.gymLabel]
@@ -350,6 +429,8 @@ function getExerciseScore(
 
   let score = matchesSelected * 10;
 
+  // Rena kroppsviktsövningar ska finnas kvar, men inte dominera listan
+  // när användaren valt ett riktigt gym.
   if (!isBodyweightGym && isPureBodyweight) {
     score -= 100;
   }
@@ -361,6 +442,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   const [workout, setWorkout] = useState<Workout | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [gyms, setGyms] = useState<GymApiItem[]>([]);
+  const [gymsLoaded, setGymsLoaded] = useState(false);
 
   const [catalogSearch, setCatalogSearch] = useState("");
   const [customName, setCustomName] = useState("");
@@ -393,6 +477,56 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
     setWorkout(safeWorkout);
     setLoading(false);
+  }, [userId]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadGyms() {
+      if (!userId) {
+        setGyms([]);
+        setGymsLoaded(true);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/gyms?userId=${encodeURIComponent(userId)}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+
+        const data = (await response.json().catch(() => null)) as
+          | { gyms?: GymApiItem[]; error?: string }
+          | GymApiItem[]
+          | null;
+
+        if (!isMounted) {
+          return;
+        }
+
+        const gymsArray = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.gyms)
+            ? data.gyms
+            : [];
+
+        setGyms(gymsArray);
+        setGymsLoaded(true);
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+
+        setGyms([]);
+        setGymsLoaded(true);
+      }
+    }
+
+    void loadGyms();
+
+    return () => {
+      isMounted = false;
+    };
   }, [userId]);
 
   function updateWorkout(nextWorkout: Workout) {
@@ -615,9 +749,16 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     });
   }
 
+  const matchedGymEquipment = useMemo(() => {
+    return extractEquipmentFromMatchedGym(gyms, workout);
+  }, [gyms, workout]);
+
   const equipmentSeed = useMemo(() => {
-    return getEquipmentSeedFromWorkout(workout);
-  }, [workout]);
+    return getEquipmentSeedFromWorkout({
+      workout,
+      matchedGymEquipment,
+    });
+  }, [matchedGymEquipment, workout]);
 
   const availableCatalogExercises = useMemo(() => {
     return getAvailableExercises(equipmentSeed);
@@ -791,6 +932,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       workoutGymLabel: workout?.gymLabel ?? null,
       workoutAvailableEquipment:
         ((workout as Record<string, unknown> | null)?.availableEquipment as unknown[]) ?? [],
+      gymsLoaded,
+      matchedGymName: findMatchingGym(gyms, workout)?.name ?? null,
+      matchedGymEquipment,
       extractedEquipment: extractEquipmentFromWorkout(workout),
       equipmentSeed,
       availableCatalogCount: availableCatalogExercises.length,
@@ -802,7 +946,15 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
         .slice(0, 15)
         .map((exercise) => exercise.name),
     };
-  }, [availableCatalogExercises, equipmentSeed, filteredCatalogExercises, workout]);
+  }, [
+    availableCatalogExercises,
+    equipmentSeed,
+    filteredCatalogExercises,
+    gyms,
+    gymsLoaded,
+    matchedGymEquipment,
+    workout,
+  ]);
 
   return {
     workout,
