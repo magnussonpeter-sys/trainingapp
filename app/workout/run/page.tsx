@@ -676,22 +676,28 @@ export default function RunPage() {
         )}
       </div>
 
-      <RunOptionsSheet
-        open={optionsOpen}
-        currentExercise={currentExercise}
-        onClose={() => setOptionsOpen(false)}
-        onSkipExercise={handleSkipExerciseFromSheet}
-        onAbortWorkout={handleAbortFromSheet}
-        onResetTimedSet={handleResetTimedSetFromSheet}
-        onIncreaseSets={handleIncreaseSets}
-        onDecreaseSets={handleDecreaseSets}
-        onIncreaseReps={handleIncreaseReps}
-        onDecreaseReps={handleDecreaseReps}
-        onIncreaseDuration={handleIncreaseDuration}
-        onDecreaseDuration={handleDecreaseDuration}
-        onIncreaseRest={handleIncreaseRest}
-        onDecreaseRest={handleDecreaseRest}
-      />
+<RunOptionsSheet
+  open={optionsOpen}
+  currentExerciseName={currentExercise?.name}
+  plannedSets={currentExercise?.sets}
+  plannedReps={currentExercise?.reps ?? undefined}
+  plannedDuration={currentExercise?.duration ?? undefined}
+  plannedRest={currentExercise?.rest}
+  timedExercise={timedExercise}
+  timerState={timerState}
+  onClose={() => setOptionsOpen(false)}
+  onSkipExercise={handleSkipExerciseFromSheet}
+  onAbortWorkout={handleAbortFromSheet}
+  onResetTimedSet={handleResetTimedSetFromSheet}
+  onIncreaseSets={handleIncreaseSets}
+  onDecreaseSets={handleDecreaseSets}
+  onIncreaseReps={handleIncreaseReps}
+  onDecreaseReps={handleDecreaseReps}
+  onIncreaseDuration={handleIncreaseDuration}
+  onDecreaseDuration={handleDecreaseDuration}
+  onIncreaseRest={handleIncreaseRest}
+  onDecreaseRest={handleDecreaseRest}
+/>
 
       <ConfirmSheet
         open={abortConfirmOpen}
