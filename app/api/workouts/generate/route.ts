@@ -5,34 +5,89 @@ import OpenAI from "openai";
 
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 
-// 🔹 OBS: använd din befintliga env-setup
+// OpenAI-klient
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// 🔹 Hjälpfunktion – fallback om AI svarar konstigt
+// Försök tolka AI-svar som JSON.
+// Hanterar både rent JSON-svar och kodblock med ```json ... ```
 function safeParseJSON(text: string) {
+  const trimmed = text.trim();
+
   try {
-    return JSON.parse(text);
+    return JSON.parse(trimmed);
   } catch {
+    // Försök plocka ut JSON ur kodblock
+    const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (codeBlockMatch?.[1]) {
+      try {
+        return JSON.parse(codeBlockMatch[1]);
+      } catch {
+        return null;
+      }
+    }
+
     return null;
   }
 }
 
+// Hjälper debug utan att göra response för tung.
+function buildDebugPayload(params: {
+  body: Record<string, unknown>;
+  prompt: string;
+  rawAiText: string;
+  parsed: unknown;
+  normalizedWorkout: unknown;
+}) {
+  const { body, prompt, rawAiText, parsed, normalizedWorkout } = params;
+
+  return {
+    request: {
+      goal: body.goal ?? null,
+      durationMinutes: body.durationMinutes ?? null,
+      gym: body.gym ?? null,
+      gymLabel: body.gymLabel ?? null,
+      equipment: Array.isArray(body.equipment) ? body.equipment : [],
+    },
+    prompt,
+    rawAiText,
+    parsedAiResponse: parsed,
+    normalizedWorkout,
+  };
+}
+
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const body = (await req.json()) as {
+      goal?: string;
+      durationMinutes?: number;
+      equipment?: string[];
+      gym?: string | null;
+      gymLabel?: string | null;
+      includeDebug?: boolean;
+    };
 
-    const { goal, durationMinutes, equipment } = body;
+    const goal = typeof body.goal === "string" && body.goal.trim()
+      ? body.goal.trim()
+      : "allmän styrka";
 
-    // 🔹 Enkel prompt (du har troligen mer avancerad i repo – behåll den om du vill)
+    const durationMinutes =
+      typeof body.durationMinutes === "number" && Number.isFinite(body.durationMinutes)
+        ? body.durationMinutes
+        : 45;
+
+    const equipment = Array.isArray(body.equipment)
+      ? body.equipment.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+
     const prompt = `
 Skapa ett träningspass som JSON.
 
 Krav:
 - duration: cirka ${durationMinutes} minuter
 - mål: ${goal}
-- utrustning: ${equipment?.join(", ") || "okänd"}
+- utrustning: ${equipment.join(", ") || "okänd"}
 
 Format:
 {
@@ -42,20 +97,27 @@ Format:
     {
       "name": "...",
       "sets": number,
-      "reps": number (eller null om tidsbaserad),
-      "duration": number (eller null om reps),
+      "reps": number | null,
+      "duration": number | null,
       "rest": number
     }
   ]
 }
-`;
+
+Regler:
+- Svara endast med giltig JSON
+- Använd null för reps på tidsbaserade övningar
+- Använd null för duration på repsbaserade övningar
+- Föreslå gärna kroppsviktsövningar även om utrustning finns, om det är lämpligt
+- Men använd också tillgänglig utrustning när det är relevant
+`.trim();
 
     const response = await client.chat.completions.create({
       model: "gpt-5.4-mini",
       messages: [
         {
           role: "system",
-          content: "Du är en erfaren personlig tränare.",
+          content: "Du är en erfaren personlig tränare som svarar med strikt JSON.",
         },
         {
           role: "user",
@@ -65,38 +127,85 @@ Format:
       temperature: 0.7,
     });
 
-    const rawText = response.choices?.[0]?.message?.content ?? "";
-
-    const parsed = safeParseJSON(rawText);
+    const rawAiText = response.choices?.[0]?.message?.content ?? "";
+    const parsed = safeParseJSON(rawAiText);
 
     if (!parsed) {
       return NextResponse.json(
-        { ok: false, error: "AI-svar kunde inte tolkas" },
-        { status: 500 }
+        {
+          ok: false,
+          error: "AI-svar kunde inte tolkas",
+          debug: {
+            request: {
+              goal,
+              durationMinutes,
+              gym: body.gym ?? null,
+              gymLabel: body.gymLabel ?? null,
+              equipment,
+            },
+            rawAiText,
+          },
+        },
+        { status: 500 },
       );
     }
 
-    // 🔥 VIKTIGT STEG (SPRINT 1)
-    // ALLT går via normalizer → vi får blocks automatiskt
-    const normalizedWorkout = normalizePreviewWorkout(parsed);
+    // Viktig fix:
+    // Lägg tillbaka gym- och utrustningskontext på workout innan normalisering,
+    // så preview-hooken faktiskt kan läsa detta senare.
+    const parsedWithContext =
+      parsed && typeof parsed === "object"
+        ? {
+            ...(parsed as Record<string, unknown>),
+            goal,
+            duration: (parsed as Record<string, unknown>).duration ?? durationMinutes,
+            gym: body.gym ?? null,
+            gymLabel: body.gymLabel ?? null,
+            availableEquipment: equipment,
+          }
+        : parsed;
+
+    const normalizedWorkout = normalizePreviewWorkout(parsedWithContext);
 
     if (!normalizedWorkout) {
       return NextResponse.json(
-        { ok: false, error: "Kunde inte normalisera träningspass" },
-        { status: 500 }
+        {
+          ok: false,
+          error: "Kunde inte normalisera träningspass",
+          debug: buildDebugPayload({
+            body,
+            prompt,
+            rawAiText,
+            parsed,
+            normalizedWorkout: null,
+          }),
+        },
+        { status: 500 },
       );
     }
 
     return NextResponse.json({
       ok: true,
       workout: normalizedWorkout,
+      debug: body.includeDebug
+        ? buildDebugPayload({
+            body,
+            prompt,
+            rawAiText,
+            parsed,
+            normalizedWorkout,
+          })
+        : undefined,
     });
   } catch (error) {
     console.error("Workout generate error:", error);
 
     return NextResponse.json(
-      { ok: false, error: "Kunde inte generera pass" },
-      { status: 500 }
+      {
+        ok: false,
+        error: "Kunde inte generera pass",
+      },
+      { status: 500 },
     );
   }
 }
