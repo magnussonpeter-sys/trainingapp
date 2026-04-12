@@ -2,15 +2,22 @@
 
 // Hook för preview-flödet.
 // Håller preview/page.tsx tunn och sparar alltid tillbaka till samma draft.
+//
 // Sprint 1:
 // - workout använder nu blocks i stället för platt exercises-lista
 // - vi arbetar fortfarande mot första blocket för att behålla samma UX
-// - detta gör nästa steg mot cirkelträning mycket enklare
+//
+// Progression v1:
+// - suggestedWeight sätts här, innan workout visas i preview
+// - vi använder historik från progression-engine om den finns
 
 import { useEffect, useMemo, useState } from "react";
-import { getSuggestedWeight } from "@/lib/progression-engine";
 
-import { getAvailableExercises, type ExerciseCatalogItem } from "@/lib/exercise-catalog";
+import {
+  getAvailableExercises,
+  type ExerciseCatalogItem,
+} from "@/lib/exercise-catalog";
+import { getSuggestedWeight } from "@/lib/progression-engine";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 import {
   getWorkoutDraft,
@@ -34,7 +41,6 @@ function clampNumber(value: number, min: number, max?: number) {
   return Math.max(value, min);
 }
 
-// Enkel id-generator för customövningar.
 function createExerciseId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -43,7 +49,6 @@ function createExerciseId() {
   return Math.random().toString(36).slice(2);
 }
 
-// Söknormalisering.
 function normalizeSearch(value: string) {
   return value.trim().toLowerCase();
 }
@@ -68,13 +73,47 @@ function getEquipmentSeedFromWorkout(workout: Workout | null) {
   return ["bodyweight"];
 }
 
-function createExerciseFromCatalog(item: ExerciseCatalogItem): Exercise {
+// Hjälper oss att alltid få ett rent numeriskt viktvärde om möjligt.
+function toNumberOrNull(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+// Lägger på progression på en övning innan den visas/sparas.
+// Här är den exakta platsen där suggestedWeight ska sättas.
+function applyProgressionToExercise(userId: string, exercise: Exercise): Exercise {
+  const fallbackWeight = toNumberOrNull(exercise.suggestedWeight ?? null);
+
+  const suggestedWeight = getSuggestedWeight({
+    userId,
+    exerciseId: exercise.id,
+    fallbackWeight,
+  });
+
+  return {
+    ...exercise,
+    suggestedWeight,
+  };
+}
+
+function createExerciseFromCatalog(
+  userId: string,
+  item: ExerciseCatalogItem,
+): Exercise {
   const isTimed =
     typeof item.defaultDuration === "number" &&
     item.defaultDuration > 0 &&
     typeof item.defaultReps !== "number";
 
-  return {
+  const baseExercise: Exercise = {
     id: item.id,
     name: item.name,
     sets: item.defaultSets,
@@ -83,6 +122,8 @@ function createExerciseFromCatalog(item: ExerciseCatalogItem): Exercise {
     rest: item.defaultRest,
     description: item.description,
   };
+
+  return applyProgressionToExercise(userId, baseExercise);
 }
 
 function createCustomExercise(params: {
@@ -110,7 +151,6 @@ function createCustomExercise(params: {
 }
 
 // Säkerställer att workout alltid har minst ett block.
-// Skyddar preview-flödet om något äldre eller ofullständigt dataobjekt laddas.
 function ensureWorkoutHasBlocks(workout: Workout): Workout {
   if (Array.isArray(workout.blocks) && workout.blocks.length > 0) {
     return workout;
@@ -140,6 +180,30 @@ function getPrimaryExercises(workout: Workout | null): Exercise[] {
   return getPrimaryBlock(workout)?.exercises ?? [];
 }
 
+// Lägger på progression på alla övningar i första blocket.
+// Detta gör att gamla drafts också får suggestedWeight när de laddas.
+function applyProgressionToWorkout(userId: string, workout: Workout): Workout {
+  const safeWorkout = ensureWorkoutHasBlocks(workout);
+  const firstBlock = safeWorkout.blocks[0];
+
+  if (!firstBlock) {
+    return safeWorkout;
+  }
+
+  const nextBlocks = [...safeWorkout.blocks];
+  nextBlocks[0] = {
+    ...firstBlock,
+    exercises: firstBlock.exercises.map((exercise) =>
+      applyProgressionToExercise(userId, exercise),
+    ),
+  };
+
+  return {
+    ...safeWorkout,
+    blocks: nextBlocks,
+  };
+}
+
 export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   const [workout, setWorkout] = useState<Workout | null>(null);
   const [loading, setLoading] = useState(true);
@@ -163,12 +227,26 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     const draft = getWorkoutDraft(userId);
     const normalized = normalizePreviewWorkout(draft) as Workout | null;
 
-    setWorkout(normalized ? ensureWorkoutHasBlocks(normalized) : null);
+    if (!normalized) {
+      setWorkout(null);
+      setLoading(false);
+      return;
+    }
+
+    const safeWorkout = applyProgressionToWorkout(
+      userId,
+      ensureWorkoutHasBlocks(normalized),
+    );
+
+    setWorkout(safeWorkout);
     setLoading(false);
   }, [userId]);
 
   function updateWorkout(nextWorkout: Workout) {
-    const safeWorkout = ensureWorkoutHasBlocks(nextWorkout);
+    const safeWorkout = applyProgressionToWorkout(
+      userId,
+      ensureWorkoutHasBlocks(nextWorkout),
+    );
 
     setWorkout(safeWorkout);
 
@@ -191,7 +269,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
     blocks[0] = {
       ...currentPrimaryBlock,
-      exercises: nextExercises,
+      exercises: nextExercises.map((exercise) =>
+        applyProgressionToExercise(userId, exercise),
+      ),
     };
 
     updateWorkout({
@@ -202,7 +282,6 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
   function findExerciseIndex(exerciseId: string) {
     const exercises = getPrimaryExercises(workout);
-
     return exercises.findIndex((exercise) => exercise.id === exerciseId);
   }
 
@@ -218,10 +297,10 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
         return exercise;
       }
 
-      return {
+      return applyProgressionToExercise(userId, {
         ...exercise,
         ...patch,
-      };
+      });
     });
 
     updatePrimaryExercises(nextExercises);
@@ -419,7 +498,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return false;
     }
 
-    const nextExercise = createExerciseFromCatalog(item);
+    const nextExercise = createExerciseFromCatalog(userId, item);
 
     const alreadyExists = exercises.some((exercise) => {
       return exercise.name.trim().toLowerCase() === nextExercise.name.trim().toLowerCase();
@@ -443,7 +522,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return false;
     }
 
-    const nextExercise = createExerciseFromCatalog(item);
+    const nextExercise = createExerciseFromCatalog(userId, item);
     const currentIndex = findExerciseIndex(exerciseId);
 
     if (currentIndex === -1) {
@@ -487,14 +566,17 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return false;
     }
 
-    const nextExercise = createCustomExercise({
-      name: customName,
-      sets: customSets,
-      reps: customReps,
-      duration: customDuration,
-      rest: customRest,
-      description: customDescription,
-    });
+    const nextExercise = applyProgressionToExercise(
+      userId,
+      createCustomExercise({
+        name: customName,
+        sets: customSets,
+        reps: customReps,
+        duration: customDuration,
+        rest: customRest,
+        description: customDescription,
+      }),
+    );
 
     updatePrimaryExercises([...exercises, nextExercise]);
 
