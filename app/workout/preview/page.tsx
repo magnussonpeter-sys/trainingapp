@@ -216,12 +216,13 @@ function PreviewPageContent() {
               <p className="mt-2 text-sm leading-6 text-slate-600">{dynamicSubtitle}</p>
             </div>
 
-            <PreviewMetaRow
-              duration={workout.duration}
-              exerciseCount={summary.exerciseCount}
-              setCount={summary.setCount}
-              timedExercises={summary.timedExercises}
-            />
+<PreviewMetaRow
+  durationMinutes={workout.duration}
+  exerciseCount={summary.exerciseCount}
+  totalSets={summary.setCount}
+  timedExercises={summary.timedExercises}
+  gymLabel={workout.gymLabel ?? undefined}
+/>
 
             <div className="flex flex-wrap gap-3">
               <button
