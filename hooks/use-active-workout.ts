@@ -516,11 +516,11 @@ const completedSet: CompletedSet = {
 
       const existing = next[index];
 
-      next[index] = {
-        ...existing,
-        extraReps: timedExercise ? undefined : selectedExtraReps ?? undefined,
-        timedEffort: timedExercise ? selectedTimedEffort ?? undefined : undefined,
-      };
+next[index] = {
+  ...existing,
+  extraReps: timedExercise ? null : selectedExtraReps ?? null,
+  timedEffort: timedExercise ? selectedTimedEffort ?? null : null,
+};
 
       return next;
     });
