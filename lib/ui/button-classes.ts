@@ -1,9 +1,9 @@
 // Delade knappstilar för hela appen.
-// Ljus grön huvudknapp med mörk text, i linje med headern.
+// Ljus mossgrön huvudknapp med mörk text.
 
 export const uiButtonClasses = {
   primary:
-    "min-h-11 rounded-2xl !bg-emerald-200 px-4 py-3 text-sm font-semibold !text-slate-900 shadow-sm transition hover:!bg-emerald-300 active:scale-[0.99] disabled:cursor-not-allowed disabled:!bg-slate-300 disabled:!text-slate-500",
+    "min-h-11 rounded-2xl !bg-lime-200 px-4 py-3 text-sm font-semibold !text-slate-900 shadow-sm transition hover:!bg-lime-300 active:scale-[0.99] disabled:cursor-not-allowed disabled:!bg-slate-300 disabled:!text-slate-500",
 
   secondary:
     "min-h-11 rounded-2xl border border-slate-200 !bg-white px-4 py-3 text-sm font-medium !text-slate-800 transition hover:!bg-slate-50 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60",
@@ -17,10 +17,10 @@ export const uiButtonClasses = {
   chip:
     "min-h-11 rounded-full border px-3 py-2 text-sm font-medium transition active:scale-[0.99]",
 
-  chipSelected: "!border-emerald-500 !bg-emerald-200 !text-slate-900",
-  chipSuggested: "!border-emerald-300 !bg-emerald-50 !text-slate-800",
+  chipSelected: "!border-lime-500 !bg-lime-200 !text-slate-900",
+  chipSuggested: "!border-lime-300 !bg-lime-50 !text-slate-800",
   chipDefault: "!border-slate-200 !bg-white !text-slate-700",
 
-  feedbackSelected: "!border-emerald-500 !bg-emerald-200 !text-slate-900",
+  feedbackSelected: "!border-lime-500 !bg-lime-200 !text-slate-900",
   feedbackDefault: "!border-slate-200 !bg-white !text-slate-700",
 };

@@ -7,7 +7,7 @@
 // - resume + pending sync tydligt
 // - ljus grön, lugn design
 // - tydlig knapp för att logga ut
-// - förvalda passlängder tillbaka
+// - förvalda passlängder + eget val i minuter
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -92,6 +92,14 @@ function normalizeEquipmentStrings(input: GymEquipmentItem[] | undefined) {
   return Array.from(values);
 }
 
+function clampDuration(value: number) {
+  if (!Number.isFinite(value)) {
+    return 30;
+  }
+
+  return Math.min(Math.max(Math.round(value), 5), 180);
+}
+
 export default function HomePage() {
   const router = useRouter();
 
@@ -110,7 +118,9 @@ export default function HomePage() {
   const userId = authUser?.id ? String(authUser.id) : "";
 
   const [selectedGymId, setSelectedGymId] = useState<string>("bodyweight");
-  const [durationMinutes, setDurationMinutes] = useState<number>(30);
+  const [selectedDurationPreset, setSelectedDurationPreset] =
+    useState<string>("30");
+  const [customDurationInput, setCustomDurationInput] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [hasDraft, setHasDraft] = useState(false);
@@ -137,6 +147,14 @@ export default function HomePage() {
   }, [gymOptions, selectedGymId]);
 
   const latestWorkout = workoutLogs?.[0] ?? null;
+
+  const durationMinutes = useMemo(() => {
+    if (selectedDurationPreset === "custom") {
+      return clampDuration(Number(customDurationInput));
+    }
+
+    return clampDuration(Number(selectedDurationPreset));
+  }, [customDurationInput, selectedDurationPreset]);
 
   useEffect(() => {
     if (gymOptions.length === 0) {
@@ -338,21 +356,42 @@ export default function HomePage() {
               </select>
             </label>
 
-            <label className="block">
+            <div className="block">
               <span className="mb-2 block text-sm font-medium text-slate-700">
                 Längd
               </span>
-              <select
-                value={durationMinutes}
-                onChange={(event) => setDurationMinutes(Number(event.target.value))}
-                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none"
-              >
-                <option value={15}>15 min</option>
-                <option value={20}>20 min</option>
-                <option value={30}>30 min</option>
-                <option value={60}>60 min</option>
-              </select>
-            </label>
+
+              <div className="space-y-3">
+                <select
+                  value={selectedDurationPreset}
+                  onChange={(event) => setSelectedDurationPreset(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+                >
+                  <option value={15}>15 min</option>
+                  <option value={20}>20 min</option>
+                  <option value={30}>30 min</option>
+                  <option value={60}>60 min</option>
+                  <option value="custom">Eget val</option>
+                </select>
+
+                {selectedDurationPreset === "custom" ? (
+                  <input
+                    type="number"
+                    min={5}
+                    max={180}
+                    step={1}
+                    value={customDurationInput}
+                    onChange={(event) => setCustomDurationInput(event.target.value)}
+                    placeholder="Ange minuter, t.ex. 45"
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+                  />
+                ) : null}
+
+                <p className="text-xs text-slate-500">
+                  Vald passlängd: {durationMinutes} min
+                </p>
+              </div>
+            </div>
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">

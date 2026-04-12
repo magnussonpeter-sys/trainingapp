@@ -1,5 +1,4 @@
 // lib/workout-generator.ts
-
 import type { Workout } from "@/types/workout";
 
 export type GenerateWorkoutDebug = {
@@ -19,7 +18,10 @@ export async function generateWorkout(params: {
   goal: string;
   durationMinutes: number;
   equipment: string[];
-}) {
+}): Promise<{
+  workout: Workout;
+  debug?: GenerateWorkoutDebug;
+}> {
   const res = await fetch("/api/workouts/generate", {
     method: "POST",
     headers: {
@@ -28,15 +30,21 @@ export async function generateWorkout(params: {
     body: JSON.stringify(params),
   });
 
-  const data = await res.json();
+  const data = (await res.json().catch(() => null)) as
+    | {
+        ok?: boolean;
+        workout?: Workout;
+        debug?: GenerateWorkoutDebug;
+        error?: string;
+      }
+    | null;
 
-  if (!res.ok || !data.ok) {
-    throw new Error(data?.error || "Failed to generate workout");
+  if (!res.ok || !data?.ok || !data.workout) {
+    throw new Error(data?.error ?? "Kunde inte generera träningspass.");
   }
 
   return {
-    // Typa workout så att resten av appen får rätt fält direkt.
-    workout: data.workout as Workout,
-    debug: (data.debug ?? null) as GenerateWorkoutDebug | null,
+    workout: data.workout,
+    debug: data.debug,
   };
 }
