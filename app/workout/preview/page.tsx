@@ -199,7 +199,10 @@ function PreviewPageContent() {
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
       <div className="space-y-6">
-        <PreviewHeader onBack={() => router.push("/home")} />
+        <PreviewHeader
+          workoutName={workout.name}
+          onBack={() => router.push("/home")}
+        />
 
         <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
           <div className="flex flex-col gap-4">
