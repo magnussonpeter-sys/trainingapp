@@ -1,3 +1,4 @@
+```ts
 "use client";
 
 // Hook för preview-flödet.
@@ -13,8 +14,7 @@
 //
 // Fix:
 // - utrustningsfiltret i preview ska inte längre fastna på bodyweight
-// - om workout saknar explicit utrustningslista använder vi bred fallback
-//   i stället för att bara visa kroppsviktsövningar
+// - rätt EquipmentId används enligt exercise-catalog.ts
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -58,23 +58,19 @@ function normalizeSearch(value: string) {
   return value.trim().toLowerCase();
 }
 
-// Kända utrustningstyper som katalogen kan filtrera på.
-// Denna fallback används när vi vet att passet inte är bodyweight,
-// men workout-draften saknar explicit utrustningslista.
+// Korrekt lista enligt exercise-catalog.ts
 const KNOWN_EQUIPMENT_TYPES = [
   "bodyweight",
-  "dumbbell",
-  "barbell",
   "bench",
+  "dumbbells",
+  "barbell",
   "rack",
-  "kettlebell",
-  "machine",
-  "cable",
-  "bands",
+  "pullup_bar",
+  "cable_machine",
   "rings",
 ] as const;
 
-// Normaliserar vanliga varianter till katalogens nycklar.
+// Normaliserar vanliga varianter till katalogens riktiga EquipmentId.
 function normalizeEquipmentName(value: string): string | null {
   const normalized = value.trim().toLowerCase();
 
@@ -91,8 +87,13 @@ function normalizeEquipmentName(value: string): string | null {
     return "bodyweight";
   }
 
-  if (normalized.includes("dumbbell") || normalized.includes("hantel")) {
-    return "dumbbell";
+  if (
+    normalized.includes("dumbbell") ||
+    normalized.includes("dumbbells") ||
+    normalized.includes("hantel") ||
+    normalized.includes("hantlar")
+  ) {
+    return "dumbbells";
   }
 
   if (normalized.includes("barbell") || normalized.includes("skivstång")) {
@@ -107,29 +108,21 @@ function normalizeEquipmentName(value: string): string | null {
     return "rack";
   }
 
-  if (normalized.includes("kettlebell")) {
-    return "kettlebell";
-  }
-
   if (
-    normalized.includes("machine") ||
-    normalized.includes("maskin")
+    normalized.includes("pullup") ||
+    normalized.includes("pull-up") ||
+    normalized.includes("chinup") ||
+    normalized.includes("chins") ||
+    normalized.includes("räcke")
   ) {
-    return "machine";
+    return "pullup_bar";
   }
 
   if (
     normalized.includes("cable") ||
     normalized.includes("kabel")
   ) {
-    return "cable";
-  }
-
-  if (
-    normalized.includes("band") ||
-    normalized.includes("resistance")
-  ) {
-    return "bands";
+    return "cable_machine";
   }
 
   if (
@@ -143,14 +136,12 @@ function normalizeEquipmentName(value: string): string | null {
 }
 
 // Försöker extrahera utrustning från workout i olika format.
-// Detta gör hooken mer robust mot äldre och framtida draft-modeller.
 function extractEquipmentFromWorkout(workout: Workout | null): string[] {
   if (!workout) {
     return [];
   }
 
   const candidateArrays: unknown[] = [
-    // Vanliga tänkbara fält att spara på workout-objektet.
     (workout as Record<string, unknown>).availableEquipment,
     (workout as Record<string, unknown>).equipment,
     (workout as Record<string, unknown>).equipmentList,
@@ -199,11 +190,9 @@ function extractEquipmentFromWorkout(workout: Workout | null): string[] {
   return Array.from(normalizedValues);
 }
 
-// Försöker hitta utrustningsfrön från workout.
 // Viktigt:
-// - bodyweight ska bara användas när det verkligen är kroppsvikt
-// - om vi saknar explicit utrustningslista för ett riktigt gym,
-//   använder vi bred fallback i stället för att låsa allt till bodyweight
+// - bodyweight bara för verkliga kroppsviktsgym
+// - riktiga gym utan explicit utrustningslista får bred korrekt fallback
 function getEquipmentSeedFromWorkout(workout: Workout | null) {
   const explicitEquipment = extractEquipmentFromWorkout(workout);
   if (explicitEquipment.length > 0) {
@@ -223,13 +212,13 @@ function getEquipmentSeedFromWorkout(workout: Workout | null) {
     return ["bodyweight"];
   }
 
-  // Om vi har ett riktigt gym men ingen explicit utrustningslista sparad,
-  // visa hellre brett urval än att felaktigt bara visa kroppsviktsövningar.
+  // Om vi har ett gym-id eller namn men ingen utrustning sparad:
+  // använd brett urval med KORREKTA katalog-ID:n.
   if (gymValue.trim()) {
     return [...KNOWN_EQUIPMENT_TYPES];
   }
 
-  // Sista fallback om workout saknar gyminformation helt.
+  // Sista fallback om workout helt saknar gym-info.
   return ["bodyweight"];
 }
 
@@ -706,7 +695,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
     updateExercise(exerciseId, {
       ...nextExercise,
-      id: currentExercise.id, // Behåll id så UI och lokala referenser inte hoppar.
+      id: currentExercise.id,
     });
 
     setError(null);
@@ -807,3 +796,4 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     addCustomExercise,
   };
 }
+```
