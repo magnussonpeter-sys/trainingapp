@@ -1,13 +1,17 @@
 "use client";
 
+// Historiksida för tidigare träningspass.
+// Sprint 1:
+// - Workout använder nu blocks i stället för platt exercises-lista
+// - "Kör igen" bygger därför ett nytt aktivt pass med ett straight_sets-block
+// - UI hålls så likt tidigare som möjligt
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  getWorkoutLogs,
-  type WorkoutLog,
-} from "@/lib/workout-log-storage";
+
+import { getWorkoutLogs, type WorkoutLog } from "@/lib/workout-log-storage";
 import { saveActiveWorkout } from "@/lib/workout-storage";
-import type { Workout } from "@/types/workout";
+import type { Exercise, Workout } from "@/types/workout";
 
 type AuthUser = {
   id: number | string;
@@ -62,20 +66,33 @@ function makeId() {
     : Math.random().toString(36).slice(2);
 }
 
+function mapLogExerciseToWorkoutExercise(
+  exercise: WorkoutLog["exercises"][number],
+): Exercise {
+  return {
+    id: exercise.exerciseId,
+    name: exercise.exerciseName,
+    sets: exercise.plannedSets,
+    reps: exercise.plannedReps ?? undefined,
+    duration: exercise.plannedDuration ?? undefined,
+    rest: 45, // Tillfällig standardvila när vi bygger pass från historik
+    description: undefined,
+  };
+}
+
 function createWorkoutFromLog(log: WorkoutLog): Workout {
   return {
     id: makeId(),
     name: log.workoutName,
     duration: Math.max(1, Math.round(log.durationSeconds / 60)),
     createdAt: new Date().toISOString(),
-    exercises: log.exercises.map((exercise) => ({
-      id: exercise.exerciseId,
-      name: exercise.exerciseName,
-      sets: exercise.plannedSets,
-      reps: exercise.plannedReps ?? undefined,
-      duration: exercise.plannedDuration ?? undefined,
-      rest: 45,
-    })),
+    blocks: [
+      {
+        type: "straight_sets",
+        title: "Huvuddel",
+        exercises: log.exercises.map(mapLogExerciseToWorkoutExercise),
+      },
+    ],
   };
 }
 
@@ -101,7 +118,6 @@ function clearAllWorkoutLogsFromStorage(userId: string) {
 
 export default function HistoryPage() {
   const router = useRouter();
-
   const [authChecked, setAuthChecked] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [workouts, setWorkouts] = useState<WorkoutLog[]>([]);
@@ -157,7 +173,7 @@ export default function HistoryPage() {
             {
               cache: "no-store",
               credentials: "include",
-            }
+            },
           );
 
           const logsData = await logsRes.json();
@@ -181,9 +197,7 @@ export default function HistoryPage() {
 
           setWorkouts(localLogs);
           setDataSource("local");
-          setLoadError(
-            "Kunde inte hämta historik från databasen. Visar lokal historik."
-          );
+          setLoadError("Kunde inte hämta historik från databasen. Visar lokal historik.");
         }
       } catch (error) {
         console.error("Failed to load history page", error);
@@ -231,13 +245,13 @@ export default function HistoryPage() {
       if (dataSource === "api") {
         // Radera passet i databasen.
         const response = await fetch(
-          `/api/workout-logs/${encodeURIComponent(
-            workoutId
-          )}?userId=${encodeURIComponent(userId)}`,
+          `/api/workout-logs/${encodeURIComponent(workoutId)}?userId=${encodeURIComponent(
+            userId,
+          )}`,
           {
             method: "DELETE",
             credentials: "include",
-          }
+          },
         );
 
         const data = await response.json().catch(() => null);
@@ -277,7 +291,7 @@ export default function HistoryPage() {
           {
             method: "DELETE",
             credentials: "include",
-          }
+          },
         );
 
         const data = await response.json().catch(() => null);
@@ -305,7 +319,7 @@ export default function HistoryPage() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl p-4 sm:p-6">
+    <main className="mx-auto min-h-screen max-w-4xl px-4 py-6">
       <button
         type="button"
         onClick={() => router.push("/home")}
@@ -314,24 +328,24 @@ export default function HistoryPage() {
         ← Historik
       </button>
 
-      <h1 className="mt-4 text-3xl font-bold text-gray-950">Tidigare pass</h1>
+      <h1 className="mt-4 text-3xl font-bold text-slate-900">Tidigare pass</h1>
 
-      <p className="mt-2 text-sm text-gray-800">
+      <p className="mt-2 text-sm text-slate-600">
         {dataSource === "api" ? "Visar databasdata" : "Visar lokal fallback"}
       </p>
 
       {loadError ? (
-        <div className="mt-4 rounded-2xl bg-yellow-50 p-4 text-sm text-yellow-800">
+        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           {loadError}
         </div>
       ) : null}
 
       {workouts.length === 0 ? (
-        <section className="mt-6 rounded-3xl border bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-gray-950">
+        <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">
             Ingen träningshistorik ännu
           </h2>
-          <p className="mt-2 text-sm text-gray-800">
+          <p className="mt-2 text-sm leading-6 text-slate-600">
             När du har genomfört ett pass kommer det att visas här.
           </p>
           <button
@@ -344,14 +358,11 @@ export default function HistoryPage() {
         </section>
       ) : (
         <>
-          <section className="mt-6 rounded-3xl border bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold text-gray-950">
-              Hantera träningsdata
-            </h2>
-            <p className="mt-2 text-sm text-gray-800">
+          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-900">Hantera träningsdata</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
               Du kan radera enskilda pass eller ta bort all träningsdata.
             </p>
-
             <button
               type="button"
               onClick={() => setShowClearAllConfirm(true)}
@@ -362,65 +373,65 @@ export default function HistoryPage() {
             </button>
           </section>
 
-          <div className="mt-4 space-y-4">
+          <div className="mt-6 space-y-4">
             {workouts.map((workout) => {
               const isDeleteOpen = deletingWorkoutId === workout.id;
               const totalSets = getTotalSets(workout);
               const totalVolume = getWorkoutVolume(workout);
 
               return (
-                <section
+                <article
                   key={workout.id}
-                  className="rounded-3xl border bg-white p-5 shadow-sm"
+                  className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
                 >
                   <button
                     type="button"
                     onClick={() => openDetails(workout.id)}
                     className="w-full text-left"
                   >
-                    <p className="text-sm text-gray-700">
+                    <p className="text-sm text-slate-500">
                       {formatDateTime(workout.completedAt)}
                     </p>
-                    <h2 className="mt-1 text-2xl font-bold text-gray-950">
+                    <h2 className="mt-2 text-xl font-semibold text-slate-900">
                       {workout.workoutName}
                     </h2>
-                    <p className="mt-1 text-sm text-gray-800">
+                    <p className="mt-1 text-sm text-slate-600">
                       {workout.status === "completed" ? "Genomfört" : "Avbrutet"}
                     </p>
 
                     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      <div className="rounded-2xl bg-gray-50 p-3">
-                        <p className="text-xs uppercase tracking-wide text-gray-700">
+                      <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
                           Tid
                         </p>
-                        <p className="mt-1 font-semibold text-gray-950">
+                        <p className="mt-1 text-base font-semibold text-slate-900">
                           {formatDuration(workout.durationSeconds)}
                         </p>
                       </div>
 
-                      <div className="rounded-2xl bg-gray-50 p-3">
-                        <p className="text-xs uppercase tracking-wide text-gray-700">
+                      <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
                           Övningar
                         </p>
-                        <p className="mt-1 font-semibold text-gray-950">
+                        <p className="mt-1 text-base font-semibold text-slate-900">
                           {workout.exercises.length}
                         </p>
                       </div>
 
-                      <div className="rounded-2xl bg-gray-50 p-3">
-                        <p className="text-xs uppercase tracking-wide text-gray-700">
+                      <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
                           Set
                         </p>
-                        <p className="mt-1 font-semibold text-gray-950">
+                        <p className="mt-1 text-base font-semibold text-slate-900">
                           {totalSets}
                         </p>
                       </div>
 
-                      <div className="rounded-2xl bg-gray-50 p-3">
-                        <p className="text-xs uppercase tracking-wide text-gray-700">
+                      <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
                           Volym
                         </p>
-                        <p className="mt-1 font-semibold text-gray-950">
+                        <p className="mt-1 text-base font-semibold text-slate-900">
                           {Math.round(totalVolume)} kg
                         </p>
                       </div>
@@ -448,7 +459,7 @@ export default function HistoryPage() {
                       type="button"
                       onClick={() =>
                         setDeletingWorkoutId((prev) =>
-                          prev === workout.id ? null : workout.id
+                          prev === workout.id ? null : workout.id,
                         )
                       }
                       disabled={isDeleting}
@@ -459,16 +470,15 @@ export default function HistoryPage() {
                   </div>
 
                   {isDeleteOpen ? (
-                    <div className="mt-4 rounded-2xl bg-red-50 p-4">
-                      <h3 className="text-lg font-semibold text-red-900">
+                    <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
+                      <h3 className="text-base font-semibold text-red-900">
                         Radera detta pass?
                       </h3>
                       <p className="mt-2 text-sm text-red-800">
-                        Det här passet tas bort från historiken och kan inte
-                        återskapas.
+                        Det här passet tas bort från historiken och kan inte återskapas.
                       </p>
 
-                      <div className="mt-4 flex gap-3">
+                      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
                         <button
                           type="button"
                           onClick={() => setDeletingWorkoutId(null)}
@@ -491,7 +501,7 @@ export default function HistoryPage() {
                       </div>
                     </div>
                   ) : null}
-                </section>
+                </article>
               );
             })}
           </div>
@@ -499,13 +509,10 @@ export default function HistoryPage() {
       )}
 
       {showClearAllConfirm ? (
-        <section className="mt-6 rounded-3xl border border-red-200 bg-red-50 p-6 shadow-sm">
-          <h2 className="text-2xl font-bold text-red-900">
-            Ta bort all träningsdata?
-          </h2>
-          <p className="mt-2 text-sm text-red-800">
-            Är du helt säker? All träningshistorik kommer att raderas och kan
-            inte återskapas.
+        <section className="mt-6 rounded-3xl border border-red-200 bg-red-50 p-6">
+          <h2 className="text-xl font-semibold text-red-900">Ta bort all träningsdata?</h2>
+          <p className="mt-2 text-sm leading-6 text-red-800">
+            Är du helt säker? All träningshistorik kommer att raderas och kan inte återskapas.
           </p>
 
           <div className="mt-4 flex flex-col gap-3 sm:flex-row">
