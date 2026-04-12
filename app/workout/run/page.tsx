@@ -537,7 +537,7 @@ export default function RunPage() {
           </div>
         ) : null}
 
-        <RunResumeBanner restoreNotice={restoreNotice} pendingSyncCount={pendingSyncCount} />
+<RunResumeBanner restoreNotice={restoreNotice} />
         <RunSaveStatus saveStatus={saveStatus} />
 
         {currentExercise ? (
