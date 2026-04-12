@@ -1,4 +1,3 @@
-```ts
 "use client";
 
 // Hook för preview-flödet.
@@ -58,7 +57,7 @@ function normalizeSearch(value: string) {
   return value.trim().toLowerCase();
 }
 
-// Korrekt lista enligt exercise-catalog.ts
+// Korrekt lista enligt exercise-catalog.ts.
 const KNOWN_EQUIPMENT_TYPES = [
   "bodyweight",
   "bench",
@@ -118,17 +117,11 @@ function normalizeEquipmentName(value: string): string | null {
     return "pullup_bar";
   }
 
-  if (
-    normalized.includes("cable") ||
-    normalized.includes("kabel")
-  ) {
+  if (normalized.includes("cable") || normalized.includes("kabel")) {
     return "cable_machine";
   }
 
-  if (
-    normalized.includes("ring") ||
-    normalized.includes("romerska")
-  ) {
+  if (normalized.includes("ring") || normalized.includes("romerska")) {
     return "rings";
   }
 
@@ -200,7 +193,10 @@ function getEquipmentSeedFromWorkout(workout: Workout | null) {
   }
 
   const gymValue = [workout?.gym, workout?.gymLabel]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .filter(
+      (value): value is string =>
+        typeof value === "string" && value.trim().length > 0,
+    )
     .join(" ")
     .toLowerCase();
 
@@ -213,7 +209,7 @@ function getEquipmentSeedFromWorkout(workout: Workout | null) {
   }
 
   // Om vi har ett gym-id eller namn men ingen utrustning sparad:
-  // använd brett urval med KORREKTA katalog-ID:n.
+  // använd brett urval med korrekta katalog-ID:n.
   if (gymValue.trim()) {
     return [...KNOWN_EQUIPMENT_TYPES];
   }
@@ -796,4 +792,3 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     addCustomExercise,
   };
 }
-```
