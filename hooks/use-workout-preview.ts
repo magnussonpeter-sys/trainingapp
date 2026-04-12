@@ -1,5 +1,20 @@
 "use client";
 
+// Hook för preview-flödet.
+// Håller preview/page.tsx tunn och sparar alltid tillbaka till samma draft.
+//
+// Sprint 1:
+// - workout använder nu blocks i stället för platt exercises-lista
+// - vi arbetar fortfarande mot första blocket för att behålla samma UX
+//
+// Progression v1:
+// - suggestedWeight sätts här, innan workout visas i preview
+// - vi använder historik från progression-engine om den finns
+//
+// Debug:
+// - exponerar exakt vilken gym/utrustningskontext preview använder
+// - hjälper oss förstå varför katalogen ser ut som den gör
+
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -42,6 +57,7 @@ function normalizeSearch(value: string) {
   return value.trim().toLowerCase();
 }
 
+// Korrekt lista enligt exercise-catalog.ts
 const KNOWN_EQUIPMENT_TYPES = [
   "bodyweight",
   "bench",
@@ -769,6 +785,25 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     };
   }, [workout]);
 
+  const debugInfo = useMemo(() => {
+    return {
+      workoutGym: workout?.gym ?? null,
+      workoutGymLabel: workout?.gymLabel ?? null,
+      workoutAvailableEquipment:
+        ((workout as Record<string, unknown> | null)?.availableEquipment as unknown[]) ?? [],
+      extractedEquipment: extractEquipmentFromWorkout(workout),
+      equipmentSeed,
+      availableCatalogCount: availableCatalogExercises.length,
+      filteredCatalogCount: filteredCatalogExercises.length,
+      firstAvailableExerciseNames: availableCatalogExercises
+        .slice(0, 15)
+        .map((exercise) => exercise.name),
+      firstFilteredExerciseNames: filteredCatalogExercises
+        .slice(0, 15)
+        .map((exercise) => exercise.name),
+    };
+  }, [availableCatalogExercises, equipmentSeed, filteredCatalogExercises, workout]);
+
   return {
     workout,
     loading,
@@ -803,5 +838,6 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     customDescription,
     setCustomDescription,
     addCustomExercise,
+    debugInfo,
   };
 }

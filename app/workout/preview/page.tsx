@@ -1,15 +1,5 @@
 "use client";
 
-// Tunnare preview-sida enligt Sprint 2.
-// Fokus:
-// - samma draft hela vägen
-// - snabb mobilvänlig justering
-// - tydlig huvudhandling
-// - färdigare UX i preview
-// Sprint 1:
-// - läs workout via blocks i stället för platt exercises-lista
-// - behåll samma UI och globalt styrbar design
-
 import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -23,14 +13,10 @@ import { useWorkoutPreview } from "@/hooks/use-workout-preview";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import type { Exercise } from "@/types/workout";
 
-// Liten klass-hjälpare för att hålla sidan ren.
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-// Plattar ut alla övningar från samtliga block.
-// I sprint 1 används i praktiken bara straight_sets,
-// men detta gör sidan redo för framtida blocktyper.
 function getAllExercises(
   workout: {
     blocks?: Array<{
@@ -50,6 +36,7 @@ function PreviewPageContent() {
   const searchParams = useSearchParams();
 
   const userId = searchParams.get("userId") ?? "";
+  const showDebug = searchParams.get("debug") === "1";
 
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [addMode, setAddMode] = useState<"catalog" | "custom">("catalog");
@@ -90,11 +77,11 @@ function PreviewPageContent() {
     customDescription,
     setCustomDescription,
     addCustomExercise,
+    debugInfo,
   } = useWorkoutPreview({
     userId,
   });
 
-  // Alla övningar i passet, oavsett block.
   const allExercises = useMemo(() => getAllExercises(workout), [workout]);
 
   const currentReplaceExerciseName = useMemo(() => {
@@ -216,13 +203,13 @@ function PreviewPageContent() {
               <p className="mt-2 text-sm leading-6 text-slate-600">{dynamicSubtitle}</p>
             </div>
 
-<PreviewMetaRow
-  durationMinutes={workout.duration}
-  exerciseCount={summary.exerciseCount}
-  totalSets={summary.setCount}
-  timedExercises={summary.timedExercises}
-  gymLabel={workout.gymLabel ?? undefined}
-/>
+            <PreviewMetaRow
+              durationMinutes={workout.duration}
+              exerciseCount={summary.exerciseCount}
+              totalSets={summary.setCount}
+              timedExercises={summary.timedExercises}
+              gymLabel={workout.gymLabel ?? undefined}
+            />
 
             <div className="flex flex-wrap gap-3">
               <button
@@ -250,28 +237,101 @@ function PreviewPageContent() {
           </div>
         </section>
 
-<PreviewExerciseList
-  exercises={allExercises}
-  onIncreaseSets={incrementSets}
-  onDecreaseSets={decrementSets}
-  onIncreaseReps={incrementReps}
-  onDecreaseReps={decrementReps}
-  onIncreaseDuration={incrementDuration}
-  onDecreaseDuration={decrementDuration}
-  onIncreaseRest={incrementRest}
-  onDecreaseRest={decrementRest}
-  onMoveExerciseUp={(exerciseId) => moveExercise(exerciseId, "up")}
-  onMoveExerciseDown={(exerciseId) => moveExercise(exerciseId, "down")}
-  onReplaceExercise={(exerciseId) => {
-    setError(null);
-    setReplaceExerciseId(exerciseId);
-  }}
-  onRemoveExercise={(exerciseId) => {
-    setError(null);
-    setRemoveExerciseId(exerciseId);
-  }}
-  onAddFirstExercise={() => handleOpenAddSheet("catalog")}
-/>
+        {showDebug ? (
+          <section className="rounded-[24px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-800">
+              Debug preview
+            </h2>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-white/80 p-3">
+                <p className="text-xs font-medium text-slate-500">workout.gym</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {String(debugInfo.workoutGym)}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/80 p-3">
+                <p className="text-xs font-medium text-slate-500">workout.gymLabel</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {String(debugInfo.workoutGymLabel)}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                <p className="text-xs font-medium text-slate-500">availableEquipment på workout</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {JSON.stringify(debugInfo.workoutAvailableEquipment)}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                <p className="text-xs font-medium text-slate-500">extractEquipmentFromWorkout()</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {JSON.stringify(debugInfo.extractedEquipment)}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                <p className="text-xs font-medium text-slate-500">equipmentSeed</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {JSON.stringify(debugInfo.equipmentSeed)}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/80 p-3">
+                <p className="text-xs font-medium text-slate-500">availableCatalogCount</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {debugInfo.availableCatalogCount}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/80 p-3">
+                <p className="text-xs font-medium text-slate-500">filteredCatalogCount</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {debugInfo.filteredCatalogCount}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                <p className="text-xs font-medium text-slate-500">Första tillgängliga övningar</p>
+                <p className="mt-1 text-sm text-slate-900">
+                  {debugInfo.firstAvailableExerciseNames.join(", ")}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                <p className="text-xs font-medium text-slate-500">Första filtrerade övningar</p>
+                <p className="mt-1 text-sm text-slate-900">
+                  {debugInfo.firstFilteredExerciseNames.join(", ")}
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        <PreviewExerciseList
+          exercises={allExercises}
+          onIncreaseSets={incrementSets}
+          onDecreaseSets={decrementSets}
+          onIncreaseReps={incrementReps}
+          onDecreaseReps={decrementReps}
+          onIncreaseDuration={incrementDuration}
+          onDecreaseDuration={decrementDuration}
+          onIncreaseRest={incrementRest}
+          onDecreaseRest={decrementRest}
+          onMoveExerciseUp={(exerciseId) => moveExercise(exerciseId, "up")}
+          onMoveExerciseDown={(exerciseId) => moveExercise(exerciseId, "down")}
+          onReplaceExercise={(exerciseId) => {
+            setError(null);
+            setReplaceExerciseId(exerciseId);
+          }}
+          onRemoveExercise={(exerciseId) => {
+            setError(null);
+            setRemoveExerciseId(exerciseId);
+          }}
+          onAddFirstExercise={() => handleOpenAddSheet("catalog")}
+        />
 
         <div className="flex items-center gap-3">
           <button
@@ -330,26 +390,26 @@ function PreviewPageContent() {
         error={error}
       />
 
-<ReplaceExerciseSheet
-  open={Boolean(replaceExerciseId)}
-  currentExerciseName={currentReplaceExerciseName}
-  search={catalogSearch}
-  onSearchChange={setCatalogSearch}
-  catalogItems={filteredCatalogExercises}
-  onReplace={(item) => {
-    if (!replaceExerciseId) {
-      return;
-    }
+      <ReplaceExerciseSheet
+        open={Boolean(replaceExerciseId)}
+        currentExerciseName={currentReplaceExerciseName}
+        search={catalogSearch}
+        onSearchChange={setCatalogSearch}
+        catalogItems={filteredCatalogExercises}
+        onReplace={(item) => {
+          if (!replaceExerciseId) {
+            return;
+          }
 
-    const didReplace = replaceWithCatalogExercise(replaceExerciseId, item);
-    if (didReplace) {
-      setReplaceExerciseId(null);
-      scrollToBottomSoon();
-    }
-  }}
-  onClose={() => setReplaceExerciseId(null)}
-  error={error}
-/>
+          const didReplace = replaceWithCatalogExercise(replaceExerciseId, item);
+          if (didReplace) {
+            setReplaceExerciseId(null);
+            scrollToBottomSoon();
+          }
+        }}
+        onClose={() => setReplaceExerciseId(null)}
+        error={error}
+      />
 
       <ConfirmSheet
         open={Boolean(removeExerciseId)}
