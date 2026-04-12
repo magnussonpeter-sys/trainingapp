@@ -609,9 +609,51 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   const filteredCatalogExercises = useMemo(() => {
     const search = normalizeSearch(catalogSearch);
 
-    if (!search) {
-      return availableCatalogExercises.slice(0, 80);
-    }
+const selectedEquipment = new Set(getEquipmentSeedFromWorkout(workout));
+
+function getExerciseScore(exercise: ExerciseCatalogItem) {
+  const required = exercise.requiredEquipment ?? [];
+
+  const matchesSelected = required.filter((item) =>
+    selectedEquipment.has(item),
+  ).length;
+
+  const isPureBodyweight =
+    required.length === 1 && required[0] === "bodyweight";
+
+  // Gymmatch först, rena kroppsviktsövningar sist om vi inte kör bodyweight-gym.
+  let score = matchesSelected * 10;
+
+  if (!selectedEquipment.has("bodyweight") && isPureBodyweight) {
+    score -= 100;
+  }
+
+  return score;
+}
+
+const filteredCatalogExercises = useMemo(() => {
+  const search = normalizeSearch(catalogSearch);
+
+  const base = search
+    ? availableCatalogExercises.filter((exercise) => {
+        const haystack = [
+          exercise.name,
+          exercise.description,
+          exercise.movementPattern,
+          ...(exercise.primaryMuscles ?? []),
+          ...(exercise.requiredEquipment ?? []),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(search);
+      })
+    : availableCatalogExercises;
+
+  return [...base]
+    .sort((a, b) => getExerciseScore(b) - getExerciseScore(a))
+    .slice(0, 80);
+}, [availableCatalogExercises, catalogSearch, workout]);
 
     return availableCatalogExercises
       .filter((exercise) => {
