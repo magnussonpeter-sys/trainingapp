@@ -559,28 +559,27 @@ export default function RunPage() {
               </div>
 
               {!showExerciseFeedback ? (
-                <CurrentExerciseCard
-                  currentExercise={currentExercise}
-                  reps={reps}
-                  setReps={setReps}
-                  weight={weight}
-                  updateWeight={updateWeight}
-                  chooseWeightChip={chooseWeightChip}
-                  suggestedWeightValue={suggestedWeightValue}
-                  weightChipOptions={weightChipOptions}
-                  timedExercise={timedExercise}
-                  timerState={timerState}
-                  elapsedSeconds={elapsedSeconds}
-                  startTimer={startTimer}
-                  stopTimer={stopTimer}
-                  resetTimer={resetTimer}
-                  showRestTimer={showRestTimer}
-                  restTimerRunning={restTimerRunning}
-                  restRemainingSeconds={restRemainingSeconds}
-                  onToggleRestTimer={() => {
-                    setRestTimerRunning(!restTimerRunning);
-                  }}
-                />
+<CurrentExerciseCard
+  description={currentExercise.description}
+  timedExercise={timedExercise}
+  reps={reps}
+  onRepsChange={setReps}
+  plannedReps={currentExercise.reps ?? undefined}
+  weight={weight}
+  onWeightChange={updateWeight}
+  suggestedWeightValue={suggestedWeightValue}
+  weightChipOptions={weightChipOptions}
+  onWeightChipSelect={chooseWeightChip}
+  elapsedSeconds={elapsedSeconds}
+  targetDurationSeconds={currentExercise.duration ?? undefined}
+  timerState={timerState}
+  showRestTimer={showRestTimer}
+  restRemainingSeconds={restRemainingSeconds}
+  restTimerRunning={restTimerRunning}
+  onToggleRestTimer={() => {
+    setRestTimerRunning(!restTimerRunning);
+  }}
+/>
               ) : timedExercise ? (
                 <EffortFeedbackRow
                   timedExercise
