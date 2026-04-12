@@ -168,9 +168,9 @@ function createCompletedExercise(exercise: WorkoutExercise): CompletedExercise {
     plannedReps: exercise.reps ?? null,
     plannedDuration: exercise.duration ?? null,
     isNewExercise: Boolean(exercise.isNewExercise),
-    rating: undefined,
-    extraReps: undefined,
-    timedEffort: undefined,
+    rating: null,
+    extraReps: null,
+    timedEffort: null,
     sets: [],
   };
 }
