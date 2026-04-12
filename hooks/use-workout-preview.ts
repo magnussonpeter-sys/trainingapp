@@ -1,20 +1,5 @@
 "use client";
 
-// Hook för preview-flödet.
-// Håller preview/page.tsx tunn och sparar alltid tillbaka till samma draft.
-//
-// Sprint 1:
-// - workout använder nu blocks i stället för platt exercises-lista
-// - vi arbetar fortfarande mot första blocket för att behålla samma UX
-//
-// Progression v1:
-// - suggestedWeight sätts här, innan workout visas i preview
-// - vi använder historik från progression-engine om den finns
-//
-// Fix:
-// - utrustningsfiltret i preview ska inte längre fastna på bodyweight
-// - rätt EquipmentId används enligt exercise-catalog.ts
-
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -57,7 +42,6 @@ function normalizeSearch(value: string) {
   return value.trim().toLowerCase();
 }
 
-// Korrekt lista enligt exercise-catalog.ts.
 const KNOWN_EQUIPMENT_TYPES = [
   "bodyweight",
   "bench",
@@ -69,7 +53,6 @@ const KNOWN_EQUIPMENT_TYPES = [
   "rings",
 ] as const;
 
-// Normaliserar vanliga varianter till katalogens riktiga EquipmentId.
 function normalizeEquipmentName(value: string): string | null {
   const normalized = value.trim().toLowerCase();
 
@@ -128,7 +111,6 @@ function normalizeEquipmentName(value: string): string | null {
   return null;
 }
 
-// Försöker extrahera utrustning från workout i olika format.
 function extractEquipmentFromWorkout(workout: Workout | null): string[] {
   if (!workout) {
     return [];
@@ -183,9 +165,6 @@ function extractEquipmentFromWorkout(workout: Workout | null): string[] {
   return Array.from(normalizedValues);
 }
 
-// Viktigt:
-// - bodyweight bara för verkliga kroppsviktsgym
-// - riktiga gym utan explicit utrustningslista får bred korrekt fallback
 function getEquipmentSeedFromWorkout(workout: Workout | null) {
   const explicitEquipment = extractEquipmentFromWorkout(workout);
   if (explicitEquipment.length > 0) {
@@ -208,13 +187,10 @@ function getEquipmentSeedFromWorkout(workout: Workout | null) {
     return ["bodyweight"];
   }
 
-  // Om vi har ett gym-id eller namn men ingen utrustning sparad:
-  // använd brett urval med korrekta katalog-ID:n.
   if (gymValue.trim()) {
     return [...KNOWN_EQUIPMENT_TYPES];
   }
 
-  // Sista fallback om workout helt saknar gym-info.
   return ["bodyweight"];
 }
 
@@ -341,6 +317,28 @@ function applyProgressionToWorkout(userId: string, workout: Workout): Workout {
     ...safeWorkout,
     blocks: nextBlocks,
   };
+}
+
+function getExerciseScore(
+  exercise: ExerciseCatalogItem,
+  selectedEquipment: Set<string>,
+  isBodyweightGym: boolean,
+) {
+  const required = exercise.requiredEquipment ?? [];
+  const matchesSelected = required.filter((item) =>
+    selectedEquipment.has(item),
+  ).length;
+
+  const isPureBodyweight =
+    required.length === 1 && required[0] === "bodyweight";
+
+  let score = matchesSelected * 10;
+
+  if (!isBodyweightGym && isPureBodyweight) {
+    score -= 100;
+  }
+
+  return score;
 }
 
 export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
@@ -601,76 +599,49 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     });
   }
 
-  const availableCatalogExercises = useMemo(() => {
-    const seedEquipment = getEquipmentSeedFromWorkout(workout);
-    return getAvailableExercises(seedEquipment);
+  const equipmentSeed = useMemo(() => {
+    return getEquipmentSeedFromWorkout(workout);
   }, [workout]);
+
+  const availableCatalogExercises = useMemo(() => {
+    return getAvailableExercises(equipmentSeed);
+  }, [equipmentSeed]);
 
   const filteredCatalogExercises = useMemo(() => {
     const search = normalizeSearch(catalogSearch);
+    const selectedEquipment = new Set(equipmentSeed);
+    const isBodyweightGym =
+      selectedEquipment.size === 1 && selectedEquipment.has("bodyweight");
 
-const selectedEquipment = new Set(getEquipmentSeedFromWorkout(workout));
+    const base = search
+      ? availableCatalogExercises.filter((exercise) => {
+          const haystack = [
+            exercise.name,
+            exercise.description,
+            exercise.movementPattern,
+            ...(exercise.primaryMuscles ?? []),
+            ...(exercise.requiredEquipment ?? []),
+          ]
+            .join(" ")
+            .toLowerCase();
 
-function getExerciseScore(exercise: ExerciseCatalogItem) {
-  const required = exercise.requiredEquipment ?? [];
+          return haystack.includes(search);
+        })
+      : availableCatalogExercises;
 
-  const matchesSelected = required.filter((item) =>
-    selectedEquipment.has(item),
-  ).length;
+    return [...base]
+      .sort((a, b) => {
+        const scoreA = getExerciseScore(a, selectedEquipment, isBodyweightGym);
+        const scoreB = getExerciseScore(b, selectedEquipment, isBodyweightGym);
 
-  const isPureBodyweight =
-    required.length === 1 && required[0] === "bodyweight";
+        if (scoreA !== scoreB) {
+          return scoreB - scoreA;
+        }
 
-  // Gymmatch först, rena kroppsviktsövningar sist om vi inte kör bodyweight-gym.
-  let score = matchesSelected * 10;
-
-  if (!selectedEquipment.has("bodyweight") && isPureBodyweight) {
-    score -= 100;
-  }
-
-  return score;
-}
-
-const filteredCatalogExercises = useMemo(() => {
-  const search = normalizeSearch(catalogSearch);
-
-  const base = search
-    ? availableCatalogExercises.filter((exercise) => {
-        const haystack = [
-          exercise.name,
-          exercise.description,
-          exercise.movementPattern,
-          ...(exercise.primaryMuscles ?? []),
-          ...(exercise.requiredEquipment ?? []),
-        ]
-          .join(" ")
-          .toLowerCase();
-
-        return haystack.includes(search);
-      })
-    : availableCatalogExercises;
-
-  return [...base]
-    .sort((a, b) => getExerciseScore(b) - getExerciseScore(a))
-    .slice(0, 80);
-}, [availableCatalogExercises, catalogSearch, workout]);
-
-    return availableCatalogExercises
-      .filter((exercise) => {
-        const haystack = [
-          exercise.name,
-          exercise.description,
-          exercise.movementPattern,
-          ...(exercise.primaryMuscles ?? []),
-          ...(exercise.requiredEquipment ?? []),
-        ]
-          .join(" ")
-          .toLowerCase();
-
-        return haystack.includes(search);
+        return a.name.localeCompare(b.name, "sv");
       })
       .slice(0, 80);
-  }, [availableCatalogExercises, catalogSearch]);
+  }, [availableCatalogExercises, catalogSearch, equipmentSeed]);
 
   function addCatalogExercise(item: ExerciseCatalogItem) {
     const exercises = getPrimaryExercises(workout);
