@@ -59,8 +59,9 @@ function getBlockExerciseCount(blocks: unknown) {
   }
 
   return blocks.reduce((sum, block) => {
-    const exercises = Array.isArray((block as { exercises?: unknown[] })?.exercises)
-      ? (block as { exercises?: unknown[] }).exercises
+    const blockObject = block as { exercises?: unknown };
+    const exercises = Array.isArray(blockObject.exercises)
+      ? blockObject.exercises
       : [];
 
     return sum + exercises.length;
