@@ -10,9 +10,11 @@
 // Progression v1:
 // - suggestedWeight sätts här, innan workout visas i preview
 //
-// Viktig fix:
-// - om workout saknar explicit availableEquipment hämtar vi gymmets utrustning från /api/gyms
-// - då får preview rätt utrustningsfilter även om generatorn inte sparat equipment på workout
+// Debug/fix:
+// - hämtar gym från /api/gyms
+// - matchar valt gym mot draft
+// - bygger equipmentSeed från verklig gymutrustning när workout saknar den
+// - exponerar utökad debugInfo
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -99,8 +101,7 @@ function normalizeEquipmentName(value: string): string | null {
   if (
     normalized.includes("dumbbell") ||
     normalized.includes("dumbbells") ||
-    normalized.includes("hantel") ||
-    normalized.includes("hantlar")
+    normalized.includes("hantel")
   ) {
     return "dumbbells";
   }
@@ -429,8 +430,6 @@ function getExerciseScore(
 
   let score = matchesSelected * 10;
 
-  // Rena kroppsviktsövningar ska finnas kvar, men inte dominera listan
-  // när användaren valt ett riktigt gym.
   if (!isBodyweightGym && isPureBodyweight) {
     score -= 100;
   }
@@ -496,7 +495,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
         });
 
         const data = (await response.json().catch(() => null)) as
-          | { gyms?: GymApiItem[]; error?: string }
+          | { gyms?: GymApiItem[] }
           | GymApiItem[]
           | null;
 
@@ -749,6 +748,10 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     });
   }
 
+  const matchedGym = useMemo(() => {
+    return findMatchingGym(gyms, workout);
+  }, [gyms, workout]);
+
   const matchedGymEquipment = useMemo(() => {
     return extractEquipmentFromMatchedGym(gyms, workout);
   }, [gyms, workout]);
@@ -933,7 +936,8 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       workoutAvailableEquipment:
         ((workout as Record<string, unknown> | null)?.availableEquipment as unknown[]) ?? [],
       gymsLoaded,
-      matchedGymName: findMatchingGym(gyms, workout)?.name ?? null,
+      gymsCount: gyms.length,
+      matchedGymName: matchedGym?.name ?? null,
       matchedGymEquipment,
       extractedEquipment: extractEquipmentFromWorkout(workout),
       equipmentSeed,
@@ -952,6 +956,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     filteredCatalogExercises,
     gyms,
     gymsLoaded,
+    matchedGym,
     matchedGymEquipment,
     workout,
   ]);
