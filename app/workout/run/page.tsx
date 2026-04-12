@@ -510,11 +510,12 @@ export default function RunPage() {
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
       <div className="space-y-6">
-        <RunHeader
-          workoutName={workout.name}
-          onAbort={() => setAbortConfirmOpen(true)}
-          onOpenOptions={() => setOptionsOpen(true)}
-        />
+<RunHeader
+  workoutName={workout.name}
+  displayName={getDisplayName(authUser)}
+  onAbort={() => setAbortConfirmOpen(true)}
+  onOpenOptions={() => setOptionsOpen(true)}
+/>
 
         {pageError ? (
           <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
