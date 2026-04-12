@@ -397,29 +397,29 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
     restoreKeyRef.current = workoutRestoreKey;
     finishedLogKeyRef.current = null;
 
-    const draft = getActiveWorkoutSessionDraft(userId);
+const draft = getActiveWorkoutSessionDraft(userId);
 
-    if (isDraftForWorkout(draft, workout)) {
-      setSessionStartedAt(draft.sessionStartedAt);
-      setCurrentExerciseIndex(Math.max(0, draft.currentExerciseIndex));
-      setCurrentSet(Math.max(1, draft.currentSet));
-      setReps(draft.setLog.reps ?? "");
-      setWeight(draft.setLog.weight ?? "");
-      setCompletedExercises(draft.completedExercises ?? []);
-      setShowExerciseFeedback(Boolean(draft.showExerciseFeedback));
-      setSelectedExtraReps(draft.selectedExtraReps ?? null);
-      setSelectedTimedEffort(draft.selectedTimedEffort ?? null);
-      setTimerState(draft.timedSetPhase ?? "idle");
-      setElapsedSeconds(Math.max(0, draft.exerciseTimerElapsedSeconds ?? 0));
-      setShowRestTimer(Boolean(draft.showRestTimer));
-      setRestTimerRunning(Boolean(draft.restTimerRunning));
-      setRestRemainingSeconds(Math.max(0, draft.restRemainingSeconds ?? 0));
-      setLastWeightByExercise(draft.lastWeightByExercise ?? {});
-      setRestoreNotice("Återställde ditt pågående pass.");
-      setSaveStatus("saved_local");
-      setIsHydrated(true);
-      return;
-    }
+if (draft && isDraftForWorkout(draft, workout)) {
+  setSessionStartedAt(draft.sessionStartedAt);
+  setCurrentExerciseIndex(Math.max(0, draft.currentExerciseIndex));
+  setCurrentSet(Math.max(1, draft.currentSet));
+  setReps(draft.setLog.reps ?? "");
+  setWeight(draft.setLog.weight ?? "");
+  setCompletedExercises(draft.completedExercises ?? []);
+  setShowExerciseFeedback(Boolean(draft.showExerciseFeedback));
+  setSelectedExtraReps(draft.selectedExtraReps ?? null);
+  setSelectedTimedEffort(draft.selectedTimedEffort ?? null);
+  setTimerState(draft.timedSetPhase ?? "idle");
+  setElapsedSeconds(Math.max(0, draft.exerciseTimerElapsedSeconds ?? 0));
+  setShowRestTimer(Boolean(draft.showRestTimer));
+  setRestTimerRunning(Boolean(draft.restTimerRunning));
+  setRestRemainingSeconds(Math.max(0, draft.restRemainingSeconds ?? 0));
+  setLastWeightByExercise(draft.lastWeightByExercise ?? {});
+  setRestoreNotice("Återställde ditt pågående pass.");
+  setSaveStatus("saved_local");
+  setIsHydrated(true);
+  return;
+}
 
     // Ny session för detta pass.
     setSessionStartedAt(new Date().toISOString());
