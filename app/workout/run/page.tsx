@@ -580,19 +580,23 @@ export default function RunPage() {
     setRestTimerRunning(!restTimerRunning);
   }}
 />
-              ) : timedExercise ? (
-                <EffortFeedbackRow
-                  timedExercise
-                  selectedTimedEffort={selectedTimedEffort}
-                  onSelectTimedEffort={setSelectedTimedEffort}
-                />
-              ) : (
-                <EffortFeedbackRow
-                  timedExercise={false}
-                  selectedExtraReps={selectedExtraReps}
-                  onSelectExtraReps={setSelectedExtraReps}
-                />
-              )}
+) : timedExercise ? (
+  <EffortFeedbackRow
+    mode="timed"
+    value={selectedTimedEffort}
+    onChange={setSelectedTimedEffort}
+    onSkip={moveToNextExercise}
+    onContinue={submitExerciseFeedback}
+  />
+) : (
+  <EffortFeedbackRow
+    mode="reps"
+    value={selectedExtraReps}
+    onChange={setSelectedExtraReps}
+    onSkip={moveToNextExercise}
+    onContinue={submitExerciseFeedback}
+  />
+)}
 
               {!showExerciseFeedback ? (
                 <div className="mt-5">
