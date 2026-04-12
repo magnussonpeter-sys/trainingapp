@@ -10,6 +10,11 @@
 // Progression v1:
 // - suggestedWeight sätts här, innan workout visas i preview
 // - vi använder historik från progression-engine om den finns
+//
+// Fix:
+// - utrustningsfiltret i preview ska inte längre fastna på bodyweight
+// - om workout saknar explicit utrustningslista använder vi bred fallback
+//   i stället för att bara visa kroppsviktsövningar
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -53,27 +58,181 @@ function normalizeSearch(value: string) {
   return value.trim().toLowerCase();
 }
 
-// Försöker hitta utrustningsfrön från draft.
-// Tills vidare bodyweight som trygg fallback om vi saknar bättre metadata.
-function getEquipmentSeedFromWorkout(workout: Workout | null) {
-  if (!workout?.gym) {
-    return ["bodyweight"];
+// Kända utrustningstyper som katalogen kan filtrera på.
+// Denna fallback används när vi vet att passet inte är bodyweight,
+// men workout-draften saknar explicit utrustningslista.
+const KNOWN_EQUIPMENT_TYPES = [
+  "bodyweight",
+  "dumbbell",
+  "barbell",
+  "bench",
+  "rack",
+  "kettlebell",
+  "machine",
+  "cable",
+  "bands",
+  "rings",
+] as const;
+
+// Normaliserar vanliga varianter till katalogens nycklar.
+function normalizeEquipmentName(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+
+  if (!normalized) {
+    return null;
   }
 
-  const gymLabel = workout.gym.trim().toLowerCase();
+  if (
+    normalized === "bodyweight" ||
+    normalized === "body_weight" ||
+    normalized.includes("kroppsvikt") ||
+    normalized.includes("utan gym")
+  ) {
+    return "bodyweight";
+  }
+
+  if (normalized.includes("dumbbell") || normalized.includes("hantel")) {
+    return "dumbbell";
+  }
+
+  if (normalized.includes("barbell") || normalized.includes("skivstång")) {
+    return "barbell";
+  }
+
+  if (normalized.includes("bench") || normalized.includes("bänk")) {
+    return "bench";
+  }
+
+  if (normalized.includes("rack") || normalized.includes("ställning")) {
+    return "rack";
+  }
+
+  if (normalized.includes("kettlebell")) {
+    return "kettlebell";
+  }
 
   if (
-    gymLabel.includes("kroppsvikt") ||
-    gymLabel.includes("utan gym") ||
-    gymLabel === "bodyweight"
+    normalized.includes("machine") ||
+    normalized.includes("maskin")
+  ) {
+    return "machine";
+  }
+
+  if (
+    normalized.includes("cable") ||
+    normalized.includes("kabel")
+  ) {
+    return "cable";
+  }
+
+  if (
+    normalized.includes("band") ||
+    normalized.includes("resistance")
+  ) {
+    return "bands";
+  }
+
+  if (
+    normalized.includes("ring") ||
+    normalized.includes("romerska")
+  ) {
+    return "rings";
+  }
+
+  return null;
+}
+
+// Försöker extrahera utrustning från workout i olika format.
+// Detta gör hooken mer robust mot äldre och framtida draft-modeller.
+function extractEquipmentFromWorkout(workout: Workout | null): string[] {
+  if (!workout) {
+    return [];
+  }
+
+  const candidateArrays: unknown[] = [
+    // Vanliga tänkbara fält att spara på workout-objektet.
+    (workout as Record<string, unknown>).availableEquipment,
+    (workout as Record<string, unknown>).equipment,
+    (workout as Record<string, unknown>).equipmentList,
+    (workout as Record<string, unknown>).gymEquipment,
+  ];
+
+  const normalizedValues = new Set<string>();
+
+  for (const candidate of candidateArrays) {
+    if (!Array.isArray(candidate)) {
+      continue;
+    }
+
+    for (const item of candidate) {
+      if (typeof item === "string") {
+        const normalized = normalizeEquipmentName(item);
+        if (normalized) {
+          normalizedValues.add(normalized);
+        }
+        continue;
+      }
+
+      if (item && typeof item === "object") {
+        const record = item as Record<string, unknown>;
+
+        const possibleValues = [
+          record.equipment_type,
+          record.type,
+          record.label,
+          record.name,
+        ];
+
+        for (const possibleValue of possibleValues) {
+          if (typeof possibleValue === "string") {
+            const normalized = normalizeEquipmentName(possibleValue);
+            if (normalized) {
+              normalizedValues.add(normalized);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(normalizedValues);
+}
+
+// Försöker hitta utrustningsfrön från workout.
+// Viktigt:
+// - bodyweight ska bara användas när det verkligen är kroppsvikt
+// - om vi saknar explicit utrustningslista för ett riktigt gym,
+//   använder vi bred fallback i stället för att låsa allt till bodyweight
+function getEquipmentSeedFromWorkout(workout: Workout | null) {
+  const explicitEquipment = extractEquipmentFromWorkout(workout);
+  if (explicitEquipment.length > 0) {
+    return explicitEquipment;
+  }
+
+  const gymValue = [workout?.gym, workout?.gymLabel]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    gymValue.includes("kroppsvikt") ||
+    gymValue.includes("utan gym") ||
+    gymValue === "bodyweight"
   ) {
     return ["bodyweight"];
   }
 
+  // Om vi har ett riktigt gym men ingen explicit utrustningslista sparad,
+  // visa hellre brett urval än att felaktigt bara visa kroppsviktsövningar.
+  if (gymValue.trim()) {
+    return [...KNOWN_EQUIPMENT_TYPES];
+  }
+
+  // Sista fallback om workout saknar gyminformation helt.
   return ["bodyweight"];
 }
 
-// Hjälper oss att alltid få ett rent numeriskt viktvärde om möjligt.
 function toNumberOrNull(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -87,8 +246,6 @@ function toNumberOrNull(value: unknown): number | null {
   return null;
 }
 
-// Lägger på progression på en övning innan den visas/sparas.
-// Här är den exakta platsen där suggestedWeight ska sättas.
 function applyProgressionToExercise(userId: string, exercise: Exercise): Exercise {
   const fallbackWeight = toNumberOrNull(exercise.suggestedWeight ?? null);
 
@@ -150,7 +307,6 @@ function createCustomExercise(params: {
   };
 }
 
-// Säkerställer att workout alltid har minst ett block.
 function ensureWorkoutHasBlocks(workout: Workout): Workout {
   if (Array.isArray(workout.blocks) && workout.blocks.length > 0) {
     return workout;
@@ -180,8 +336,6 @@ function getPrimaryExercises(workout: Workout | null): Exercise[] {
   return getPrimaryBlock(workout)?.exercises ?? [];
 }
 
-// Lägger på progression på alla övningar i första blocket.
-// Detta gör att gamla drafts också får suggestedWeight när de laddas.
 function applyProgressionToWorkout(userId: string, workout: Workout): Workout {
   const safeWorkout = ensureWorkoutHasBlocks(workout);
   const firstBlock = safeWorkout.blocks[0];
@@ -501,7 +655,10 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     const nextExercise = createExerciseFromCatalog(userId, item);
 
     const alreadyExists = exercises.some((exercise) => {
-      return exercise.name.trim().toLowerCase() === nextExercise.name.trim().toLowerCase();
+      return (
+        exercise.name.trim().toLowerCase() ===
+        nextExercise.name.trim().toLowerCase()
+      );
     });
 
     if (alreadyExists) {
@@ -534,7 +691,10 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
         return false;
       }
 
-      return exercise.name.trim().toLowerCase() === nextExercise.name.trim().toLowerCase();
+      return (
+        exercise.name.trim().toLowerCase() ===
+        nextExercise.name.trim().toLowerCase()
+      );
     });
 
     if (alreadyExists) {
