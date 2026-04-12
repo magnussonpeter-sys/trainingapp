@@ -86,8 +86,8 @@ export default function PreviewExerciseList({
             name={exercise.name}
             description={exercise.description}
             sets={exercise.sets}
-            reps={exercise.reps}
-            duration={exercise.duration}
+            reps={exercise.reps ?? undefined}
+            duration={exercise.duration ?? undefined}
             rest={exercise.rest}
             timedExercise={timedExercise}
             onDecreaseSets={() => onDecreaseSets(exercise.id)}
