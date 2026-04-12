@@ -50,6 +50,20 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
+function getDisplayName(user: AuthUser | null) {
+  if (!user) {
+    return "där";
+  }
+
+  return (
+    user.displayName?.trim() ||
+    user.name?.trim() ||
+    user.username?.trim() ||
+    user.email?.split("@")[0]?.trim() ||
+    "där"
+  );
+}
+
 // Fallback om auth inte är färdig men lokala run-nycklar finns.
 // Viktigt för resume/offline.
 function resolveLocalFallbackUserId() {
