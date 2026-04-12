@@ -330,26 +330,26 @@ function PreviewPageContent() {
         error={error}
       />
 
-      <ReplaceExerciseSheet
-        open={Boolean(replaceExerciseId)}
-        exerciseName={currentReplaceExerciseName}
-        catalogSearch={catalogSearch}
-        onCatalogSearchChange={setCatalogSearch}
-        catalogItems={filteredCatalogExercises}
-        onReplaceWithCatalogExercise={(item) => {
-          if (!replaceExerciseId) {
-            return;
-          }
+<ReplaceExerciseSheet
+  open={Boolean(replaceExerciseId)}
+  currentExerciseName={currentReplaceExerciseName}
+  search={catalogSearch}
+  onSearchChange={setCatalogSearch}
+  catalogItems={filteredCatalogExercises}
+  onReplace={(item) => {
+    if (!replaceExerciseId) {
+      return;
+    }
 
-          const didReplace = replaceWithCatalogExercise(replaceExerciseId, item);
-          if (didReplace) {
-            setReplaceExerciseId(null);
-            scrollToBottomSoon();
-          }
-        }}
-        onClose={() => setReplaceExerciseId(null)}
-        error={error}
-      />
+    const didReplace = replaceWithCatalogExercise(replaceExerciseId, item);
+    if (didReplace) {
+      setReplaceExerciseId(null);
+      scrollToBottomSoon();
+    }
+  }}
+  onClose={() => setReplaceExerciseId(null)}
+  error={error}
+/>
 
       <ConfirmSheet
         open={Boolean(removeExerciseId)}
