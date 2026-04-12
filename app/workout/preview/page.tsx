@@ -250,28 +250,28 @@ function PreviewPageContent() {
           </div>
         </section>
 
-        <PreviewExerciseList
-          workout={workout}
-          onIncrementSets={incrementSets}
-          onDecrementSets={decrementSets}
-          onIncrementReps={incrementReps}
-          onDecrementReps={decrementReps}
-          onIncrementDuration={incrementDuration}
-          onDecrementDuration={decrementDuration}
-          onIncrementRest={incrementRest}
-          onDecrementRest={decrementRest}
-          onMoveExerciseUp={(exerciseId) => moveExercise(exerciseId, "up")}
-          onMoveExerciseDown={(exerciseId) => moveExercise(exerciseId, "down")}
-          onReplaceExercise={(exerciseId) => {
-            setError(null);
-            setReplaceExerciseId(exerciseId);
-          }}
-          onRemoveExercise={(exerciseId) => {
-            setError(null);
-            setRemoveExerciseId(exerciseId);
-          }}
-          onAddFirstExercise={() => handleOpenAddSheet("catalog")}
-        />
+<PreviewExerciseList
+  exercises={allExercises}
+  onIncreaseSets={incrementSets}
+  onDecreaseSets={decrementSets}
+  onIncreaseReps={incrementReps}
+  onDecreaseReps={decrementReps}
+  onIncreaseDuration={incrementDuration}
+  onDecreaseDuration={decrementDuration}
+  onIncreaseRest={incrementRest}
+  onDecreaseRest={decrementRest}
+  onMoveExerciseUp={(exerciseId) => moveExercise(exerciseId, "up")}
+  onMoveExerciseDown={(exerciseId) => moveExercise(exerciseId, "down")}
+  onReplaceExercise={(exerciseId) => {
+    setError(null);
+    setReplaceExerciseId(exerciseId);
+  }}
+  onRemoveExercise={(exerciseId) => {
+    setError(null);
+    setRemoveExerciseId(exerciseId);
+  }}
+  onAddFirstExercise={() => handleOpenAddSheet("catalog")}
+/>
 
         <div className="flex items-center gap-3">
           <button
