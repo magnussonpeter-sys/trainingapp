@@ -2,18 +2,20 @@
 
 // Hook för preview-flödet.
 // Håller preview/page.tsx tunn och sparar alltid tillbaka till samma draft.
+// Sprint 1:
+// - workout använder nu blocks i stället för platt exercises-lista
+// - vi arbetar fortfarande mot första blocket för att behålla samma UX
+// - detta gör nästa steg mot cirkelträning mycket enklare
 
 import { useEffect, useMemo, useState } from "react";
+
+import { getAvailableExercises, type ExerciseCatalogItem } from "@/lib/exercise-catalog";
+import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 import {
   getWorkoutDraft,
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
-import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
-import {
-  getAvailableExercises,
-  type ExerciseCatalogItem,
-} from "@/lib/exercise-catalog";
-import type { Exercise, Workout } from "@/types/workout";
+import type { Exercise, Workout, WorkoutBlock } from "@/types/workout";
 
 type UseWorkoutPreviewProps = {
   userId: string;
@@ -106,13 +108,43 @@ function createCustomExercise(params: {
   };
 }
 
+// Säkerställer att workout alltid har minst ett block.
+// Skyddar preview-flödet om något äldre eller ofullständigt dataobjekt laddas.
+function ensureWorkoutHasBlocks(workout: Workout): Workout {
+  if (Array.isArray(workout.blocks) && workout.blocks.length > 0) {
+    return workout;
+  }
+
+  const fallbackBlock: WorkoutBlock = {
+    type: "straight_sets",
+    title: "Huvuddel",
+    exercises: [],
+  };
+
+  return {
+    ...workout,
+    blocks: [fallbackBlock],
+  };
+}
+
+function getPrimaryBlock(workout: Workout | null): WorkoutBlock | null {
+  if (!workout?.blocks?.length) {
+    return null;
+  }
+
+  return workout.blocks[0] ?? null;
+}
+
+function getPrimaryExercises(workout: Workout | null): Exercise[] {
+  return getPrimaryBlock(workout)?.exercises ?? [];
+}
+
 export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   const [workout, setWorkout] = useState<Workout | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [catalogSearch, setCatalogSearch] = useState("");
-
   const [customName, setCustomName] = useState("");
   const [customSets, setCustomSets] = useState("3");
   const [customReps, setCustomReps] = useState("10");
@@ -130,32 +162,57 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     const draft = getWorkoutDraft(userId);
     const normalized = normalizePreviewWorkout(draft) as Workout | null;
 
-    setWorkout(normalized);
+    setWorkout(normalized ? ensureWorkoutHasBlocks(normalized) : null);
     setLoading(false);
   }, [userId]);
 
   function updateWorkout(nextWorkout: Workout) {
-    setWorkout(nextWorkout);
+    const safeWorkout = ensureWorkoutHasBlocks(nextWorkout);
+
+    setWorkout(safeWorkout);
 
     if (userId) {
-      saveWorkoutDraft(userId, nextWorkout);
+      saveWorkoutDraft(userId, safeWorkout);
     }
   }
 
-  function findExerciseIndex(exerciseId: string) {
-    if (!workout) {
-      return -1;
-    }
-
-    return workout.blocks[0].exercises.findIndex((exercise) => exercise.id === exerciseId);
-  }
-
-  function updateExercise(exerciseId: string, patch: Partial<Exercise>) {
+  function updatePrimaryExercises(nextExercises: Exercise[]) {
     if (!workout) {
       return;
     }
 
-    const nextExercises = workout.blocks[0].exercises.map((exercise) => {
+    const blocks = [...workout.blocks];
+    const currentPrimaryBlock = getPrimaryBlock(workout);
+
+    if (!currentPrimaryBlock) {
+      return;
+    }
+
+    blocks[0] = {
+      ...currentPrimaryBlock,
+      exercises: nextExercises,
+    };
+
+    updateWorkout({
+      ...workout,
+      blocks,
+    });
+  }
+
+  function findExerciseIndex(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
+
+    return exercises.findIndex((exercise) => exercise.id === exerciseId);
+  }
+
+  function updateExercise(exerciseId: string, patch: Partial<Exercise>) {
+    const exercises = getPrimaryExercises(workout);
+
+    if (!workout || exercises.length === 0) {
+      return;
+    }
+
+    const nextExercises = exercises.map((exercise) => {
       if (exercise.id !== exerciseId) {
         return exercise;
       }
@@ -166,28 +223,23 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       };
     });
 
-    updateWorkout({
-      ...workout,
-      exercises: nextExercises,
-    });
+    updatePrimaryExercises(nextExercises);
   }
 
   function removeExercise(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
+
     if (!workout) {
       return;
     }
 
-    const nextExercises = workout.blocks[0].exercises.filter(
-      (exercise) => exercise.id !== exerciseId,
-    );
-
-    updateWorkout({
-      ...workout,
-      exercises: nextExercises,
-    });
+    const nextExercises = exercises.filter((exercise) => exercise.id !== exerciseId);
+    updatePrimaryExercises(nextExercises);
   }
 
   function moveExercise(exerciseId: string, direction: "up" | "down") {
+    const exercises = getPrimaryExercises(workout);
+
     if (!workout) {
       return;
     }
@@ -200,26 +252,24 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
     const targetIndex = direction === "up" ? index - 1 : index + 1;
 
-    if (targetIndex < 0 || targetIndex >= workout.blocks[0].exercises.length) {
+    if (targetIndex < 0 || targetIndex >= exercises.length) {
       return;
     }
 
-    const nextExercises = [...workout.blocks[0].exercises];
+    const nextExercises = [...exercises];
     const current = nextExercises[index];
     const target = nextExercises[targetIndex];
 
     nextExercises[index] = target;
     nextExercises[targetIndex] = current;
 
-    updateWorkout({
-      ...workout,
-      exercises: nextExercises,
-    });
+    updatePrimaryExercises(nextExercises);
   }
 
   function incrementSets(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
     const index = findExerciseIndex(exerciseId);
-    const exercise = index >= 0 ? workout?.exercises[index] : null;
+    const exercise = index >= 0 ? exercises[index] : null;
 
     if (!exercise) {
       return;
@@ -231,8 +281,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }
 
   function decrementSets(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
     const index = findExerciseIndex(exerciseId);
-    const exercise = index >= 0 ? workout?.exercises[index] : null;
+    const exercise = index >= 0 ? exercises[index] : null;
 
     if (!exercise) {
       return;
@@ -244,8 +295,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }
 
   function incrementReps(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
     const index = findExerciseIndex(exerciseId);
-    const exercise = index >= 0 ? workout?.exercises[index] : null;
+    const exercise = index >= 0 ? exercises[index] : null;
 
     if (!exercise) {
       return;
@@ -258,8 +310,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }
 
   function decrementReps(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
     const index = findExerciseIndex(exerciseId);
-    const exercise = index >= 0 ? workout?.exercises[index] : null;
+    const exercise = index >= 0 ? exercises[index] : null;
 
     if (!exercise) {
       return;
@@ -272,8 +325,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }
 
   function incrementDuration(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
     const index = findExerciseIndex(exerciseId);
-    const exercise = index >= 0 ? workout?.exercises[index] : null;
+    const exercise = index >= 0 ? exercises[index] : null;
 
     if (!exercise) {
       return;
@@ -286,8 +340,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }
 
   function decrementDuration(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
     const index = findExerciseIndex(exerciseId);
-    const exercise = index >= 0 ? workout?.exercises[index] : null;
+    const exercise = index >= 0 ? exercises[index] : null;
 
     if (!exercise) {
       return;
@@ -300,8 +355,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }
 
   function incrementRest(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
     const index = findExerciseIndex(exerciseId);
-    const exercise = index >= 0 ? workout?.exercises[index] : null;
+    const exercise = index >= 0 ? exercises[index] : null;
 
     if (!exercise) {
       return;
@@ -313,8 +369,9 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }
 
   function decrementRest(exerciseId: string) {
+    const exercises = getPrimaryExercises(workout);
     const index = findExerciseIndex(exerciseId);
-    const exercise = index >= 0 ? workout?.exercises[index] : null;
+    const exercise = index >= 0 ? exercises[index] : null;
 
     if (!exercise) {
       return;
@@ -355,16 +412,16 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }, [availableCatalogExercises, catalogSearch]);
 
   function addCatalogExercise(item: ExerciseCatalogItem) {
+    const exercises = getPrimaryExercises(workout);
+
     if (!workout) {
       return false;
     }
 
     const nextExercise = createExerciseFromCatalog(item);
-    const alreadyExists = workout.blocks[0].exercises.some((exercise) => {
-      return (
-        exercise.name.trim().toLowerCase() ===
-        nextExercise.name.trim().toLowerCase()
-      );
+
+    const alreadyExists = exercises.some((exercise) => {
+      return exercise.name.trim().toLowerCase() === nextExercise.name.trim().toLowerCase();
     });
 
     if (alreadyExists) {
@@ -372,20 +429,15 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return false;
     }
 
-    updateWorkout({
-      ...workout,
-      exercises: [...workout.blocks[0].exercises, nextExercise],
-    });
-
+    updatePrimaryExercises([...exercises, nextExercise]);
     setError(null);
     setCatalogSearch("");
     return true;
   }
 
-  function replaceWithCatalogExercise(
-    exerciseId: string,
-    item: ExerciseCatalogItem,
-  ) {
+  function replaceWithCatalogExercise(exerciseId: string, item: ExerciseCatalogItem) {
+    const exercises = getPrimaryExercises(workout);
+
     if (!workout) {
       return false;
     }
@@ -397,15 +449,12 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return false;
     }
 
-    const alreadyExists = workout.blocks[0].exercises.some((exercise, index) => {
+    const alreadyExists = exercises.some((exercise, index) => {
       if (index === currentIndex) {
         return false;
       }
 
-      return (
-        exercise.name.trim().toLowerCase() ===
-        nextExercise.name.trim().toLowerCase()
-      );
+      return exercise.name.trim().toLowerCase() === nextExercise.name.trim().toLowerCase();
     });
 
     if (alreadyExists) {
@@ -413,11 +462,11 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return false;
     }
 
-    const currentExercise = workout.blocks[0].exercises[currentIndex];
+    const currentExercise = exercises[currentIndex];
 
     updateExercise(exerciseId, {
       ...nextExercise,
-      id: currentExercise.id,
+      id: currentExercise.id, // Behåll id så UI och lokala referenser inte hoppar.
     });
 
     setError(null);
@@ -426,6 +475,8 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   }
 
   function addCustomExercise() {
+    const exercises = getPrimaryExercises(workout);
+
     if (!workout) {
       return false;
     }
@@ -444,10 +495,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       description: customDescription,
     });
 
-    updateWorkout({
-      ...workout,
-      exercises: [...workout.blocks[0].exercises, nextExercise],
-    });
+    updatePrimaryExercises([...exercises, nextExercise]);
 
     setCustomName("");
     setCustomSets("3");
@@ -456,24 +504,25 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
     setCustomRest("45");
     setCustomDescription("");
     setError(null);
+
     return true;
   }
 
   const summary = useMemo(() => {
+    const exercises = getPrimaryExercises(workout);
+
     if (!workout) {
       return {
         exerciseCount: 0,
-        totalSets: 0,
+        setCount: 0,
         timedExercises: 0,
       };
     }
 
     return {
-      exerciseCount: workout.blocks[0].exercises.length,
-      totalSets: workout.blocks[0].exercises.reduce((sum, exercise) => {
-        return sum + exercise.sets;
-      }, 0),
-      timedExercises: workout.blocks[0].exercises.filter((exercise) => {
+      exerciseCount: exercises.length,
+      setCount: exercises.reduce((sum, exercise) => sum + exercise.sets, 0),
+      timedExercises: exercises.filter((exercise) => {
         return typeof exercise.duration === "number" && exercise.duration > 0;
       }).length,
     };
