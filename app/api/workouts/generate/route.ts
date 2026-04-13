@@ -78,8 +78,23 @@ export async function POST(req: Request) {
         : 45;
 
     const equipment = Array.isArray(body.equipment)
-      ? body.equipment.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      ? body.equipment.filter(
+          (item): item is string =>
+            typeof item === "string" && item.trim().length > 0,
+        )
       : [];
+
+    // DEBUG 1:
+    // Visar exakt vad API-route fick in från frontend innan prompten byggs.
+    console.log("🔥 GENERATE ROUTE INPUT:", {
+      goal,
+      durationMinutes,
+      gym: body.gym ?? null,
+      gymLabel: body.gymLabel ?? null,
+      equipmentFromBody: body.equipment ?? null,
+      equipmentFiltered: equipment,
+      includeDebug: body.includeDebug ?? false,
+    });
 
     const prompt = `
 Skapa ett träningspass som JSON.
@@ -111,6 +126,17 @@ Regler:
 - Föreslå gärna kroppsviktsövningar även om utrustning finns, om det är lämpligt
 - Men använd också tillgänglig utrustning när det är relevant
 `.trim();
+
+    // DEBUG 2:
+    // Visar den slutliga input som faktiskt skickas till AI:n.
+    console.log("🔥 FINAL INPUT TO AI:", {
+      goal,
+      durationMinutes,
+      gym: body.gym ?? null,
+      gymLabel: body.gymLabel ?? null,
+      equipment,
+      prompt,
+    });
 
     const response = await client.chat.completions.create({
       model: "gpt-5.4-mini",

@@ -666,6 +666,13 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
         const normalized = normalizePreviewWorkout(draft) as Workout | null;
 
+console.log("🔥 RAW DRAFT:", draft);
+console.log("🔥 NORMALIZED WORKOUT:", normalized);
+console.log(
+  "🔥 EXERCISES:",
+  normalized?.blocks?.flatMap((b) => b.exercises?.map((e) => e.name))
+);
+
         if (!normalized) {
           setWorkout(null);
           setLoading(false);
