@@ -14,6 +14,38 @@ export type Exercise = {
   isCustom?: boolean;
   isNewExercise?: boolean;
   suggestedWeight?: number | string | null;
+  suggestedWeightLabel?: string;
+  availableWeightsKg?: number[];
+  weightUnitLabel?: string;
+  weightSelectionMode?: "total" | "single_implement" | "per_hand";
+  lastPerformedWeight?: number | null;
+  lastPerformedDuration?: number | null;
+  progressionNote?: string;
+};
+
+export type WorkoutPreparationLevel = "low" | "medium" | "high";
+
+export type WorkoutFocus =
+  | "full_body"
+  | "upper_body"
+  | "lower_body"
+  | "core";
+
+export type WorkoutPreparationFeedback = {
+  energy?: WorkoutPreparationLevel;
+  focus?: WorkoutPreparationLevel;
+  note?: string;
+  updatedAt?: string;
+};
+
+export type WorkoutAiDebug = {
+  request?: unknown;
+  generationContext?: unknown;
+  prompt?: string;
+  rawAiText?: string;
+  parsedAiResponse?: unknown;
+  validatedWorkout?: unknown;
+  normalizedWorkout?: unknown;
 };
 
 export type WorkoutBlockType = "straight_sets";
@@ -36,6 +68,9 @@ export type LegacyWorkoutShape = {
   gym?: string | null;
   gymLabel?: string | null;
   aiComment?: string;
+  aiDebug?: WorkoutAiDebug;
+  preparationFeedback?: WorkoutPreparationFeedback;
+  plannedFocus?: WorkoutFocus | null;
   exercises: Exercise[];
   createdAt?: string;
 };
@@ -48,6 +83,9 @@ export type Workout = {
   gym?: string | null;
   gymLabel?: string | null;
   aiComment?: string; // Kort coach-kommentar från AI inför dagens pass.
+  aiDebug?: WorkoutAiDebug;
+  preparationFeedback?: WorkoutPreparationFeedback;
+  plannedFocus?: WorkoutFocus | null;
   blocks: WorkoutBlock[];
   createdAt?: string;
 };

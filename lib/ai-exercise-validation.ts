@@ -19,6 +19,7 @@ export type AiExerciseCandidate = {
   reps?: number | null;
   duration?: number | null;
   rest?: number;
+  suggestedWeight?: number | string | null;
 };
 
 type NormalizedExercise = {
@@ -29,6 +30,7 @@ type NormalizedExercise = {
   reps?: number;
   duration?: number;
   rest: number;
+  suggestedWeight?: number | string | null;
   movementPattern: MovementPattern;
   primaryMuscles: string[];
   variantGroup: string;
@@ -43,6 +45,7 @@ export type ValidationReasonCode =
   | "accepted_exact_match"
   | "invalid_or_missing_id"
   | "duplicate_exercise_id"
+  | "recent_variation_preference"
   | "balance_adjustment"
   | "filled_missing_slots"
   | "empty_ai_response";
@@ -66,6 +69,7 @@ export type ValidateAiExercisesResult = {
     reps?: number;
     duration?: number;
     rest: number;
+    suggestedWeight?: number | string | null;
   }>;
   debug: {
     availableCatalogCount: number;
@@ -77,6 +81,11 @@ export type ValidateAiExercisesResult = {
     warnings: string[];
     finalExerciseIds: string[];
   };
+};
+
+type RecentPreferenceContext = {
+  recentExerciseIds: Set<string>;
+  recentVariantGroups: Set<string>;
 };
 
 const VALID_MOVEMENT_PATTERNS: MovementPattern[] = [
@@ -221,10 +230,22 @@ function hasExerciseId(
   return acceptedExercises.some((exercise) => exercise.id === exerciseId);
 }
 
+function countRecentOverlap(
+  acceptedExercises: NormalizedExercise[],
+  recentPreferences: RecentPreferenceContext
+) {
+  return acceptedExercises.filter(
+    (exercise) =>
+      recentPreferences.recentExerciseIds.has(exercise.id) ||
+      recentPreferences.recentVariantGroups.has(exercise.variantGroup)
+  ).length;
+}
+
 function findFallbackExercise(params: {
   requestedMovementPattern?: string;
   availableCatalog: ExerciseCatalogItem[];
   acceptedExercises: NormalizedExercise[];
+  recentPreferences?: RecentPreferenceContext;
 }) {
   const requestedMovementPattern =
     typeof params.requestedMovementPattern === "string" &&
@@ -257,11 +278,14 @@ function findFallbackExercise(params: {
   );
 
   if (balancedSamePattern.length > 0) {
-    return balancedSamePattern[0];
+    return pickPreferredCatalogExercise(
+      balancedSamePattern,
+      params.recentPreferences
+    );
   }
 
   if (samePattern.length > 0) {
-    return samePattern[0];
+    return pickPreferredCatalogExercise(samePattern, params.recentPreferences);
   }
 
   const balancedAny = notAlreadyUsed.filter(
@@ -277,10 +301,43 @@ function findFallbackExercise(params: {
   );
 
   if (balancedAny.length > 0) {
-    return balancedAny[0];
+    return pickPreferredCatalogExercise(balancedAny, params.recentPreferences);
   }
 
-  return notAlreadyUsed[0] ?? null;
+  return pickPreferredCatalogExercise(notAlreadyUsed, params.recentPreferences);
+}
+
+function pickPreferredCatalogExercise(
+  candidates: ExerciseCatalogItem[],
+  recentPreferences?: RecentPreferenceContext
+) {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  if (!recentPreferences) {
+    return candidates[0] ?? null;
+  }
+
+  const notRecentlyUsed = candidates.filter(
+    (exercise) => !recentPreferences.recentExerciseIds.has(exercise.id)
+  );
+
+  if (notRecentlyUsed.length > 0) {
+    const notRecentVariant = notRecentlyUsed.filter(
+      (exercise) =>
+        !recentPreferences.recentVariantGroups.has(exercise.variantGroup)
+    );
+
+    return notRecentVariant[0] ?? notRecentlyUsed[0] ?? null;
+  }
+
+  const notRecentVariant = candidates.filter(
+    (exercise) =>
+      !recentPreferences.recentVariantGroups.has(exercise.variantGroup)
+  );
+
+  return notRecentVariant[0] ?? candidates[0] ?? null;
 }
 
 function createNormalizedExercise(
@@ -324,6 +381,14 @@ function createNormalizedExercise(
       0,
       240
     ),
+    suggestedWeight:
+      typeof aiExercise?.suggestedWeight === "number" &&
+      Number.isFinite(aiExercise.suggestedWeight)
+        ? aiExercise.suggestedWeight
+        : typeof aiExercise?.suggestedWeight === "string" &&
+            aiExercise.suggestedWeight.trim()
+          ? aiExercise.suggestedWeight.trim()
+          : null,
     movementPattern: catalogExercise.movementPattern,
     primaryMuscles: catalogExercise.primaryMuscles,
     variantGroup: catalogExercise.variantGroup,
@@ -334,7 +399,8 @@ function pickStarterExercises(
   availableCatalog: ExerciseCatalogItem[],
   acceptedExercises: NormalizedExercise[],
   count: number,
-  fills: ValidationDebugEntry[]
+  fills: ValidationDebugEntry[],
+  recentPreferences?: RecentPreferenceContext
 ) {
   const preferredPatterns: MovementPattern[] = [
     "squat",
@@ -350,7 +416,7 @@ function pickStarterExercises(
   for (const pattern of preferredPatterns) {
     if (acceptedExercises.length >= count) break;
 
-    const candidate = availableCatalog.find(
+    const candidates = availableCatalog.filter(
       (exercise) =>
         exercise.movementPattern === pattern &&
         !hasExerciseId(exercise.id, acceptedExercises) &&
@@ -363,6 +429,8 @@ function pickStarterExercises(
           acceptedExercises
         )
     );
+
+    const candidate = pickPreferredCatalogExercise(candidates, recentPreferences);
 
     if (!candidate) {
       continue;
@@ -385,6 +453,8 @@ function pickStarterExercises(
 export function validateAndNormalizeAiExercises(params: {
   aiExercises: AiExerciseCandidate[];
   availableEquipment: string[];
+  recentExerciseIds?: string[];
+  recentVariantGroups?: string[];
   targetExerciseCount?: number;
 }): ValidateAiExercisesResult {
   const normalizedEquipment = new Set<EquipmentId>(
@@ -421,6 +491,22 @@ export function validateAndNormalizeAiExercises(params: {
     3,
     10
   );
+  const recentPreferences: RecentPreferenceContext = {
+    recentExerciseIds: new Set(
+      Array.isArray(params.recentExerciseIds)
+        ? params.recentExerciseIds.filter(
+            (value): value is string => typeof value === "string" && value.trim().length > 0
+          )
+        : []
+    ),
+    recentVariantGroups: new Set(
+      Array.isArray(params.recentVariantGroups)
+        ? params.recentVariantGroups.filter(
+            (value): value is string => typeof value === "string" && value.trim().length > 0
+          )
+        : []
+    ),
+  };
 
   const normalizedExercises: NormalizedExercise[] = [];
   const acceptedDirectly: ValidationDebugEntry[] = [];
@@ -465,6 +551,40 @@ export function validateAndNormalizeAiExercises(params: {
           },
           normalizedExercises
         );
+        const repeatedRecently =
+          recentPreferences.recentExerciseIds.has(exactMatch.id) ||
+          recentPreferences.recentVariantGroups.has(exactMatch.variantGroup);
+        const shouldPreferVariation =
+          repeatedRecently && countRecentOverlap(normalizedExercises, recentPreferences) >= 1;
+
+        if (!duplicate && !balanceIssue && shouldPreferVariation) {
+          const variationFallback = findFallbackExercise({
+            requestedMovementPattern:
+              requestedMovementPattern ?? exactMatch.movementPattern,
+            availableCatalog,
+            acceptedExercises: normalizedExercises,
+            recentPreferences,
+          });
+
+          if (variationFallback && variationFallback.id !== exactMatch.id) {
+            normalizedExercises.push(
+              createNormalizedExercise(variationFallback, aiExercise)
+            );
+
+            replacements.push({
+              requestedId,
+              requestedName,
+              requestedMovementPattern,
+              selectedId: variationFallback.id,
+              selectedName: variationFallback.name,
+              reasonCode: "recent_variation_preference",
+              reason:
+                "AI-valet ersattes för att ge bättre variation jämfört med de senaste passen.",
+            });
+
+            continue;
+          }
+        }
 
         if (!duplicate && !balanceIssue) {
           normalizedExercises.push(
@@ -488,6 +608,7 @@ export function validateAndNormalizeAiExercises(params: {
           requestedMovementPattern: requestedMovementPattern ?? undefined,
           availableCatalog,
           acceptedExercises: normalizedExercises,
+          recentPreferences,
         });
 
         if (fallback) {
@@ -528,6 +649,42 @@ export function validateAndNormalizeAiExercises(params: {
           },
           normalizedExercises
         );
+        const repeatedRecently =
+          recentPreferences.recentExerciseIds.has(exactNameMatch.id) ||
+          recentPreferences.recentVariantGroups.has(
+            exactNameMatch.variantGroup
+          );
+        const shouldPreferVariation =
+          repeatedRecently && countRecentOverlap(normalizedExercises, recentPreferences) >= 1;
+
+        if (!duplicate && !balanceIssue && shouldPreferVariation) {
+          const variationFallback = findFallbackExercise({
+            requestedMovementPattern:
+              requestedMovementPattern ?? exactNameMatch.movementPattern,
+            availableCatalog,
+            acceptedExercises: normalizedExercises,
+            recentPreferences,
+          });
+
+          if (variationFallback && variationFallback.id !== exactNameMatch.id) {
+            normalizedExercises.push(
+              createNormalizedExercise(variationFallback, aiExercise)
+            );
+
+            replacements.push({
+              requestedId,
+              requestedName,
+              requestedMovementPattern,
+              selectedId: variationFallback.id,
+              selectedName: variationFallback.name,
+              reasonCode: "recent_variation_preference",
+              reason:
+                "AI-valet ersattes för att ge bättre variation jämfört med de senaste passen.",
+            });
+
+            continue;
+          }
+        }
 
         if (!duplicate && !balanceIssue) {
           normalizedExercises.push(
@@ -551,6 +708,7 @@ export function validateAndNormalizeAiExercises(params: {
           requestedMovementPattern: requestedMovementPattern ?? undefined,
           availableCatalog,
           acceptedExercises: normalizedExercises,
+          recentPreferences,
         });
 
         if (fallback) {
@@ -579,6 +737,7 @@ export function validateAndNormalizeAiExercises(params: {
       requestedMovementPattern: requestedMovementPattern ?? undefined,
       availableCatalog,
       acceptedExercises: normalizedExercises,
+      recentPreferences,
     });
 
     if (fallback) {
@@ -607,12 +766,24 @@ export function validateAndNormalizeAiExercises(params: {
       availableCatalog,
       normalizedExercises,
       Math.min(targetExerciseCount, 6),
-      fills
+      fills,
+      recentPreferences
     );
   }
 
   if (normalizedExercises.length < targetExerciseCount) {
-    for (const exercise of availableCatalog) {
+    const orderedCatalog = [...availableCatalog].sort((left, right) => {
+      const leftRecentScore =
+        (recentPreferences.recentExerciseIds.has(left.id) ? 1 : 0) +
+        (recentPreferences.recentVariantGroups.has(left.variantGroup) ? 1 : 0);
+      const rightRecentScore =
+        (recentPreferences.recentExerciseIds.has(right.id) ? 1 : 0) +
+        (recentPreferences.recentVariantGroups.has(right.variantGroup) ? 1 : 0);
+
+      return leftRecentScore - rightRecentScore;
+    });
+
+    for (const exercise of orderedCatalog) {
       if (normalizedExercises.length >= targetExerciseCount) {
         break;
       }
@@ -648,7 +819,18 @@ export function validateAndNormalizeAiExercises(params: {
   }
 
   if (normalizedExercises.length < targetExerciseCount) {
-    for (const exercise of availableCatalog) {
+    const orderedCatalog = [...availableCatalog].sort((left, right) => {
+      const leftRecentScore =
+        (recentPreferences.recentExerciseIds.has(left.id) ? 1 : 0) +
+        (recentPreferences.recentVariantGroups.has(left.variantGroup) ? 1 : 0);
+      const rightRecentScore =
+        (recentPreferences.recentExerciseIds.has(right.id) ? 1 : 0) +
+        (recentPreferences.recentVariantGroups.has(right.variantGroup) ? 1 : 0);
+
+      return leftRecentScore - rightRecentScore;
+    });
+
+    for (const exercise of orderedCatalog) {
       if (normalizedExercises.length >= targetExerciseCount) {
         break;
       }

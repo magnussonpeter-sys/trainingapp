@@ -279,6 +279,8 @@ export function validateGeneratedWorkout(params: {
   goal: GoalType;
   gym: string | null;
   gymLabel: string | null;
+  recentExerciseIds?: string[];
+  recentVariantGroups?: string[];
 }): ValidateGeneratedWorkoutResult {
   const availableCatalog = getAvailableExercises(params.availableEquipment);
   const rawBlocks = getRawBlocks(params.candidate);
@@ -294,6 +296,8 @@ export function validateGeneratedWorkout(params: {
   const validated = validateAndNormalizeAiExercises({
     aiExercises: flatAiExercises,
     availableEquipment: params.availableEquipment,
+    recentExerciseIds: params.recentExerciseIds,
+    recentVariantGroups: params.recentVariantGroups,
     targetExerciseCount,
   });
 

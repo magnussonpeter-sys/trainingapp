@@ -14,6 +14,9 @@ type PreviewExerciseCardProps = {
 
   name: string;
   description?: string;
+  progressionNote?: string;
+  suggestedWeightLabel?: string;
+  weightUnitLabel?: string;
 
   sets: number;
   reps?: number;
@@ -52,6 +55,9 @@ export default function PreviewExerciseCard({
   total,
   name,
   description,
+  progressionNote,
+  suggestedWeightLabel,
+  weightUnitLabel,
   sets,
   reps,
   duration,
@@ -87,6 +93,26 @@ export default function PreviewExerciseCard({
             <p className="mt-1 text-sm leading-5 text-slate-600">
               {description}
             </p>
+          ) : null}
+
+          {suggestedWeightLabel || progressionNote ? (
+            <div className="mt-2 rounded-2xl border border-sky-100 bg-sky-50 px-3 py-2">
+              {suggestedWeightLabel ? (
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-sky-700">
+                  Förslag: {suggestedWeightLabel}
+                </p>
+              ) : null}
+              {progressionNote ? (
+                <p className="mt-1 text-sm leading-5 text-sky-900">
+                  {progressionNote}
+                </p>
+              ) : null}
+              {!suggestedWeightLabel && weightUnitLabel ? (
+                <p className="mt-1 text-xs text-sky-700">
+                  Vikter visas i {weightUnitLabel}.
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
 

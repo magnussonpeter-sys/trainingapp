@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { saveCachedHomeSettings } from "@/lib/home-settings-cache";
 
 type Sex = "male" | "female" | "other" | "na";
 type Experience = "beginner" | "novice" | "intermediate" | "advanced";
@@ -162,6 +163,12 @@ export default function SettingsPage() {
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error || "Kunde inte spara");
       }
+
+      // Uppdatera home-cachen direkt så att första AI-genereringen använder
+      // det nya målet även om home-sidan ännu inte hunnit refetcha.
+      saveCachedHomeSettings(userId, {
+        training_goal: (goal || null) as Goal | null,
+      });
 
       setMessage("Sparat!");
     } catch (error) {

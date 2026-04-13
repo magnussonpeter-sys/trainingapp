@@ -5,13 +5,23 @@ import {
   getAvailableExercises,
   type ExerciseCatalogItem,
 } from "@/lib/exercise-catalog";
-import { getSuggestedWeight } from "@/lib/progression-engine";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
+import {
+  applyExerciseProgression,
+  type WorkoutGymEquipmentItem,
+} from "@/lib/workout-flow/exercise-progression";
 import {
   getWorkoutDraft,
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
-import type { Exercise, Workout, WorkoutBlock } from "@/types/workout";
+import type {
+  Exercise,
+  Workout,
+  WorkoutAiDebug,
+  WorkoutBlock,
+  WorkoutPreparationFeedback,
+  WorkoutPreparationLevel,
+} from "@/types/workout";
 
 type UseWorkoutPreviewProps = {
   userId: string;
@@ -21,6 +31,7 @@ type GymSummary = {
   id: string;
   name: string;
   equipment: string[];
+  equipmentItems: WorkoutGymEquipmentItem[];
 };
 
 type WorkoutWithEquipmentMeta = Workout & {
@@ -244,18 +255,23 @@ function getWorkoutGymName(workout: Workout | null) {
 }
 
 // Hämtar gyms från backend och normaliserar till enkel struktur.
-async function fetchGyms(): Promise<GymSummary[]> {
-  const response = await fetch("/api/gyms", {
+async function fetchGyms(userId: string): Promise<GymSummary[]> {
+  if (!userId.trim()) {
+    return [];
+  }
+
+  const url = `/api/gyms?userId=${encodeURIComponent(userId)}`;
+  const gymsResponse = await fetch(url, {
     method: "GET",
     credentials: "include",
     cache: "no-store",
   });
 
-  if (!response.ok) {
+  if (!gymsResponse.ok) {
     return [];
   }
 
-  const payload = await response.json().catch(() => null);
+  const payload = await gymsResponse.json().catch(() => null);
 
   const gymsSource = Array.isArray(payload)
     ? payload
@@ -293,6 +309,17 @@ async function fetchGyms(): Promise<GymSummary[]> {
         record.gymEquipment ??
         record.equipmentList) as unknown,
     );
+    const rawEquipment = Array.isArray(record.equipment)
+      ? (record.equipment as unknown[])
+      : Array.isArray(record.gymEquipment)
+        ? (record.gymEquipment as unknown[])
+        : Array.isArray(record.equipmentList)
+          ? (record.equipmentList as unknown[])
+          : [];
+    const equipmentItems = rawEquipment.filter(
+      (item): item is WorkoutGymEquipmentItem =>
+        typeof item === "object" && item !== null,
+    );
 
     if (!id && !name) {
       continue;
@@ -302,6 +329,7 @@ async function fetchGyms(): Promise<GymSummary[]> {
       id: id || name,
       name: name || id,
       equipment,
+      equipmentItems,
     });
   }
 
@@ -444,41 +472,7 @@ function withEquipmentMetadata(
   };
 }
 
-function toNumberOrNull(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value.replace(",", "."));
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
-}
-
-// Applicerar progression på en enskild övning.
-function applyProgressionToExercise(userId: string, exercise: Exercise): Exercise {
-  const exerciseWithWeight = exercise as Exercise & {
-    suggestedWeight?: unknown;
-  };
-
-  const fallbackWeight = toNumberOrNull(exerciseWithWeight.suggestedWeight ?? null);
-
-  const suggestedWeight = getSuggestedWeight({
-    userId,
-    exerciseId: exercise.id,
-    fallbackWeight,
-  });
-
-  return {
-    ...exercise,
-    suggestedWeight,
-  } as Exercise;
-}
-
 function createExerciseFromCatalog(
-  userId: string,
   item: ExerciseCatalogItem,
 ): Exercise {
   const isTimed =
@@ -496,7 +490,7 @@ function createExerciseFromCatalog(
     description: item.description,
   };
 
-  return applyProgressionToExercise(userId, baseExercise);
+  return baseExercise;
 }
 
 function createCustomExercise(params: {
@@ -554,26 +548,28 @@ function getPrimaryExercises(workout: Workout | null): Exercise[] {
   return getPrimaryBlock(workout)?.exercises ?? [];
 }
 
-// Applicerar progression på första blockets övningar.
-function applyProgressionToWorkout(userId: string, workout: Workout): Workout {
-  const safeWorkout = ensureWorkoutHasBlocks(workout);
-  const firstBlock = safeWorkout.blocks[0];
-
-  if (!firstBlock) {
-    return safeWorkout;
-  }
-
-  const nextBlocks = [...safeWorkout.blocks];
-  nextBlocks[0] = {
-    ...firstBlock,
-    exercises: firstBlock.exercises.map((exercise) =>
-      applyProgressionToExercise(userId, exercise),
-    ),
-  };
+// Applicerar progression blockvis så att framtida blocktyper kan återanvända samma idé.
+function applyProgressionToWorkout(params: {
+  userId: string;
+  workout: Workout;
+  gymEquipmentItems?: WorkoutGymEquipmentItem[];
+}): Workout {
+  const safeWorkout = ensureWorkoutHasBlocks(params.workout);
+  const goal = safeWorkout.goal ?? "health";
 
   return {
     ...safeWorkout,
-    blocks: nextBlocks,
+    blocks: safeWorkout.blocks.map((block) => ({
+      ...block,
+      exercises: block.exercises.map((exercise) =>
+        applyExerciseProgression({
+          exercise,
+          goal,
+          gymEquipmentItems: params.gymEquipmentItems ?? [],
+          userId: params.userId,
+        }),
+      ),
+    })),
   };
 }
 
@@ -654,7 +650,7 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       try {
         const [draft, loadedGyms] = await Promise.all([
           Promise.resolve(getWorkoutDraft(userId)),
-          fetchGyms(),
+          fetchGyms(userId),
         ]);
 
         if (!isMounted) {
@@ -679,9 +675,21 @@ console.log(
           return;
         }
 
-        const safeWorkout = applyProgressionToWorkout(
+        const matchedGym = matchGymByWorkout(normalized, loadedGyms);
+        const safeWorkout = applyProgressionToWorkout({
           userId,
-          ensureWorkoutHasBlocks(normalized),
+          workout: ensureWorkoutHasBlocks(normalized),
+          gymEquipmentItems: matchedGym?.equipmentItems ?? [],
+        });
+
+        // Spara tillbaka berikad workout så att run-sidan får samma metadata
+        // direkt även om användaren inte gör några manuella ändringar i preview.
+        saveWorkoutDraft(
+          userId,
+          withEquipmentMetadata(
+            safeWorkout,
+            deriveEffectiveEquipmentContext(safeWorkout, loadedGyms).effectiveEquipment,
+          ),
         );
 
         setWorkout(safeWorkout);
@@ -826,10 +834,12 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
   ]);
 
   function persistWorkout(nextWorkout: Workout) {
-    const safeWorkout = applyProgressionToWorkout(
+    const matchedGym = matchGymByWorkout(nextWorkout, gyms);
+    const safeWorkout = applyProgressionToWorkout({
       userId,
-      ensureWorkoutHasBlocks(nextWorkout),
-    );
+      workout: ensureWorkoutHasBlocks(nextWorkout),
+      gymEquipmentItems: matchedGym?.equipmentItems ?? [],
+    });
 
     setWorkout(safeWorkout);
 
@@ -838,6 +848,36 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
       const workoutToSave = withEquipmentMetadata(safeWorkout, effectiveEquipment);
       saveWorkoutDraft(userId, workoutToSave);
     }
+  }
+
+  function updatePreparationFeedback(
+    patch: Partial<WorkoutPreparationFeedback>,
+  ) {
+    if (!workout) {
+      return;
+    }
+
+    const nextPreparationFeedback: WorkoutPreparationFeedback = {
+      ...workout.preparationFeedback,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+
+    persistWorkout({
+      ...workout,
+      preparationFeedback: nextPreparationFeedback,
+    });
+  }
+
+  function setPreparationLevel(
+    key: "energy" | "focus",
+    value: WorkoutPreparationLevel,
+  ) {
+    updatePreparationFeedback({ [key]: value });
+  }
+
+  function setPreparationNote(note: string) {
+    updatePreparationFeedback({ note });
   }
 
   function updatePrimaryExercises(nextExercises: Exercise[]) {
@@ -855,7 +895,13 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
     blocks[0] = {
       ...currentPrimaryBlock,
       exercises: nextExercises.map((exercise) =>
-        applyProgressionToExercise(userId, exercise),
+        applyExerciseProgression({
+          exercise,
+          goal: workout.goal ?? "health",
+          gymEquipmentItems:
+            matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
+          userId,
+        }),
       ),
     };
 
@@ -882,9 +928,15 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
         return exercise;
       }
 
-      return applyProgressionToExercise(userId, {
-        ...exercise,
-        ...patch,
+      return applyExerciseProgression({
+        exercise: {
+          ...exercise,
+          ...patch,
+        },
+        goal: workout.goal ?? "health",
+        gymEquipmentItems:
+          matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
+        userId,
       });
     });
 
@@ -916,7 +968,13 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
       return false;
     }
 
-    const replacement = createExerciseFromCatalog(userId, item);
+    const replacement = applyExerciseProgression({
+      exercise: createExerciseFromCatalog(item),
+      goal: workout.goal ?? "health",
+      gymEquipmentItems:
+        matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
+      userId,
+    });
     const index = exercises.findIndex((exercise) => exercise.id === exerciseId);
 
     if (index === -1) {
@@ -1088,7 +1146,13 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
       return false;
     }
 
-    const nextExercise = createExerciseFromCatalog(userId, item);
+    const nextExercise = applyExerciseProgression({
+      exercise: createExerciseFromCatalog(item),
+      goal: workout?.goal ?? "health",
+      gymEquipmentItems:
+        matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
+      userId,
+    });
     updatePrimaryExercises([...currentExercises, nextExercise]);
     setError(null);
     return true;
@@ -1137,6 +1201,10 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
     setError,
     summary,
     debugInfo,
+    aiDebug: previewWorkout?.aiDebug ?? null,
+    preparationFeedback: previewWorkout?.preparationFeedback ?? null,
+    setPreparationLevel,
+    setPreparationNote,
 
     catalogSearch,
     setCatalogSearch,

@@ -36,6 +36,13 @@ export type ExerciseCatalogItem = {
   primaryGoalTags?: string[];
 };
 
+export type ExerciseProgressionTrack = {
+  id: string;
+  name: string;
+  intent: string;
+  stepIds: string[];
+};
+
 export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
   // =========================
   // BODYWEIGHT
@@ -71,6 +78,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     variantGroup: "push_up",
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "hypertrofi"],
+  },
+  {
+    id: "pike_push_up",
+    name: "Pike push-ups",
+    requiredEquipment: ["bodyweight"],
+    description:
+      "Utförande: Stå i en upp-och-ned-v-form, sänk huvudet kontrollerat mot golvet och pressa tillbaka upp. Mål: Bygga upp vertikal pressstyrka i axlar och triceps med kroppsvikt.",
+    defaultSets: 3,
+    defaultReps: 8,
+    defaultRest: 60,
+    movementPattern: "vertical_push",
+    primaryMuscles: ["shoulders", "triceps"],
+    secondaryMuscles: ["upper_back", "core"],
+    variantGroup: "overhead_press",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka", "allmän hälsa"],
   },
   {
     id: "bodyweight_squat",
@@ -229,6 +252,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["core"],
     secondaryMuscles: ["shoulders", "hip_flexors"],
     variantGroup: "mountain_climber",
+    riskLevel: "low",
+    primaryGoalTags: ["allmän hälsa", "uthållighet"],
+  },
+  {
+    id: "russian_twist",
+    name: "Russian twists",
+    requiredEquipment: ["bodyweight"],
+    description:
+      "Utförande: Luta överkroppen lätt bakåt, håll bålen spänd och rotera kontrollerat sida till sida. Mål: Träna rotation i bålen och kontroll i obliques.",
+    defaultSets: 3,
+    defaultReps: 16,
+    defaultRest: 30,
+    movementPattern: "core",
+    primaryMuscles: ["obliques", "core"],
+    secondaryMuscles: ["hip_flexors"],
+    variantGroup: "rotation",
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "uthållighet"],
   },
@@ -626,6 +665,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
   {
+    id: "bird_dog_row",
+    name: "Bird dog row",
+    requiredEquipment: ["dumbbells"],
+    description:
+      "Utförande: Stå i bird dog-position med ena handen på en hantel och ro med motsatt arm utan att rotera höften. Mål: Träna rygg, bål och skulderkontroll samtidigt.",
+    defaultSets: 3,
+    defaultReps: 8,
+    defaultRest: 60,
+    movementPattern: "horizontal_pull",
+    primaryMuscles: ["lats", "upper_back", "core"],
+    secondaryMuscles: ["rear_delts", "glutes"],
+    variantGroup: "row",
+    riskLevel: "low",
+    primaryGoalTags: ["allmän hälsa", "styrka"],
+  },
+  {
     id: "dumbbell_curl",
     name: "Bicepscurl med hantlar",
     requiredEquipment: ["dumbbells"],
@@ -682,7 +737,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     defaultSets: 3,
     defaultReps: 15,
     defaultRest: 30,
-    movementPattern: "carry",
+    movementPattern: "squat",
     primaryMuscles: ["calves"],
     secondaryMuscles: ["feet"],
     variantGroup: "calf_raise",
@@ -704,6 +759,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     variantGroup: "carry",
     riskLevel: "low",
     primaryGoalTags: ["styrka", "allmän hälsa"],
+  },
+  {
+    id: "dumbbell_suitcase_carry",
+    name: "Suitcase carry med hantel",
+    requiredEquipment: ["dumbbells"],
+    description:
+      "Utförande: Gå med en tung hantel i ena handen och håll överkroppen rak utan att luta åt sidan. Mål: Träna anti-lateral flexion, grepp och bålstabilitet.",
+    defaultSets: 3,
+    defaultDuration: 30,
+    defaultRest: 45,
+    movementPattern: "carry",
+    primaryMuscles: ["core", "obliques"],
+    secondaryMuscles: ["forearms", "traps", "glutes"],
+    variantGroup: "carry",
+    riskLevel: "low",
+    primaryGoalTags: ["allmän hälsa", "styrka"],
   },
 
   // =========================
@@ -756,6 +827,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     variantGroup: "squat",
     riskLevel: "high",
     primaryGoalTags: ["styrka"],
+  },
+  {
+    id: "box_squat",
+    name: "Box squat med skivstång",
+    requiredEquipment: ["barbell", "rack", "bench"],
+    description:
+      "Utförande: Sitt kontrollerat ned till bänk eller box, pausa kort och res dig sedan upp med stabil bål. Mål: Göra knäböj mer lärbar och kontrollerad för styrka och teknik.",
+    defaultSets: 3,
+    defaultReps: 6,
+    defaultRest: 120,
+    movementPattern: "squat",
+    primaryMuscles: ["quads", "glutes", "core"],
+    secondaryMuscles: ["adductors"],
+    variantGroup: "squat",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka", "allmän hälsa"],
   },
   {
     id: "barbell_front_squat",
@@ -888,6 +975,38 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     variantGroup: "pull_up",
     riskLevel: "medium",
     primaryGoalTags: ["styrka"],
+  },
+  {
+    id: "negative_pull_up",
+    name: "Negativa pull-ups",
+    requiredEquipment: ["pullup_bar"],
+    description:
+      "Utförande: Starta med hakan över stången och sänk kroppen långsamt ned med kontroll. Mål: Bygga upp styrkan som krävs för riktiga pull-ups.",
+    defaultSets: 3,
+    defaultReps: 5,
+    defaultRest: 75,
+    movementPattern: "vertical_pull",
+    primaryMuscles: ["lats", "upper_back", "biceps"],
+    secondaryMuscles: ["forearms", "core"],
+    variantGroup: "pull_up",
+    riskLevel: "low",
+    primaryGoalTags: ["styrka", "allmän hälsa"],
+  },
+  {
+    id: "scapular_pull_up",
+    name: "Scapular pull-ups",
+    requiredEquipment: ["pullup_bar"],
+    description:
+      "Utförande: Häng i stången med raka armar och dra skulderbladen nedåt och bakåt utan att böja armarna. Mål: Lära skulderkontroll inför tyngre vertikala drag.",
+    defaultSets: 3,
+    defaultReps: 8,
+    defaultRest: 60,
+    movementPattern: "vertical_pull",
+    primaryMuscles: ["upper_back", "lats"],
+    secondaryMuscles: ["core", "forearms"],
+    variantGroup: "pull_up",
+    riskLevel: "low",
+    primaryGoalTags: ["allmän hälsa", "rehab", "styrka"],
   },
   {
     id: "chin_up",
@@ -1085,6 +1204,61 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "rehab"],
   },
+  {
+    id: "cable_woodchopper",
+    name: "Woodchopper i kabel",
+    requiredEquipment: ["cable_machine"],
+    description:
+      "Utförande: Dra kabeln diagonalt genom kroppen med kontrollerad rotation från bålen och stabil höft. Mål: Träna rotation, obliques och överföring mellan över- och underkropp.",
+    defaultSets: 3,
+    defaultReps: 10,
+    defaultRest: 30,
+    movementPattern: "core",
+    primaryMuscles: ["obliques", "core"],
+    secondaryMuscles: ["shoulders", "glutes"],
+    variantGroup: "rotation",
+    riskLevel: "low",
+    primaryGoalTags: ["allmän hälsa", "hypertrofi"],
+  },
+];
+
+export const EXERCISE_PROGRESSION_TRACKS: ExerciseProgressionTrack[] = [
+  {
+    id: "push_up_progression",
+    name: "Push-up-steg",
+    intent: "Bygg pressstyrka i kroppsviktsövningar utan att bara lägga på fler reps.",
+    stepIds: ["push_up", "decline_push_up", "ring_push_up", "feet_elevated_ring_push_up"],
+  },
+  {
+    id: "pull_up_progression",
+    name: "Pull-up-steg",
+    intent: "Skala vertikala drag från kontroll och excentrisk styrka till full pull-up.",
+    stepIds: ["scapular_pull_up", "negative_pull_up", "chin_up", "pull_up"],
+  },
+  {
+    id: "squat_progression",
+    name: "Knäböjssteg",
+    intent: "Gå från enklare benövningar till tyngre knäböjsvarianter när teknik och kapacitet växer.",
+    stepIds: ["bodyweight_squat", "goblet_squat", "box_squat", "barbell_back_squat"],
+  },
+  {
+    id: "hip_bridge_progression",
+    name: "Höftlyfts-steg",
+    intent: "Öka sätes- och höftstyrka genom svårare varianter i stället för att bara jaga fler reps.",
+    stepIds: ["glute_bridge", "single_leg_glute_bridge", "barbell_hip_thrust"],
+  },
+  {
+    id: "carry_progression",
+    name: "Carry-steg",
+    intent: "Flytta fokus från enkel belastning till större asymmetri och total bålutmaning.",
+    stepIds: ["dumbbell_farmer_carry", "dumbbell_suitcase_carry"],
+  },
+  {
+    id: "rotation_progression",
+    name: "Rotationssteg för bål",
+    intent: "Bygg bålkontroll från anti-rotation till mer aktiv rotation under kontroll.",
+    stepIds: ["pallof_press", "cable_woodchopper", "russian_twist"],
+  },
 ];
 
 const DIRECT_EQUIPMENT_SYNONYMS: Record<string, EquipmentId> = {
@@ -1267,4 +1441,58 @@ export function getAvailableExercises(
 
 export function getExerciseById(exerciseId: string) {
   return EXERCISE_CATALOG.find((exercise) => exercise.id === exerciseId) ?? null;
+}
+
+export function getProgressionTrackForExercise(exerciseId: string) {
+  return (
+    EXERCISE_PROGRESSION_TRACKS.find((track) => track.stepIds.includes(exerciseId)) ??
+    null
+  );
+}
+
+export function getAvailableProgressionTracks(availableEquipment: string[]) {
+  const availableExerciseIds = new Set(
+    getAvailableExercises(availableEquipment).map((exercise) => exercise.id),
+  );
+
+  return EXERCISE_PROGRESSION_TRACKS.map((track) => {
+    const availableStepIds = track.stepIds.filter((stepId) =>
+      availableExerciseIds.has(stepId),
+    );
+
+    return {
+      ...track,
+      availableStepIds,
+    };
+  }).filter((track) => track.availableStepIds.length >= 2);
+}
+
+export function getNextProgressionExercise(
+  exerciseId: string,
+  availableEquipment: string[],
+) {
+  const track = getProgressionTrackForExercise(exerciseId);
+
+  if (!track) {
+    return null;
+  }
+
+  const availableExerciseIds = new Set(
+    getAvailableExercises(availableEquipment).map((exercise) => exercise.id),
+  );
+  const currentIndex = track.stepIds.indexOf(exerciseId);
+
+  if (currentIndex < 0) {
+    return null;
+  }
+
+  for (let index = currentIndex + 1; index < track.stepIds.length; index += 1) {
+    const nextStepId = track.stepIds[index];
+
+    if (availableExerciseIds.has(nextStepId)) {
+      return getExerciseById(nextStepId);
+    }
+  }
+
+  return null;
 }

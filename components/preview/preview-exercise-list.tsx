@@ -85,6 +85,9 @@ export default function PreviewExerciseList({
             total={exercises.length}
             name={exercise.name}
             description={exercise.description}
+            progressionNote={exercise.progressionNote}
+            suggestedWeightLabel={exercise.suggestedWeightLabel}
+            weightUnitLabel={exercise.weightUnitLabel}
             sets={exercise.sets}
             reps={exercise.reps ?? undefined}
             duration={exercise.duration ?? undefined}

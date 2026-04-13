@@ -7,7 +7,15 @@
 // - om `blocks` finns men är tomma ska vi kunna falla tillbaka till legacy `exercises`
 
 import { resolveExerciseDescription } from "@/lib/workout-flow/exercise-description";
-import type { Exercise, Workout, WorkoutBlock, WorkoutLike } from "@/types/workout";
+import type {
+  Exercise,
+  Workout,
+  WorkoutAiDebug,
+  WorkoutBlock,
+  WorkoutFocus,
+  WorkoutLike,
+  WorkoutPreparationFeedback,
+} from "@/types/workout";
 
 type WorkoutWithMetadata = Workout & {
   availableEquipment?: string[];
@@ -15,6 +23,64 @@ type WorkoutWithMetadata = Workout & {
   equipmentList?: string[];
   gymEquipment?: string[];
 };
+
+function normalizePreparationLevel(value: unknown) {
+  return value === "low" || value === "medium" || value === "high"
+    ? value
+    : undefined;
+}
+
+function normalizePreparationFeedback(
+  value: unknown,
+): WorkoutPreparationFeedback | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const energy = normalizePreparationLevel(record.energy);
+  const focus = normalizePreparationLevel(record.focus);
+  const note = normalizeOptionalString(record.note);
+  const updatedAt = normalizeOptionalString(record.updatedAt);
+
+  if (!energy && !focus && !note) {
+    return undefined;
+  }
+
+  return {
+    energy,
+    focus,
+    note,
+    updatedAt,
+  };
+}
+
+function normalizeAiDebug(value: unknown): WorkoutAiDebug | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return {
+    request: record.request,
+    generationContext: record.generationContext,
+    prompt: typeof record.prompt === "string" ? record.prompt : undefined,
+    rawAiText: typeof record.rawAiText === "string" ? record.rawAiText : undefined,
+    parsedAiResponse: record.parsedAiResponse,
+    validatedWorkout: record.validatedWorkout,
+    normalizedWorkout: record.normalizedWorkout,
+  };
+}
+
+function normalizeWorkoutFocus(value: unknown): WorkoutFocus | undefined {
+  return value === "full_body" ||
+    value === "upper_body" ||
+    value === "lower_body" ||
+    value === "core"
+    ? value
+    : undefined;
+}
 
 function createSafeId(prefix: string, index: number) {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -38,6 +104,10 @@ function normalizeSuggestedWeight(value: unknown) {
   }
 
   return null;
+}
+
+function normalizeOptionalString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function normalizeStringArray(value: unknown): string[] | undefined {
@@ -91,6 +161,24 @@ function normalizeExercise(exercise: any, index: number): Exercise {
         exercise?.plannedWeight ??
         exercise?.weightSuggestion,
     ),
+    suggestedWeightLabel: normalizeOptionalString(exercise?.suggestedWeightLabel),
+    availableWeightsKg:
+      Array.isArray(exercise?.availableWeightsKg)
+        ? exercise.availableWeightsKg.filter(
+            (item: unknown): item is number =>
+              typeof item === "number" && Number.isFinite(item) && item > 0,
+          )
+        : undefined,
+    weightUnitLabel: normalizeOptionalString(exercise?.weightUnitLabel),
+    weightSelectionMode:
+      exercise?.weightSelectionMode === "per_hand" ||
+      exercise?.weightSelectionMode === "single_implement" ||
+      exercise?.weightSelectionMode === "total"
+        ? exercise.weightSelectionMode
+        : undefined,
+    lastPerformedWeight: normalizeOptionalNumber(exercise?.lastPerformedWeight),
+    lastPerformedDuration: normalizeOptionalNumber(exercise?.lastPerformedDuration),
+    progressionNote: normalizeOptionalString(exercise?.progressionNote),
   };
 }
 
@@ -188,6 +276,12 @@ export function normalizePreviewWorkout(workout: WorkoutLike | any): Workout | n
       typeof workout.aiComment === "string" && workout.aiComment.trim()
         ? workout.aiComment.trim()
         : undefined,
+    // Behåll debug- och preppdata på workout-nivå så de följer med mellan preview och run.
+    aiDebug: normalizeAiDebug(workout.aiDebug),
+    preparationFeedback: normalizePreparationFeedback(
+      workout.preparationFeedback,
+    ),
+    plannedFocus: normalizeWorkoutFocus(workout.plannedFocus),
     blocks: rawBlocks.map(normalizeBlock),
     createdAt:
       typeof workout.createdAt === "string" && workout.createdAt.trim()

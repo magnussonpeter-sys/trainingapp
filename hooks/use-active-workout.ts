@@ -12,7 +12,9 @@ import {
   isDraftForWorkout,
   saveActiveWorkoutSessionDraft,
 } from "@/lib/active-workout-session-storage";
+import { saveExerciseFeedbackEntry } from "@/lib/exercise-feedback-storage";
 import { saveExerciseProgression } from "@/lib/progression-store";
+import { enqueuePendingSyncItem } from "@/lib/workout-flow/pending-sync-store";
 import {
   createWorkoutLog,
   saveWorkoutLog,
@@ -21,6 +23,10 @@ import {
   type ExtraRepsOption,
 } from "@/lib/workout-log-storage";
 import type { TimedEffortOption } from "@/types/exercise-feedback";
+import {
+  buildWeightChipOptions,
+  formatWeightValue,
+} from "@/lib/workout-flow/exercise-progression";
 import type { Exercise, Workout } from "@/types/workout";
 
 type WorkoutExercise = Exercise;
@@ -50,20 +56,6 @@ function getDefaultRepsValue(value: number | null | undefined) {
 
 function normalizeWeightString(value: string) {
   return value.trim().replace(",", ".").replace(/\s+/g, "");
-}
-
-function formatWeightValue(value: number | string) {
-  const numericValue = Number(value);
-
-  if (!Number.isFinite(numericValue)) {
-    return String(value);
-  }
-
-  if (Number.isInteger(numericValue)) {
-    return String(numericValue);
-  }
-
-  return numericValue.toFixed(1).replace(".0", "");
 }
 
 // Försöker hitta AI-föreslagen/planderad vikt från flera möjliga fältnamn.
@@ -96,69 +88,6 @@ function getSuggestedWeightFromExercise(exercise: WorkoutExercise | null) {
   }
 
   return "";
-}
-
-// Bygger viktchips så att AI-förslag eller senaste vikt blir enkla att välja.
-function buildWeightChipOptions(params: {
-  suggestedWeight: string;
-  currentWeight: string;
-  lastWeight: string;
-}) {
-  const values = new Set<string>();
-
-  const addValue = (value: string) => {
-    const normalized = normalizeWeightString(value);
-
-    if (!normalized) {
-      return;
-    }
-
-    const numericValue = Number(normalized);
-
-    if (!Number.isFinite(numericValue)) {
-      values.add(value.trim());
-      return;
-    }
-
-    values.add(formatWeightValue(numericValue));
-  };
-
-  addValue(params.suggestedWeight);
-  addValue(params.currentWeight);
-  addValue(params.lastWeight);
-
-  const baseValue = Number(
-    normalizeWeightString(params.suggestedWeight || params.lastWeight),
-  );
-
-  if (Number.isFinite(baseValue) && baseValue > 0) {
-    // Några logiska närliggande steg.
-    const offsets = [-4, -2, -1, 1, 2, 4];
-
-    for (const offset of offsets) {
-      const next = baseValue + offset;
-      if (next > 0) {
-        addValue(String(next));
-      }
-    }
-  }
-
-  return Array.from(values)
-    .map((value) => ({
-      label: value,
-      numeric: Number(normalizeWeightString(value)),
-    }))
-    .sort((a, b) => {
-      const aFinite = Number.isFinite(a.numeric);
-      const bFinite = Number.isFinite(b.numeric);
-
-      if (aFinite && bFinite) {
-        return a.numeric - b.numeric;
-      }
-
-      return a.label.localeCompare(b.label, "sv");
-    })
-    .map((item) => item.label);
 }
 
 function findCompletedExerciseIndex(
@@ -340,6 +269,7 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
       : "";
 
     return buildWeightChipOptions({
+      availableWeightsKg: currentExercise?.availableWeightsKg,
       suggestedWeight: suggestedWeightValue,
       currentWeight: weight,
       lastWeight,
@@ -755,10 +685,20 @@ if (draft && isDraftForWorkout(draft, workout)) {
       saveExerciseProgression(userId, currentExercise.id, {
         lastWeight: lastSet?.actualWeight ?? null,
         lastReps: lastSet?.actualReps ?? null,
+        lastDuration: lastSet?.actualDuration ?? null,
         lastExtraReps: timedExercise ? null : selectedExtraReps ?? null,
         lastTimedEffort: timedExercise
           ? mapTimedEffortForProgression(selectedTimedEffort)
           : null,
+      });
+
+      // Spara rå upplevelse separat så Sprint 3 kan bygga vidare utan att läsa hela workoutloggen.
+      saveExerciseFeedbackEntry(userId, {
+        exerciseId: currentExercise.id,
+        exerciseName: currentExercise.name,
+        completedAt: new Date().toISOString(),
+        extraReps: timedExercise ? undefined : selectedExtraReps ?? undefined,
+        timedEffort: timedExercise ? selectedTimedEffort ?? undefined : undefined,
       });
     }
 
@@ -798,6 +738,16 @@ if (draft && isDraftForWorkout(draft, workout)) {
       });
 
       saveWorkoutLog(log);
+      enqueuePendingSyncItem({
+        userId,
+        workoutId: log.workoutId,
+        workoutName: log.workoutName,
+        workout,
+        sessionStartedAt: log.startedAt,
+        completedAt: log.completedAt,
+        status: log.status,
+        completedExercises: log.exercises,
+      });
       clearActiveWorkoutSessionDraft(userId);
       setSaveStatus("saved_local");
     } catch {
@@ -833,6 +783,16 @@ if (draft && isDraftForWorkout(draft, workout)) {
         });
 
         saveWorkoutLog(log);
+        enqueuePendingSyncItem({
+          userId,
+          workoutId: log.workoutId,
+          workoutName: log.workoutName,
+          workout,
+          sessionStartedAt: log.startedAt,
+          completedAt: log.completedAt,
+          status: log.status,
+          completedExercises: log.exercises,
+        });
       }
 
       clearActiveWorkoutSessionDraft(userId);
@@ -851,6 +811,9 @@ if (draft && isDraftForWorkout(draft, workout)) {
     updateWeight,
     chooseWeightChip,
     suggestedWeightValue,
+    suggestedWeightLabel: currentExercise?.suggestedWeightLabel ?? "",
+    progressionNote: currentExercise?.progressionNote ?? "",
+    weightUnitLabel: currentExercise?.weightUnitLabel ?? "kg",
     weightChipOptions,
     timedExercise,
     timerState,
@@ -864,6 +827,7 @@ if (draft && isDraftForWorkout(draft, workout)) {
     finishWorkout,
     totalCompletedSets,
     totalVolume,
+    completedExercises,
     showExerciseFeedback,
     selectedExtraReps,
     setSelectedExtraReps,

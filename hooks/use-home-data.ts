@@ -12,6 +12,7 @@ import {
   getWorkoutLogs,
   type WorkoutLog,
 } from "@/lib/workout-log-storage";
+import { getCachedHomeSettings, saveCachedHomeSettings } from "@/lib/home-settings-cache";
 import {
   syncPendingWorkoutQueue,
 } from "@/lib/workout-flow/pending-sync-service";
@@ -47,8 +48,32 @@ export type HomeGoal =
   | "body_composition";
 
 export type HomeUserSettings = {
+  experience_level?: "beginner" | "novice" | "intermediate" | "advanced" | null;
   training_goal?: HomeGoal | null;
 };
+
+function mergeWorkoutLogs(apiLogs: WorkoutLog[], localLogs: WorkoutLog[]) {
+  const merged = [...apiLogs];
+  const seen = new Set(
+    apiLogs.map((log) => `${log.workoutName}:${log.completedAt}:${log.status}`),
+  );
+
+  for (const log of localLogs) {
+    const key = `${log.workoutName}:${log.completedAt}:${log.status}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(log);
+  }
+
+  return merged.sort(
+    (left, right) =>
+      new Date(right.completedAt).getTime() - new Date(left.completedAt).getTime(),
+  );
+}
 
 // Normaliserar gyms utan att tappa equipment.
 function normalizeGyms(data: unknown): HomeGym[] {
@@ -153,6 +178,16 @@ export function useHomeData({ router }: UseHomeDataParams) {
         setIsLoadingGyms(true);
         setGymError(null);
 
+        // Lokal cache gör att nytt mål kan slå igenom direkt när användaren
+        // kommer tillbaka från settings innan nätanropet hunnit bli klart.
+        const cachedSettings = getCachedHomeSettings(userId);
+        if (cachedSettings) {
+          setSettings((previous) => ({
+            ...previous,
+            ...cachedSettings,
+          }));
+        }
+
         // Kör pending sync en gång per mount.
         if (!hasRunInitialSyncRef.current) {
           hasRunInitialSyncRef.current = true;
@@ -207,10 +242,18 @@ export function useHomeData({ router }: UseHomeDataParams) {
         }
 
         if (settingsRes.ok && settingsData?.ok) {
-          setSettings(settingsData.settings ?? null);
+          const nextSettings = settingsData.settings ?? null;
+          setSettings(nextSettings);
+
+          if (nextSettings) {
+            saveCachedHomeSettings(userId, {
+              training_goal: nextSettings.training_goal ?? null,
+            });
+          }
         }
 
         try {
+          const localLogs = getWorkoutLogs(userId);
           const logsRes = await fetch(
             `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=12`,
             {
@@ -231,8 +274,11 @@ export function useHomeData({ router }: UseHomeDataParams) {
             return;
           }
 
-          setWorkoutLogs(logsData.logs);
-          setLogsSource("api");
+          const apiLogs = logsData.logs;
+          const mergedLogs = mergeWorkoutLogs(apiLogs, localLogs);
+
+          setWorkoutLogs(mergedLogs);
+          setLogsSource(apiLogs.length > 0 ? "api" : localLogs.length > 0 ? "local" : "api");
         } catch (error) {
           console.error("Kunde inte hämta loggar från API:", error);
 

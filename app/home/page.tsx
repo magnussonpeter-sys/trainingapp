@@ -12,15 +12,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useHomeData } from "@/hooks/use-home-data";
+import {
+  buildWeeklyWorkoutStructure,
+  formatSplitStyle,
+  formatWorkoutFocus,
+} from "@/lib/weekly-workout-structure";
 import { generateWorkout } from "@/lib/workout-generator";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 import { getPendingSyncQueue } from "@/lib/workout-flow/pending-sync-store";
-import {
-  getWorkoutDraft,
-  saveWorkoutDraft,
-} from "@/lib/workout-flow/workout-draft-store";
+import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
 
 type AuthUser = {
   id?: string | number | null;
@@ -36,6 +38,8 @@ type GymEquipmentItem = {
   label?: string | null;
   name?: string | null;
   type?: string | null;
+  weights_kg?: number[] | null;
+  quantity?: number | null;
 };
 
 type GymWithEquipment = {
@@ -44,8 +48,84 @@ type GymWithEquipment = {
   equipment?: GymEquipmentItem[];
 };
 
+type BudgetStatusTone = {
+  barClassName: string;
+  chipClassName: string;
+  chipText: string;
+};
+
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+function formatDecimal(value: number) {
+  return new Intl.NumberFormat("sv-SE", {
+    maximumFractionDigits: value >= 10 ? 0 : 1,
+  }).format(value);
+}
+
+function getBudgetStatusTone(loadStatus: string): BudgetStatusTone {
+  if (loadStatus === "high_risk") {
+    return {
+      barClassName: "bg-gradient-to-r from-rose-500 to-red-500",
+      chipClassName: "border border-rose-200 bg-rose-50 text-rose-700",
+      chipText: "Överbelastning",
+    };
+  }
+
+  if (loadStatus === "over") {
+    return {
+      barClassName: "bg-gradient-to-r from-amber-500 to-orange-500",
+      chipClassName: "border border-amber-200 bg-amber-50 text-amber-700",
+      chipText: "Över budget",
+    };
+  }
+
+  if (loadStatus === "on_target") {
+    return {
+      barClassName: "bg-gradient-to-r from-emerald-500 to-lime-500",
+      chipClassName: "border border-emerald-200 bg-emerald-50 text-emerald-700",
+      chipText: "På rätt nivå",
+    };
+  }
+
+  return {
+    barClassName: "bg-gradient-to-r from-sky-500 to-cyan-500",
+    chipClassName: "border border-sky-200 bg-sky-50 text-sky-700",
+    chipText: "Bygg vidare",
+  };
+}
+
+function getProgressLabel(progressStatus: string) {
+  if (progressStatus === "improving") {
+    return "Framåt";
+  }
+
+  if (progressStatus === "plateau") {
+    return "Platå";
+  }
+
+  if (progressStatus === "fatigued") {
+    return "Hög trötthet";
+  }
+
+  if (progressStatus === "stable") {
+    return "Stabil";
+  }
+
+  return "Begränsad data";
+}
+
+function getFrequencyLabel(frequencyCount: number) {
+  if (frequencyCount <= 0) {
+    return "Inte tränad ännu";
+  }
+
+  if (frequencyCount === 1) {
+    return "1 pass denna vecka";
+  }
+
+  return `${frequencyCount} pass denna vecka`;
 }
 
 function getDisplayName(user: AuthUser | null) {
@@ -189,9 +269,9 @@ export default function HomePage() {
   const [customDurationInput, setCustomDurationInput] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [hasDraft, setHasDraft] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [showWeeklyInsights, setShowWeeklyInsights] = useState(false);
 
   const gymOptions = useMemo(() => {
     const normalizedGyms = (gyms as GymWithEquipment[]) ?? [];
@@ -213,6 +293,12 @@ export default function HomePage() {
   }, [gymOptions, selectedGymId]);
 
   const latestWorkout = workoutLogs?.[0] ?? null;
+  const weeklyStructure = useMemo(() => {
+    return buildWeeklyWorkoutStructure({
+      logs: workoutLogs,
+      settings,
+    });
+  }, [settings, workoutLogs]);
 
   const durationMinutes = useMemo(() => {
     if (selectedDurationPreset === "custom") {
@@ -238,19 +324,14 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!userId) {
-      setHasDraft(false);
       setPendingCount(0);
       return;
     }
 
     try {
-      const draft = getWorkoutDraft(userId);
-      setHasDraft(Boolean(draft));
-
       const queue = getPendingSyncQueue();
       setPendingCount(queue.filter((item) => item.userId === userId).length);
     } catch {
-      setHasDraft(false);
       setPendingCount(0);
     }
   }, [userId, workoutLogs]);
@@ -276,13 +357,28 @@ export default function HomePage() {
         ? "Kroppsvikt / utan gym"
         : selectedGym?.name ?? null;
 
-      const { workout } = await generateWorkout({
+      const { workout, debug } = await generateWorkout({
         userId,
         goal,
         durationMinutes,
         equipment,
         gym: gymId,
         gymLabel,
+        gymEquipmentDetails: selectedGym?.equipment ?? [],
+        confidenceScore: weeklyStructure.confidenceScore,
+        nextFocus: weeklyStructure.nextFocus,
+        splitStyle: weeklyStructure.splitStyle,
+        weeklyBudget: weeklyStructure.muscleBudget.map((entry) => ({
+          group: entry.group,
+          label: entry.label,
+          priority: entry.priority,
+          targetSets: entry.targetSets,
+          completedSets: entry.completedSets,
+          effectiveSets: entry.effectiveSets,
+          remainingSets: entry.remainingSets,
+          recent4WeekAvgSets: entry.recent4WeekAvgSets,
+        })),
+        weeklyPlan: weeklyStructure.upcomingDays,
       });
 
       // Spara draft innan preview öppnas.
@@ -292,10 +388,10 @@ export default function HomePage() {
         gym: gymId,
         gymLabel,
         availableEquipment: equipment,
+        plannedFocus: weeklyStructure.nextFocus,
+        // Behåll AI-debug med draften så preview kan visa exakt input/output vid behov.
+        aiDebug: debug ?? undefined,
       });
-
-      setHasDraft(true);
-
       router.push(`/workout/preview?userId=${encodeURIComponent(userId)}`);
     } catch (error) {
       setAiError(
@@ -306,14 +402,6 @@ export default function HomePage() {
     } finally {
       setIsGenerating(false);
     }
-  }
-
-  function handleContinueWorkout() {
-    if (!userId) {
-      return;
-    }
-
-    router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);
   }
 
   function handleCustomWorkout() {
@@ -387,16 +475,6 @@ export default function HomePage() {
           </div>
 
           <div className="space-y-3 px-6 py-5">
-            {hasDraft ? (
-              <button
-                type="button"
-                onClick={handleContinueWorkout}
-                className={cn(uiButtonClasses.primary, "w-full")}
-              >
-                Fortsätt pass
-              </button>
-            ) : null}
-
             {pendingCount > 0 ? (
               <div className={uiCardClasses.success}>
                 <p className="font-medium">
@@ -405,6 +483,204 @@ export default function HomePage() {
                 <p className="mt-1 text-sm">
                   De skickas automatiskt när internet finns tillgängligt.
                 </p>
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">
+                Veckostruktur
+              </p>
+              <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-900">
+                Nästa fokus: {formatWorkoutFocus(weeklyStructure.nextFocus)}
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                {weeklyStructure.summaryText}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-right">
+                <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">
+                  7 dagar
+                </p>
+                <p className="mt-1 text-2xl font-semibold text-slate-900">
+                  {weeklyStructure.completedLast7Days}
+                </p>
+                <p className="text-xs text-slate-600">genomförda pass</p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-right">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Confidence
+                </p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {weeklyStructure.confidenceScore === "high"
+                    ? "Hög"
+                    : weeklyStructure.confidenceScore === "medium"
+                      ? "Medel"
+                      : "Låg"}
+                </p>
+                <p className="text-xs text-slate-600">
+                  {formatSplitStyle(weeklyStructure.splitStyle)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <button
+              type="button"
+              onClick={() => setShowWeeklyInsights((previous) => !previous)}
+              className={cn(uiButtonClasses.secondary, "w-full")}
+            >
+              {showWeeklyInsights ? "Dölj veckoplan & muskelbudget" : "Visa veckoplan & muskelbudget"}
+            </button>
+
+            {showWeeklyInsights ? (
+              <div className="mt-5 space-y-6">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {weeklyStructure.upcomingDays.map((day) => (
+                    <div
+                      key={day.date}
+                      className={cn(
+                        "rounded-2xl border px-4 py-4",
+                        day.type === "training"
+                          ? "border-emerald-200 bg-emerald-50"
+                          : "border-slate-200 bg-slate-50",
+                      )}
+                    >
+                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                        {day.dayLabel}
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {day.focus ? formatWorkoutFocus(day.focus) : "Återhämtning"}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {day.type === "training" ? "Planerat träningsfokus" : "Ingen planerad toppbelastning"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      Muskelbudget denna vecka
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Effektiva set väger in både volym och upplevd ansträngning
+                    </p>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {weeklyStructure.muscleBudget
+                      .filter((entry) => {
+                        return (
+                          entry.priority !== "low" ||
+                          entry.completedSets > 0 ||
+                          entry.remainingSets > 0
+                        );
+                      })
+                      .sort((left, right) => {
+                        const priorityRank = { high: 0, medium: 1, low: 2 };
+                        const rankDifference =
+                          priorityRank[left.priority] - priorityRank[right.priority];
+
+                        if (rankDifference !== 0) {
+                          return rankDifference;
+                        }
+
+                        return right.remainingSets - left.remainingSets;
+                      })
+                      .map((entry) => {
+                        const progress =
+                          entry.targetSets > 0
+                            ? Math.min(100, (entry.effectiveSets / entry.targetSets) * 100)
+                            : 0;
+                        const tone = getBudgetStatusTone(entry.loadStatus);
+                        const qualityPercent =
+                          entry.qualityScore != null
+                            ? Math.round(entry.qualityScore * 100)
+                            : null;
+
+                        return (
+                          <div key={entry.group} className="rounded-2xl border border-slate-200 bg-white p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">{entry.label}</p>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  <span
+                                    className={cn(
+                                      "rounded-full px-2.5 py-1 text-[11px] font-medium",
+                                      tone.chipClassName,
+                                    )}
+                                  >
+                                    {tone.chipText}
+                                  </span>
+                                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                                    {getProgressLabel(entry.progressStatus)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="text-right">
+                                <p className="text-sm font-semibold text-slate-900">
+                                  {entry.remainingSets > 0 ? `${entry.remainingSets} kvar` : "Klar"}
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                  4v-snitt {formatDecimal(entry.recent4WeekAvgEffectiveSets)} effektiva set
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
+                              <div
+                                className={cn("h-full rounded-full", tone.barClassName)}
+                                style={{ width: `${Math.max(8, progress)}%` }}
+                              />
+                            </div>
+
+                            <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+                              <p>
+                                <span className="font-medium text-slate-800">
+                                  {formatDecimal(entry.effectiveSets)}/{entry.targetSets}
+                                </span>{" "}
+                                effektiva set
+                              </p>
+                              <p>
+                                Direkt/indirekt:{" "}
+                                <span className="font-medium text-slate-800">
+                                  {formatDecimal(entry.directSets)} / {formatDecimal(entry.indirectSets)}
+                                </span>
+                              </p>
+                              <p>
+                                Kvalitet:{" "}
+                                <span className="font-medium text-slate-800">
+                                  {qualityPercent != null ? `${qualityPercent}%` : "saknas"}
+                                </span>
+                              </p>
+                              <p>{getFrequencyLabel(entry.frequencyCount)}</p>
+                            </div>
+
+                            <p className="mt-2 text-xs text-slate-500">
+                              Direkta set kommer från övningar där muskeln är huvudmål. Indirekta set
+                              är assisterande stimulans, till exempel triceps i pressövningar.
+                            </p>
+
+                            {entry.warningText ? (
+                              <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                {entry.warningText}
+                              </p>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
               </div>
             ) : null}
           </div>

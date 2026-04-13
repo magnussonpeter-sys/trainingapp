@@ -22,6 +22,28 @@ type AuthUser = {
 
 type DataSource = "api" | "local";
 
+function mergeWorkoutLogs(apiLogs: WorkoutLog[], localLogs: WorkoutLog[]) {
+  const merged = [...apiLogs];
+  const seen = new Set(
+    apiLogs.map((log) => `${log.workoutName}:${log.completedAt}:${log.status}`),
+  );
+
+  for (const log of localLogs) {
+    const key = `${log.workoutName}:${log.completedAt}:${log.status}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(log);
+  }
+
+  return merged.sort((a, b) => {
+    return new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime();
+  });
+}
+
 function formatDateTime(value: string) {
   try {
     return new Date(value).toLocaleString("sv-SE", {
@@ -168,6 +190,7 @@ export default function HistoryPage() {
 
         // Försök först att hämta historik från databasen.
         try {
+          const localLogs = getWorkoutLogs(userId);
           const logsRes = await fetch(
             `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=50`,
             {
@@ -184,8 +207,15 @@ export default function HistoryPage() {
 
           if (!isMounted) return;
 
-          setWorkouts(logsData.logs as WorkoutLog[]);
-          setDataSource("api");
+          const apiLogs = logsData.logs as WorkoutLog[];
+          const mergedLogs = mergeWorkoutLogs(apiLogs, localLogs);
+
+          setWorkouts(mergedLogs);
+          setDataSource(apiLogs.length > 0 ? "api" : localLogs.length > 0 ? "local" : "api");
+
+          if (apiLogs.length === 0 && localLogs.length > 0) {
+            setLoadError("Visar lokalt sparad historik som ännu inte finns i databasen.");
+          }
           return;
         } catch (apiError) {
           console.error("Failed to load workout history from API", apiError);

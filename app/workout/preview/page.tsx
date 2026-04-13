@@ -78,6 +78,7 @@ function PreviewPageContent() {
     setCustomDescription,
     addCustomExercise,
     debugInfo,
+    aiDebug,
   } = useWorkoutPreview({
     userId,
   });
@@ -237,104 +238,153 @@ function PreviewPageContent() {
           </div>
         </section>
 
-        {showDebug ? (
+        {showDebug || aiDebug ? (
           <section className="rounded-[24px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-800">
-              Debug preview
-            </h2>
+            <details>
+              <summary className="cursor-pointer list-none text-sm font-semibold uppercase tracking-[0.18em] text-amber-800">
+                AI-debug och validering
+              </summary>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-2xl bg-white/80 p-3">
-                <p className="text-xs font-medium text-slate-500">workout.gym</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {String(debugInfo.workoutGym)}
-                </p>
-              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-white/80 p-3">
+                  <p className="text-xs font-medium text-slate-500">workout.gym</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {String(debugInfo.workoutGym)}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3">
-                <p className="text-xs font-medium text-slate-500">workout.gymLabel</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {String(debugInfo.workoutGymLabel)}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3">
+                  <p className="text-xs font-medium text-slate-500">workout.gymLabel</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {String(debugInfo.workoutGymLabel)}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                <p className="text-xs font-medium text-slate-500">availableEquipment på workout</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {JSON.stringify(debugInfo.workoutAvailableEquipment)}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-500">availableEquipment på workout</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {JSON.stringify(debugInfo.workoutAvailableEquipment)}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3">
-                <p className="text-xs font-medium text-slate-500">gymsLoaded</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {String(debugInfo.gymsLoaded)}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3">
+                  <p className="text-xs font-medium text-slate-500">gymsLoaded</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {String(debugInfo.gymsLoaded)}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3">
-                <p className="text-xs font-medium text-slate-500">gymsCount</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {String(debugInfo.gymsCount)}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3">
+                  <p className="text-xs font-medium text-slate-500">gymsCount</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {String(debugInfo.gymsCount)}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                <p className="text-xs font-medium text-slate-500">matchedGymName</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {String(debugInfo.matchedGymName)}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-500">matchedGymName</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {String(debugInfo.matchedGymName)}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                <p className="text-xs font-medium text-slate-500">matchedGymEquipment</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {JSON.stringify(debugInfo.matchedGymEquipment)}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-500">matchedGymEquipment</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {JSON.stringify(debugInfo.matchedGymEquipment)}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                <p className="text-xs font-medium text-slate-500">extractEquipmentFromWorkout()</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {JSON.stringify(debugInfo.extractedEquipment)}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-500">extractEquipmentFromWorkout()</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {JSON.stringify(debugInfo.extractedEquipment)}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                <p className="text-xs font-medium text-slate-500">equipmentSeed</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {JSON.stringify(debugInfo.equipmentSeed)}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-500">equipmentSeed</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {JSON.stringify(debugInfo.equipmentSeed)}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3">
-                <p className="text-xs font-medium text-slate-500">availableCatalogCount</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {debugInfo.availableCatalogCount}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3">
+                  <p className="text-xs font-medium text-slate-500">availableCatalogCount</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {debugInfo.availableCatalogCount}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3">
-                <p className="text-xs font-medium text-slate-500">filteredCatalogCount</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {debugInfo.filteredCatalogCount}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3">
+                  <p className="text-xs font-medium text-slate-500">filteredCatalogCount</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {debugInfo.filteredCatalogCount}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                <p className="text-xs font-medium text-slate-500">Första tillgängliga övningar</p>
-                <p className="mt-1 text-sm text-slate-900">
-                  {debugInfo.firstAvailableExerciseNames.join(", ")}
-                </p>
-              </div>
+                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-500">Första tillgängliga övningar</p>
+                  <p className="mt-1 text-sm text-slate-900">
+                    {debugInfo.firstAvailableExerciseNames.join(", ")}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                <p className="text-xs font-medium text-slate-500">Första filtrerade övningar</p>
-                <p className="mt-1 text-sm text-slate-900">
-                  {debugInfo.firstFilteredExerciseNames.join(", ")}
-                </p>
+                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-500">Första filtrerade övningar</p>
+                  <p className="mt-1 text-sm text-slate-900">
+                    {debugInfo.firstFilteredExerciseNames.join(", ")}
+                  </p>
+                </div>
+
+                {aiDebug ? (
+                  <>
+                    <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                      <p className="text-xs font-medium text-slate-500">AI request / context</p>
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-slate-800">
+                        {JSON.stringify(
+                          {
+                            request: aiDebug.request,
+                            generationContext: aiDebug.generationContext,
+                          },
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    </div>
+
+                    <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                      <p className="text-xs font-medium text-slate-500">AI prompt</p>
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-slate-800">
+                        {aiDebug.prompt ?? "Ingen prompt sparad"}
+                      </pre>
+                    </div>
+
+                    <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                      <p className="text-xs font-medium text-slate-500">Raw AI response</p>
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-slate-800">
+                        {aiDebug.rawAiText ?? "Inget råsvar sparat"}
+                      </pre>
+                    </div>
+
+                    <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                      <p className="text-xs font-medium text-slate-500">Parsed + validated</p>
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-slate-800">
+                        {JSON.stringify(
+                          {
+                            parsedAiResponse: aiDebug.parsedAiResponse,
+                            validatedWorkout: aiDebug.validatedWorkout,
+                            normalizedWorkout: aiDebug.normalizedWorkout,
+                          },
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    </div>
+                  </>
+                ) : null}
               </div>
-            </div>
+            </details>
           </section>
         ) : null}
 

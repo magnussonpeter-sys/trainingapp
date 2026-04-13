@@ -72,6 +72,9 @@ type CurrentExerciseCardProps = {
   weight: string;
   onWeightChange: (value: string) => void;
   suggestedWeightValue: string;
+  suggestedWeightLabel?: string;
+  progressionNote?: string;
+  weightUnitLabel?: string;
   weightChipOptions: string[];
   onWeightChipSelect: (value: string) => void;
   elapsedSeconds: number;
@@ -92,6 +95,9 @@ export default function CurrentExerciseCard({
   weight,
   onWeightChange,
   suggestedWeightValue,
+  suggestedWeightLabel,
+  progressionNote,
+  weightUnitLabel,
   weightChipOptions,
   onWeightChipSelect,
   elapsedSeconds,
@@ -128,6 +134,9 @@ export default function CurrentExerciseCard({
               value={weight}
               onChange={onWeightChange}
               suggestedWeightValue={suggestedWeightValue}
+              suggestedWeightLabel={suggestedWeightLabel}
+              progressionNote={progressionNote}
+              unitLabel={weightUnitLabel}
             />
           </div>
 
@@ -135,6 +144,7 @@ export default function CurrentExerciseCard({
             chips={weightChipOptions}
             selectedWeight={weight}
             suggestedWeight={suggestedWeightValue}
+            unitLabel={weightUnitLabel}
             onSelect={onWeightChipSelect}
           />
         </section>
@@ -150,13 +160,17 @@ export default function CurrentExerciseCard({
             value={weight}
             onChange={onWeightChange}
             suggestedWeightValue={suggestedWeightValue}
+            suggestedWeightLabel={suggestedWeightLabel}
+            progressionNote={progressionNote}
             label="Vikt"
+            unitLabel={weightUnitLabel}
           />
 
           <WeightChipRow
             chips={weightChipOptions}
             selectedWeight={weight}
             suggestedWeight={suggestedWeightValue}
+            unitLabel={weightUnitLabel}
             onSelect={onWeightChipSelect}
           />
         </section>

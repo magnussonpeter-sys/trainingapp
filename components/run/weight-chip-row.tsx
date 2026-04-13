@@ -10,6 +10,7 @@ type WeightChipRowProps = {
   chips: string[];
   selectedWeight: string;
   suggestedWeight: string;
+  unitLabel?: string;
   onSelect: (value: string) => void;
 };
 
@@ -17,6 +18,7 @@ export default function WeightChipRow({
   chips,
   selectedWeight,
   suggestedWeight,
+  unitLabel = "kg",
   onSelect,
 }: WeightChipRowProps) {
   const normalizedSelected = selectedWeight.trim().replace(",", ".");
@@ -47,7 +49,7 @@ export default function WeightChipRow({
                   : uiButtonClasses.chipDefault,
             )}
           >
-            {chip} kg
+            {chip} {unitLabel}
             {isSuggested ? " · förslag" : ""}
           </button>
         );

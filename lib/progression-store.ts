@@ -5,6 +5,7 @@
 type ExerciseProgression = {
   lastWeight: number | null;
   lastReps: number | null;
+  lastDuration: number | null;
   lastExtraReps: number | null; // 0,2,4,6
   lastTimedEffort: "easy" | "moderate" | "hard" | null;
   updatedAt: string;
@@ -42,6 +43,7 @@ export function saveExerciseProgression(
   all[exerciseId] = {
     lastWeight: data.lastWeight ?? all[exerciseId]?.lastWeight ?? null,
     lastReps: data.lastReps ?? all[exerciseId]?.lastReps ?? null,
+    lastDuration: data.lastDuration ?? all[exerciseId]?.lastDuration ?? null,
     lastExtraReps: data.lastExtraReps ?? null,
     lastTimedEffort: data.lastTimedEffort ?? null,
     updatedAt: new Date().toISOString(),

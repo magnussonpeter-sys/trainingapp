@@ -46,3 +46,33 @@ export function getSuggestedWeight(params: {
 
   return Math.max(0, Math.round(weight * 10) / 10);
 }
+
+export function getSuggestedTimedDuration(params: {
+  userId: string;
+  exerciseId: string;
+  fallbackDuration?: number | null;
+  goal?: "strength" | "hypertrophy" | "health" | "body_composition";
+}) {
+  const { userId, exerciseId, fallbackDuration, goal = "health" } = params;
+  const progression = getExerciseProgression(userId, exerciseId);
+  const baseDuration =
+    progression?.lastDuration ?? fallbackDuration ?? null;
+
+  if (baseDuration == null || !Number.isFinite(baseDuration) || baseDuration <= 0) {
+    return fallbackDuration ?? null;
+  }
+
+  let nextDuration = baseDuration;
+  const increaseStep =
+    goal === "body_composition" ? 10 : goal === "health" ? 5 : 5;
+  const decreaseStep =
+    goal === "strength" ? 5 : 10;
+
+  if (progression?.lastTimedEffort === "easy") {
+    nextDuration += increaseStep;
+  } else if (progression?.lastTimedEffort === "hard") {
+    nextDuration -= decreaseStep;
+  }
+
+  return Math.max(10, Math.min(180, Math.round(nextDuration)));
+}

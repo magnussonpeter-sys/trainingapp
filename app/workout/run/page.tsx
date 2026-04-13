@@ -226,6 +226,9 @@ export default function RunPage() {
     updateWeight,
     chooseWeightChip,
     suggestedWeightValue,
+    suggestedWeightLabel,
+    progressionNote,
+    weightUnitLabel,
     weightChipOptions,
     timedExercise,
     timerState,
@@ -239,6 +242,7 @@ export default function RunPage() {
     finishWorkout,
     totalCompletedSets,
     totalVolume,
+    completedExercises,
     showExerciseFeedback,
     selectedExtraReps,
     setSelectedExtraReps,
@@ -457,6 +461,7 @@ export default function RunPage() {
   function confirmAbortWorkout() {
     setAbortConfirmOpen(false);
     abortWorkout();
+    clearLocalRunState();
     router.push("/home");
   }
 
@@ -503,10 +508,12 @@ export default function RunPage() {
           <RunFinishSummary
             userId={resolvedUserId}
             workoutName={workout.name}
+            goal={workout.goal}
             totalCompletedSets={totalCompletedSets}
             totalVolume={Math.round(totalVolume)}
             timedExercises={timedExercisesCount}
             durationMinutes={workout.duration}
+            completedExercises={completedExercises}
           />
 
           <button
@@ -568,6 +575,9 @@ export default function RunPage() {
   weight={weight}
   onWeightChange={updateWeight}
   suggestedWeightValue={suggestedWeightValue}
+  suggestedWeightLabel={suggestedWeightLabel}
+  progressionNote={progressionNote}
+  weightUnitLabel={weightUnitLabel}
   weightChipOptions={weightChipOptions}
   onWeightChipSelect={chooseWeightChip}
   elapsedSeconds={elapsedSeconds}

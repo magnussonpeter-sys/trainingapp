@@ -1,15 +1,17 @@
 // lib/workout-generator.ts
-import type { Workout } from "@/types/workout";
+import type { Workout, WorkoutFocus } from "@/types/workout";
+import type {
+  ConfidenceScore,
+  MuscleBudgetEntry,
+} from "@/lib/planning/muscle-budget";
 
 export type GenerateWorkoutDebug = {
-  aiInput?: unknown;
   request?: unknown;
-  history?: unknown;
-  candidateSelection?: unknown;
+  generationContext?: unknown;
   prompt?: string;
   rawAiText?: string;
   parsedAiResponse?: unknown;
-  validation?: unknown;
+  validatedWorkout?: unknown;
   normalizedWorkout?: unknown;
 };
 
@@ -20,6 +22,35 @@ export async function generateWorkout(params: {
   equipment: string[];
   gym?: string | null;
   gymLabel?: string | null;
+  gymEquipmentDetails?: Array<{
+    equipment_type?: string | null;
+    equipmentType?: string | null;
+    label?: string | null;
+    weights_kg?: number[] | null;
+    quantity?: number | null;
+  }>;
+  confidenceScore?: ConfidenceScore | null;
+  nextFocus?: WorkoutFocus | null;
+  splitStyle?: string | null;
+  weeklyBudget?: Array<
+    Pick<
+      MuscleBudgetEntry,
+      | "group"
+      | "label"
+      | "priority"
+      | "targetSets"
+      | "completedSets"
+      | "effectiveSets"
+      | "remainingSets"
+      | "recent4WeekAvgSets"
+    >
+  >;
+  weeklyPlan?: Array<{
+    date: string;
+    dayLabel: string;
+    focus: WorkoutFocus | null;
+    type: "training" | "recovery";
+  }>;
 }) {
   const res = await fetch("/api/workouts/generate", {
     method: "POST",
