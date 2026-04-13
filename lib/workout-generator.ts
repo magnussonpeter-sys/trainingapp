@@ -18,10 +18,9 @@ export async function generateWorkout(params: {
   goal: string;
   durationMinutes: number;
   equipment: string[];
-}): Promise<{
-  workout: Workout;
-  debug?: GenerateWorkoutDebug;
-}> {
+  gym?: string | null;
+  gymLabel?: string | null;
+}) {
   const res = await fetch("/api/workouts/generate", {
     method: "POST",
     headers: {
@@ -30,21 +29,15 @@ export async function generateWorkout(params: {
     body: JSON.stringify(params),
   });
 
-  const data = (await res.json().catch(() => null)) as
-    | {
-        ok?: boolean;
-        workout?: Workout;
-        debug?: GenerateWorkoutDebug;
-        error?: string;
-      }
-    | null;
+  const data = await res.json();
 
-  if (!res.ok || !data?.ok || !data.workout) {
-    throw new Error(data?.error ?? "Kunde inte generera träningspass.");
+  if (!res.ok || !data.ok) {
+    throw new Error(data?.error || "Failed to generate workout");
   }
 
   return {
-    workout: data.workout,
-    debug: data.debug,
+    // Typa workout så att resten av appen får rätt fält direkt.
+    workout: data.workout as Workout,
+    debug: (data.debug ?? null) as GenerateWorkoutDebug | null,
   };
 }

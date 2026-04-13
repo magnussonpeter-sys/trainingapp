@@ -62,27 +62,93 @@ function getDisplayName(user: AuthUser | null) {
   );
 }
 
+// Normaliserar equipment till stabila interna id:n.
+// Viktigt: vi skickar inte både svenska labels och interna namn till AI.
 function normalizeEquipmentStrings(input: GymEquipmentItem[] | undefined) {
-  if (!Array.isArray(input)) {
+  if (!Array.isArray(input) || input.length === 0) {
     return ["bodyweight"];
   }
 
   const values = new Set<string>();
 
-  for (const item of input) {
-    const candidates = [
-      item.equipment_type,
-      item.equipmentType,
-      item.label,
-      item.name,
-      item.type,
-    ];
-
-    for (const candidate of candidates) {
-      if (typeof candidate === "string" && candidate.trim()) {
-        values.add(candidate.trim());
-      }
+  const addNormalizedValue = (rawValue: string | null | undefined) => {
+    if (typeof rawValue !== "string" || !rawValue.trim()) {
+      return;
     }
+
+    const normalized = rawValue.trim().toLowerCase();
+
+    if (
+      normalized === "bodyweight" ||
+      normalized === "body_weight" ||
+      normalized.includes("kroppsvikt") ||
+      normalized.includes("utan gym")
+    ) {
+      values.add("bodyweight");
+      return;
+    }
+
+    if (
+      normalized === "dumbbell" ||
+      normalized === "dumbbells" ||
+      normalized.includes("hantel")
+    ) {
+      values.add("dumbbells");
+      return;
+    }
+
+    if (normalized === "barbell" || normalized.includes("skivstång")) {
+      values.add("barbell");
+      return;
+    }
+
+    if (normalized === "bench" || normalized.includes("bänk")) {
+      values.add("bench");
+      return;
+    }
+
+    if (normalized === "rack" || normalized.includes("ställning")) {
+      values.add("rack");
+      return;
+    }
+
+    if (
+      normalized === "rings" ||
+      normalized.includes("romerska ringar") ||
+      normalized.includes("ringar")
+    ) {
+      values.add("rings");
+      return;
+    }
+
+    if (
+      normalized === "pullup_bar" ||
+      normalized === "pull-up bar" ||
+      normalized.includes("pullup") ||
+      normalized.includes("pull-up") ||
+      normalized.includes("chins") ||
+      normalized.includes("räcke")
+    ) {
+      values.add("pullup_bar");
+      return;
+    }
+
+    if (
+      normalized === "cable_machine" ||
+      normalized.includes("cable") ||
+      normalized.includes("kabel")
+    ) {
+      values.add("cable_machine");
+      return;
+    }
+  };
+
+  for (const item of input) {
+    addNormalizedValue(item.equipment_type);
+    addNormalizedValue(item.equipmentType);
+    addNormalizedValue(item.label);
+    addNormalizedValue(item.name);
+    addNormalizedValue(item.type);
   }
 
   if (values.size === 0) {
@@ -199,21 +265,33 @@ export default function HomePage() {
       setAiError(null);
       setIsGenerating(true);
 
+      // Hämta stabila equipment-id:n från valt gym.
       const equipment = normalizeEquipmentStrings(selectedGym?.equipment);
       const goal = settings?.training_goal?.trim() || "health";
+      const isBodyweightGym = String(selectedGym?.id) === "bodyweight";
+
+      // Skicka både gym-id och gymnamn vidare.
+      const gymId = isBodyweightGym ? null : String(selectedGym?.id ?? "");
+      const gymLabel = isBodyweightGym
+        ? "Kroppsvikt / utan gym"
+        : selectedGym?.name ?? null;
 
       const { workout } = await generateWorkout({
         userId,
         goal,
         durationMinutes,
         equipment,
+        gym: gymId,
+        gymLabel,
       });
 
       // Spara draft innan preview öppnas.
       saveWorkoutDraft(userId, {
         ...workout,
         duration: durationMinutes,
-        gym: selectedGym?.name || "Kroppsvikt / utan gym",
+        gym: gymId,
+        gymLabel,
+        availableEquipment: equipment,
       });
 
       setHasDraft(true);

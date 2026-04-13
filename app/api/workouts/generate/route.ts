@@ -5,7 +5,7 @@ import OpenAI from "openai";
 
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 
-// OpenAI-klient
+// OpenAI-klient.
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -18,8 +18,8 @@ function safeParseJSON(text: string) {
   try {
     return JSON.parse(trimmed);
   } catch {
-    // Försök plocka ut JSON ur kodblock
     const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+
     if (codeBlockMatch?.[1]) {
       try {
         return JSON.parse(codeBlockMatch[1]);
@@ -32,23 +32,62 @@ function safeParseJSON(text: string) {
   }
 }
 
+// Säkerställer att equipment-listan blir ren och unik.
+function normalizeEquipmentList(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const values = new Set<string>();
+
+  for (const item of input) {
+    if (typeof item !== "string") {
+      continue;
+    }
+
+    const normalized = item.trim().toLowerCase();
+
+    if (!normalized) {
+      continue;
+    }
+
+    values.add(normalized);
+  }
+
+  return Array.from(values);
+}
+
 // Hjälper debug utan att göra response för tung.
 function buildDebugPayload(params: {
-  body: Record<string, unknown>;
+  goal: string;
+  durationMinutes: number;
+  gym: string | null;
+  gymLabel: string | null;
+  equipment: string[];
   prompt: string;
   rawAiText: string;
   parsed: unknown;
   normalizedWorkout: unknown;
 }) {
-  const { body, prompt, rawAiText, parsed, normalizedWorkout } = params;
+  const {
+    goal,
+    durationMinutes,
+    gym,
+    gymLabel,
+    equipment,
+    prompt,
+    rawAiText,
+    parsed,
+    normalizedWorkout,
+  } = params;
 
   return {
     request: {
-      goal: body.goal ?? null,
-      durationMinutes: body.durationMinutes ?? null,
-      gym: body.gym ?? null,
-      gymLabel: body.gymLabel ?? null,
-      equipment: Array.isArray(body.equipment) ? body.equipment : [],
+      goal,
+      durationMinutes,
+      gym,
+      gymLabel,
+      equipment,
     },
     prompt,
     rawAiText,
@@ -68,29 +107,36 @@ export async function POST(req: Request) {
       includeDebug?: boolean;
     };
 
-    const goal = typeof body.goal === "string" && body.goal.trim()
-      ? body.goal.trim()
-      : "allmän styrka";
+    const goal =
+      typeof body.goal === "string" && body.goal.trim()
+        ? body.goal.trim()
+        : "allmän styrka";
 
     const durationMinutes =
-      typeof body.durationMinutes === "number" && Number.isFinite(body.durationMinutes)
+      typeof body.durationMinutes === "number" &&
+      Number.isFinite(body.durationMinutes)
         ? body.durationMinutes
         : 45;
 
-    const equipment = Array.isArray(body.equipment)
-      ? body.equipment.filter(
-          (item): item is string =>
-            typeof item === "string" && item.trim().length > 0,
-        )
-      : [];
+    const equipment = normalizeEquipmentList(body.equipment);
+    const gym =
+      typeof body.gym === "string" && body.gym.trim() ? body.gym.trim() : null;
+    const gymLabel =
+      typeof body.gymLabel === "string" && body.gymLabel.trim()
+        ? body.gymLabel.trim()
+        : null;
 
-    // DEBUG 1:
-    // Visar exakt vad API-route fick in från frontend innan prompten byggs.
+    const equipmentText = equipment.length > 0 ? equipment.join(", ") : "bodyweight";
+    const hasEquipment =
+      equipment.length > 0 &&
+      !(equipment.length === 1 && equipment[0] === "bodyweight");
+
+    // Behåll gärna denna logg tills allt känns stabilt.
     console.log("🔥 GENERATE ROUTE INPUT:", {
       goal,
       durationMinutes,
-      gym: body.gym ?? null,
-      gymLabel: body.gymLabel ?? null,
+      gym,
+      gymLabel,
       equipmentFromBody: body.equipment ?? null,
       equipmentFiltered: equipment,
       includeDebug: body.includeDebug ?? false,
@@ -99,10 +145,12 @@ export async function POST(req: Request) {
     const prompt = `
 Skapa ett träningspass som JSON.
 
-Krav:
-- duration: cirka ${durationMinutes} minuter
+Kontext:
 - mål: ${goal}
-- utrustning: ${equipment.join(", ") || "okänd"}
+- passlängd: cirka ${durationMinutes} minuter
+- gym-id: ${gym ?? "saknas"}
+- gymnamn: ${gymLabel ?? "saknas"}
+- tillgänglig utrustning: ${equipmentText}
 
 Format:
 {
@@ -119,21 +167,27 @@ Format:
   ]
 }
 
-Regler:
+Viktiga regler:
 - Svara endast med giltig JSON
+- Inga markdown-block, inga förklaringar
 - Använd null för reps på tidsbaserade övningar
 - Använd null för duration på repsbaserade övningar
-- Föreslå gärna kroppsviktsövningar även om utrustning finns, om det är lämpligt
-- Men använd också tillgänglig utrustning när det är relevant
+- Välj övningar som ger ett så effektivt och välbalanserat pass som möjligt för målet
+- Om utrustning finns ska du i första hand använda den när den förbättrar passets kvalitet, progression eller träningsstimulus
+- Kroppsviktsövningar får användas när de är ett bättre val funktionellt, tekniskt eller tidsmässigt
+- Om utrustning finns ska passet normalt inte domineras av rena kroppsviktsövningar utan tydligt skäl
+- Välj övningar som realistiskt kan utföras med den angivna utrustningen
+- Skapa ett kompakt, logiskt pass utan onödiga dubbletter
+${hasEquipment
+  ? "- Utgå från att utrustningen faktiskt finns tillgänglig och användbar"
+  : "- Utgå från att passet måste kunna göras helt utan utrustning"}
 `.trim();
 
-    // DEBUG 2:
-    // Visar den slutliga input som faktiskt skickas till AI:n.
     console.log("🔥 FINAL INPUT TO AI:", {
       goal,
       durationMinutes,
-      gym: body.gym ?? null,
-      gymLabel: body.gymLabel ?? null,
+      gym,
+      gymLabel,
       equipment,
       prompt,
     });
@@ -143,14 +197,15 @@ Regler:
       messages: [
         {
           role: "system",
-          content: "Du är en erfaren personlig tränare som svarar med strikt JSON.",
+          content:
+            "Du är en erfaren personlig tränare som svarar med strikt JSON och optimerar för effektiva, realistiska träningspass.",
         },
         {
           role: "user",
           content: prompt,
         },
       ],
-      temperature: 0.7,
+      temperature: 0.5,
     });
 
     const rawAiText = response.choices?.[0]?.message?.content ?? "";
@@ -165,8 +220,8 @@ Regler:
             request: {
               goal,
               durationMinutes,
-              gym: body.gym ?? null,
-              gymLabel: body.gymLabel ?? null,
+              gym,
+              gymLabel,
               equipment,
             },
             rawAiText,
@@ -176,17 +231,17 @@ Regler:
       );
     }
 
-    // Viktig fix:
     // Lägg tillbaka gym- och utrustningskontext på workout innan normalisering,
-    // så preview-hooken faktiskt kan läsa detta senare.
+    // så preview och senare flöden kan läsa detta stabilt.
     const parsedWithContext =
       parsed && typeof parsed === "object"
         ? {
             ...(parsed as Record<string, unknown>),
             goal,
-            duration: (parsed as Record<string, unknown>).duration ?? durationMinutes,
-            gym: body.gym ?? null,
-            gymLabel: body.gymLabel ?? null,
+            duration:
+              (parsed as Record<string, unknown>).duration ?? durationMinutes,
+            gym,
+            gymLabel,
             availableEquipment: equipment,
           }
         : parsed;
@@ -199,7 +254,11 @@ Regler:
           ok: false,
           error: "Kunde inte normalisera träningspass",
           debug: buildDebugPayload({
-            body,
+            goal,
+            durationMinutes,
+            gym,
+            gymLabel,
+            equipment,
             prompt,
             rawAiText,
             parsed,
@@ -215,7 +274,11 @@ Regler:
       workout: normalizedWorkout,
       debug: body.includeDebug
         ? buildDebugPayload({
-            body,
+            goal,
+            durationMinutes,
+            gym,
+            gymLabel,
+            equipment,
             prompt,
             rawAiText,
             parsed,
