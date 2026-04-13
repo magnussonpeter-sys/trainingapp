@@ -1,6 +1,13 @@
 "use client";
 
+// Home-data-hook.
+// Viktigt i denna version:
+// - behåller gymmens equipment-data
+// - fortsatt kompatibel med home-sidan
+// - påverkar AI-pass så rätt gymutrustning faktiskt skickas vidare
+
 import { useEffect, useRef, useState } from "react";
+
 import {
   getWorkoutLogs,
   type WorkoutLog,
@@ -19,9 +26,18 @@ export type HomeAuthUser = {
   status?: "active" | "disabled";
 };
 
+export type HomeGymEquipmentItem = {
+  equipment_type?: string | null;
+  equipmentType?: string | null;
+  label?: string | null;
+  name?: string | null;
+  type?: string | null;
+};
+
 export type HomeGym = {
   id: string | number;
   name: string;
+  equipment?: HomeGymEquipmentItem[];
 };
 
 export type HomeGoal =
@@ -34,11 +50,18 @@ export type HomeUserSettings = {
   training_goal?: HomeGoal | null;
 };
 
+// Normaliserar gyms utan att tappa equipment.
 function normalizeGyms(data: unknown): HomeGym[] {
   if (Array.isArray(data)) {
     return data
       .filter(
-        (item): item is { id: string | number; name: string } =>
+        (
+          item,
+        ): item is {
+          id: string | number;
+          name: string;
+          equipment?: unknown;
+        } =>
           typeof item === "object" &&
           item !== null &&
           "id" in item &&
@@ -47,10 +70,22 @@ function normalizeGyms(data: unknown): HomeGym[] {
             typeof (item as { id: unknown }).id === "number") &&
           typeof (item as { name: unknown }).name === "string",
       )
-      .map((gym) => ({
-        id: gym.id,
-        name: gym.name,
-      }));
+      .map((gym) => {
+        const rawEquipment = Array.isArray(gym.equipment)
+          ? gym.equipment
+          : [];
+
+        const equipment = rawEquipment.filter(
+          (item): item is HomeGymEquipmentItem =>
+            typeof item === "object" && item !== null,
+        );
+
+        return {
+          id: gym.id,
+          name: gym.name,
+          equipment,
+        };
+      });
   }
 
   if (
@@ -82,7 +117,7 @@ export function useHomeData({ router }: UseHomeDataParams) {
   const [gymError, setGymError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
 
-  // Skyddar mot dubbla home-syncar i samma mount.
+  // Skyddar mot dubbla syncar under samma mount.
   const hasRunInitialSyncRef = useRef(false);
 
   useEffect(() => {
@@ -118,7 +153,7 @@ export function useHomeData({ router }: UseHomeDataParams) {
         setIsLoadingGyms(true);
         setGymError(null);
 
-        // Kör bara initial sync en gång per mount.
+        // Kör pending sync en gång per mount.
         if (!hasRunInitialSyncRef.current) {
           hasRunInitialSyncRef.current = true;
 
@@ -142,6 +177,7 @@ export function useHomeData({ router }: UseHomeDataParams) {
         ]);
 
         const gymsData = (await gymsRes.json().catch(() => null)) as unknown;
+
         const settingsData = (await settingsRes.json().catch(() => null)) as
           | { ok?: boolean; settings?: HomeUserSettings | null; error?: string }
           | null;
@@ -162,7 +198,12 @@ export function useHomeData({ router }: UseHomeDataParams) {
           setGymError(apiMessage);
           setGyms([]);
         } else {
-          setGyms(normalizeGyms(gymsData));
+          const normalizedGyms = normalizeGyms(gymsData);
+
+          // Liten debug för att verifiera att equipment verkligen följer med.
+          console.log("Home gyms loaded:", normalizedGyms);
+
+          setGyms(normalizedGyms);
         }
 
         if (settingsRes.ok && settingsData?.ok) {
@@ -183,9 +224,7 @@ export function useHomeData({ router }: UseHomeDataParams) {
             | null;
 
           if (!logsRes.ok || !logsData?.ok || !Array.isArray(logsData.logs)) {
-            throw new Error(
-              logsData?.error || "Kunde inte hämta träningshistorik",
-            );
+            throw new Error(logsData?.error || "Kunde inte hämta träningshistorik");
           }
 
           if (!isMounted) {
