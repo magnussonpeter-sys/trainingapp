@@ -40,7 +40,7 @@ type EffectiveEquipmentContext = {
 
 type PreviewSummary = {
   exerciseCount: number;
-  totalSets: number;
+  setCount: number;
   timedExercises: number;
   estimatedMinutes: number;
 };
@@ -48,12 +48,12 @@ type PreviewSummary = {
 type PreviewDebugInfo = {
   workoutGym: string | null;
   workoutGymLabel: string | null;
-  availableEquipmentOnWorkout: string[];
+  workoutAvailableEquipment: string[];
   gymsLoaded: boolean;
   gymsCount: number;
   matchedGymName: string | null;
   matchedGymEquipment: string[];
-  extractEquipmentFromWorkout: string[];
+  extractedEquipment: string[];
   equipmentSeed: string[];
   availableCatalogCount: number;
   filteredCatalogCount: number;
@@ -582,7 +582,7 @@ function buildSummary(workout: Workout | null): PreviewSummary {
   const exercises = getPrimaryExercises(workout);
 
   const exerciseCount = exercises.length;
-  const totalSets = exercises.reduce(
+  const setCount = exercises.reduce(
     (sum, exercise) => sum + (exercise.sets ?? 0),
     0,
   );
@@ -610,7 +610,7 @@ function buildSummary(workout: Workout | null): PreviewSummary {
 
   return {
     exerciseCount,
-    totalSets,
+    setCount,
     timedExercises,
     estimatedMinutes: Math.max(1, Math.round((workSeconds + restSeconds) / 60)),
   };
@@ -784,29 +784,28 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
   const summary = useMemo(() => buildSummary(previewWorkout), [previewWorkout]);
 
-  const debugInfo = useMemo<PreviewDebugInfo>(() => {
-    return {
-      workoutGym: workout?.gym ?? null,
-      workoutGymLabel: workout?.gymLabel ?? null,
-      availableEquipmentOnWorkout:
-        extractEquipmentFromWorkoutInternal(previewWorkout),
-      gymsLoaded,
-      gymsCount: gyms.length,
-      matchedGymName: equipmentContext.matchedGymName,
-      matchedGymEquipment: equipmentContext.matchedGymEquipment,
-      extractEquipmentFromWorkout:
-        extractEquipmentFromWorkoutInternal(previewWorkout),
-      equipmentSeed: effectiveEquipment,
-      availableCatalogCount: availableCatalogExercises.length,
-      filteredCatalogCount: filteredCatalogExercises.length,
-      firstAvailableExerciseNames: availableCatalogExercises
-        .slice(0, 10)
-        .map((exercise) => exercise.name),
-      firstFilteredExerciseNames: filteredCatalogExercises
-        .slice(0, 10)
-        .map((exercise) => exercise.name),
-    };
-  }, [
+const debugInfo = useMemo<PreviewDebugInfo>(() => {
+  return {
+    workoutGym: workout?.gym ?? null,
+    workoutGymLabel: workout?.gymLabel ?? null,
+    workoutAvailableEquipment:
+      extractEquipmentFromWorkoutInternal(previewWorkout),
+    gymsLoaded,
+    gymsCount: gyms.length,
+    matchedGymName: equipmentContext.matchedGymName,
+    matchedGymEquipment: equipmentContext.matchedGymEquipment,
+    extractedEquipment: extractEquipmentFromWorkoutInternal(previewWorkout),
+    equipmentSeed: effectiveEquipment,
+    availableCatalogCount: availableCatalogExercises.length,
+    filteredCatalogCount: filteredCatalogExercises.length,
+    firstAvailableExerciseNames: availableCatalogExercises
+      .slice(0, 10)
+      .map((exercise) => exercise.name),
+    firstFilteredExerciseNames: filteredCatalogExercises
+      .slice(0, 10)
+      .map((exercise) => exercise.name),
+  };
+}, [
     availableCatalogExercises,
     effectiveEquipment,
     equipmentContext.matchedGymEquipment,
