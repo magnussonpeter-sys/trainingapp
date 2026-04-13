@@ -3,7 +3,14 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
+import { pool } from "@/lib/db";
+import { getAvailableExercises } from "@/lib/exercise-catalog";
+import { getWorkoutLogsByUser } from "@/lib/workout-log-repository";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
+import {
+  validateGeneratedWorkout,
+  type AiGeneratedWorkoutCandidate,
+} from "@/lib/workout-flow/validate-generated-workout";
 
 // OpenAI-klient.
 const client = new OpenAI({
@@ -61,44 +68,217 @@ function normalizeEquipmentList(input: unknown): string[] {
 function buildDebugPayload(params: {
   goal: string;
   durationMinutes: number;
+  userId: string | null;
   gym: string | null;
   gymLabel: string | null;
   equipment: string[];
+  generationContext: unknown;
   prompt: string;
   rawAiText: string;
   parsed: unknown;
+  validated: unknown;
   normalizedWorkout: unknown;
 }) {
   const {
     goal,
     durationMinutes,
+    userId,
     gym,
     gymLabel,
     equipment,
+    generationContext,
     prompt,
     rawAiText,
     parsed,
+    validated,
     normalizedWorkout,
   } = params;
 
   return {
     request: {
+      userId,
       goal,
       durationMinutes,
       gym,
       gymLabel,
       equipment,
     },
+    generationContext,
     prompt,
     rawAiText,
     parsedAiResponse: parsed,
+    validatedWorkout: validated,
     normalizedWorkout,
   };
+}
+
+type UserSettingsSummary = {
+  sex?: string | null;
+  age?: number | null;
+  weight_kg?: number | null;
+  height_cm?: number | null;
+  experience_level?: string | null;
+  training_goal?: string | null;
+};
+
+async function getUserSettingsSummary(userId: string) {
+  const result = await pool.query<UserSettingsSummary>(
+    `
+      select
+        sex,
+        age,
+        weight_kg,
+        height_cm,
+        experience_level,
+        training_goal
+      from user_settings
+      where user_id = $1
+      limit 1
+    `,
+    [userId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+function buildRecentWorkoutSummary(logs: unknown[]) {
+  return logs.slice(0, 3).map((log) => {
+    const record = log as {
+      workoutName?: string;
+      completedAt?: string;
+      durationSeconds?: number;
+      exercises?: Array<{
+        exerciseId?: string;
+        exerciseName?: string;
+        extraReps?: number | null;
+        timedEffort?: string | null;
+      }>;
+    };
+
+    return {
+      workoutName: record.workoutName ?? "Okänt pass",
+      completedAt: record.completedAt ?? null,
+      durationMinutes:
+        typeof record.durationSeconds === "number"
+          ? Math.max(1, Math.round(record.durationSeconds / 60))
+          : null,
+      topExercises: Array.isArray(record.exercises)
+        ? record.exercises.slice(0, 4).map((exercise) => ({
+            exerciseId: exercise.exerciseId ?? null,
+            exerciseName: exercise.exerciseName ?? null,
+            extraReps: exercise.extraReps ?? null,
+            timedEffort: exercise.timedEffort ?? null,
+          }))
+        : [],
+    };
+  });
+}
+
+function buildAvailableExercisePrompt(
+  availableExercises: ReturnType<typeof getAvailableExercises>,
+) {
+  return availableExercises
+    .map((exercise) => {
+      const dose =
+        typeof exercise.defaultDuration === "number" && !exercise.defaultReps
+          ? `${exercise.defaultSets} x ${exercise.defaultDuration}s`
+          : `${exercise.defaultSets} x ${exercise.defaultReps ?? 10}`;
+
+      return [
+        `- id: ${exercise.id}`,
+        `namn: ${exercise.name}`,
+        `mönster: ${exercise.movementPattern}`,
+        `utrustning: ${exercise.requiredEquipment.join(", ")}`,
+        `standard: ${dose}`,
+        `vila: ${exercise.defaultRest}s`,
+      ].join(" | ");
+    })
+    .join("\n");
+}
+
+function buildGenerationPrompt(params: {
+  availableExercisePrompt: string;
+  durationMinutes: number;
+  equipment: string[];
+  goal: string;
+  gym: string | null;
+  gymLabel: string | null;
+  recentWorkouts: unknown[];
+  settings: UserSettingsSummary | null;
+}) {
+  const recentWorkoutText =
+    params.recentWorkouts.length > 0
+      ? JSON.stringify(params.recentWorkouts, null, 2)
+      : "[]";
+
+  const settingsText = params.settings
+    ? JSON.stringify(params.settings, null, 2)
+    : "null";
+
+  const equipmentText =
+    params.equipment.length > 0 ? params.equipment.join(", ") : "bodyweight";
+
+  return `
+Skapa ett evidensbaserat träningspass som strikt JSON.
+
+Du får själv bestämma blockstruktur och ordning, men passet måste vara realistiskt, välbalanserat och följa grundläggande träningsprinciper.
+
+Kontext:
+- mål: ${params.goal}
+- passlängd: cirka ${params.durationMinutes} minuter
+- gym-id: ${params.gym ?? "saknas"}
+- gymnamn: ${params.gymLabel ?? "saknas"}
+- tillgänglig utrustning: ${equipmentText}
+- användarinställningar: ${settingsText}
+- senaste passhistorik: ${recentWorkoutText}
+
+Tillgängliga övningar från katalogen:
+${params.availableExercisePrompt}
+
+Output-format:
+{
+  "name": "...",
+  "duration": number,
+  "rationale": "kort motivering",
+  "blocks": [
+    {
+      "type": "straight_sets",
+      "title": "...",
+      "purpose": "kort syfte",
+      "exercises": [
+        {
+          "id": "måste vara ett id från katalogen ovan",
+          "name": "matchande namn",
+          "sets": number,
+          "reps": number | null,
+          "duration": number | null,
+          "rest": number,
+          "movementPattern": "movement pattern från katalogen",
+          "intensityTag": "primary | secondary | accessory | finisher",
+          "rationale": "kort motivering"
+        }
+      ]
+    }
+  ]
+}
+
+Viktiga regler:
+- Svara endast med giltig JSON
+- Inga markdown-block, inga förklaringar utanför JSON
+- Använd blocks, inte top-level exercises om du inte absolut måste
+- Använd bara övningar från kataloglistan ovan
+- Prioritera stora flerledsövningar tidigt när målet eller passets längd motiverar det
+- Anpassa vila, dos och övningsval till träningsmålet
+- Om utrustning finns ska den användas men utan att förstöra passets kvalitet
+- Undvik dubbletter och nästan identiska övningar i samma pass
+- Passet ska kännas coachat, inte slumpat
+`.trim();
 }
 
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as {
+      userId?: string;
       goal?: string;
       durationMinutes?: number;
       equipment?: string[];
@@ -111,6 +291,10 @@ export async function POST(req: Request) {
       typeof body.goal === "string" && body.goal.trim()
         ? body.goal.trim()
         : "allmän styrka";
+    const userId =
+      typeof body.userId === "string" && body.userId.trim()
+        ? body.userId.trim()
+        : null;
 
     const durationMinutes =
       typeof body.durationMinutes === "number" &&
@@ -133,6 +317,7 @@ export async function POST(req: Request) {
 
     // Behåll gärna denna logg tills allt känns stabilt.
     console.log("🔥 GENERATE ROUTE INPUT:", {
+      userId,
       goal,
       durationMinutes,
       gym,
@@ -142,53 +327,41 @@ export async function POST(req: Request) {
       includeDebug: body.includeDebug ?? false,
     });
 
-    const prompt = `
-Skapa ett träningspass som JSON.
-
-Kontext:
-- mål: ${goal}
-- passlängd: cirka ${durationMinutes} minuter
-- gym-id: ${gym ?? "saknas"}
-- gymnamn: ${gymLabel ?? "saknas"}
-- tillgänglig utrustning: ${equipmentText}
-
-Format:
-{
-  "name": "...",
-  "duration": number,
-  "exercises": [
-    {
-      "name": "...",
-      "sets": number,
-      "reps": number | null,
-      "duration": number | null,
-      "rest": number
-    }
-  ]
-}
-
-Viktiga regler:
-- Svara endast med giltig JSON
-- Inga markdown-block, inga förklaringar
-- Använd null för reps på tidsbaserade övningar
-- Använd null för duration på repsbaserade övningar
-- Välj övningar som ger ett så effektivt och välbalanserat pass som möjligt för målet
-- Om utrustning finns ska du i första hand använda den när den förbättrar passets kvalitet, progression eller träningsstimulus
-- Kroppsviktsövningar får användas när de är ett bättre val funktionellt, tekniskt eller tidsmässigt
-- Om utrustning finns ska passet normalt inte domineras av rena kroppsviktsövningar utan tydligt skäl
-- Välj övningar som realistiskt kan utföras med den angivna utrustningen
-- Skapa ett kompakt, logiskt pass utan onödiga dubbletter
-${hasEquipment
-  ? "- Utgå från att utrustningen faktiskt finns tillgänglig och användbar"
-  : "- Utgå från att passet måste kunna göras helt utan utrustning"}
-`.trim();
+    const availableExercises = getAvailableExercises(equipment);
+    const [settings, recentLogs] = userId
+      ? await Promise.all([
+          getUserSettingsSummary(userId),
+          getWorkoutLogsByUser(userId, 3),
+        ])
+      : [null, []];
+    const recentWorkouts = buildRecentWorkoutSummary(recentLogs);
+    const availableExercisePrompt = buildAvailableExercisePrompt(availableExercises);
+    const generationContext = {
+      userId,
+      settings,
+      recentWorkouts,
+      availableExerciseCount: availableExercises.length,
+      hasEquipment,
+    };
+    const prompt = buildGenerationPrompt({
+      availableExercisePrompt,
+      durationMinutes,
+      equipment,
+      goal,
+      gym,
+      gymLabel,
+      recentWorkouts,
+      settings,
+    });
 
     console.log("🔥 FINAL INPUT TO AI:", {
+      userId,
       goal,
       durationMinutes,
       gym,
       gymLabel,
       equipment,
+      generationContext,
       prompt,
     });
 
@@ -209,7 +382,7 @@ ${hasEquipment
     });
 
     const rawAiText = response.choices?.[0]?.message?.content ?? "";
-    const parsed = safeParseJSON(rawAiText);
+    const parsed = safeParseJSON(rawAiText) as AiGeneratedWorkoutCandidate | null;
 
     if (!parsed) {
       return NextResponse.json(
@@ -218,12 +391,14 @@ ${hasEquipment
           error: "AI-svar kunde inte tolkas",
           debug: {
             request: {
+              userId,
               goal,
               durationMinutes,
               gym,
               gymLabel,
               equipment,
             },
+            generationContext,
             rawAiText,
           },
         },
@@ -231,20 +406,31 @@ ${hasEquipment
       );
     }
 
+    const validated = validateGeneratedWorkout({
+      availableEquipment: equipment,
+      candidate: parsed,
+      durationMinutes,
+      goal:
+        goal === "strength" ||
+        goal === "hypertrophy" ||
+        goal === "health" ||
+        goal === "body_composition"
+          ? goal
+          : "health",
+      gym,
+      gymLabel,
+    });
+
     // Lägg tillbaka gym- och utrustningskontext på workout innan normalisering,
     // så preview och senare flöden kan läsa detta stabilt.
-    const parsedWithContext =
-      parsed && typeof parsed === "object"
-        ? {
-            ...(parsed as Record<string, unknown>),
-            goal,
-            duration:
-              (parsed as Record<string, unknown>).duration ?? durationMinutes,
-            gym,
-            gymLabel,
-            availableEquipment: equipment,
-          }
-        : parsed;
+    const parsedWithContext = {
+      ...validated.workout,
+      goal,
+      duration: validated.workout.duration ?? durationMinutes,
+      gym,
+      gymLabel,
+      availableEquipment: equipment,
+    };
 
     const normalizedWorkout = normalizePreviewWorkout(parsedWithContext);
 
@@ -256,12 +442,15 @@ ${hasEquipment
           debug: buildDebugPayload({
             goal,
             durationMinutes,
+            userId,
             gym,
             gymLabel,
             equipment,
+            generationContext,
             prompt,
             rawAiText,
             parsed,
+            validated,
             normalizedWorkout: null,
           }),
         },
@@ -276,12 +465,15 @@ ${hasEquipment
         ? buildDebugPayload({
             goal,
             durationMinutes,
+            userId,
             gym,
             gymLabel,
             equipment,
+            generationContext,
             prompt,
             rawAiText,
             parsed,
+            validated,
             normalizedWorkout,
           })
         : undefined,

@@ -16,8 +16,8 @@ export type AiExerciseCandidate = {
   movementPattern?: string;
   primaryMuscles?: string[];
   sets?: number;
-  reps?: number;
-  duration?: number;
+  reps?: number | null;
+  duration?: number | null;
   rest?: number;
 };
 
@@ -195,6 +195,23 @@ function findCatalogExerciseById(
   availableCatalog: ExerciseCatalogItem[]
 ) {
   return availableCatalog.find((item) => item.id === exerciseId) ?? null;
+}
+
+function normalizeExerciseName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function findCatalogExerciseByName(
+  exerciseName: string,
+  availableCatalog: ExerciseCatalogItem[]
+) {
+  const normalizedName = normalizeExerciseName(exerciseName);
+
+  return (
+    availableCatalog.find(
+      (item) => normalizeExerciseName(item.name) === normalizedName
+    ) ?? null
+  );
 }
 
 function hasExerciseId(
@@ -462,6 +479,69 @@ export function validateAndNormalizeAiExercises(params: {
             selectedName: exactMatch.name,
             reasonCode: "accepted_exact_match",
             reason: "AI-valet accepterades direkt.",
+          });
+
+          continue;
+        }
+
+        const fallback = findFallbackExercise({
+          requestedMovementPattern: requestedMovementPattern ?? undefined,
+          availableCatalog,
+          acceptedExercises: normalizedExercises,
+        });
+
+        if (fallback) {
+          normalizedExercises.push(createNormalizedExercise(fallback, aiExercise));
+
+          replacements.push({
+            requestedId,
+            requestedName,
+            requestedMovementPattern,
+            selectedId: fallback.id,
+            selectedName: fallback.name,
+            reasonCode: duplicate
+              ? "duplicate_exercise_id"
+              : "balance_adjustment",
+            reason: duplicate
+              ? "AI försökte använda samma övning flera gånger."
+              : `AI-valet ersattes eftersom ${balanceIssue?.message ?? "balansen i passet blev svag"}.`,
+          });
+        }
+
+        continue;
+      }
+    }
+
+    if (requestedName) {
+      const exactNameMatch = findCatalogExerciseByName(
+        requestedName,
+        availableCatalog
+      );
+
+      if (exactNameMatch) {
+        const duplicate = hasExerciseId(exactNameMatch.id, normalizedExercises);
+        const balanceIssue = getBalanceIssue(
+          {
+            movementPattern: exactNameMatch.movementPattern,
+            primaryMuscles: exactNameMatch.primaryMuscles,
+            variantGroup: exactNameMatch.variantGroup,
+          },
+          normalizedExercises
+        );
+
+        if (!duplicate && !balanceIssue) {
+          normalizedExercises.push(
+            createNormalizedExercise(exactNameMatch, aiExercise)
+          );
+
+          acceptedDirectly.push({
+            requestedId,
+            requestedName,
+            requestedMovementPattern,
+            selectedId: exactNameMatch.id,
+            selectedName: exactNameMatch.name,
+            reasonCode: "accepted_exact_match",
+            reason: "AI-valet accepterades via exakt namnmatchning.",
           });
 
           continue;
