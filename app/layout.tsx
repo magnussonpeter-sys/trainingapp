@@ -1,16 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "Träningsapp",
@@ -25,7 +14,16 @@ export default function RootLayout({
   return (
     <html
       lang="sv"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className="h-full antialiased"
+      style={
+        {
+          // Lokala/systemfonter gör att build fungerar offline utan Google Fonts.
+          "--font-geist-sans":
+            '"Avenir Next", "Segoe UI", Helvetica, Arial, sans-serif',
+          "--font-geist-mono":
+            '"SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
+        } as React.CSSProperties
+      }
     >
       <body className="min-h-full bg-gray-50 text-gray-900">
         <div className="min-h-screen flex flex-col">{children}</div>
