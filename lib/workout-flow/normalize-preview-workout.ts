@@ -13,6 +13,7 @@ import type {
   WorkoutAiDebug,
   WorkoutBlock,
   WorkoutFocus,
+  WorkoutWarmupGuide,
   WorkoutLike,
   WorkoutPreparationFeedback,
 } from "@/types/workout";
@@ -110,6 +111,16 @@ function normalizeOptionalString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function normalizeOptionalScore(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeOptionalPositiveNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
+}
+
 function normalizeStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -182,17 +193,58 @@ function normalizeExercise(exercise: any, index: number): Exercise {
   };
 }
 
-function normalizeBlock(block: any, blockIndex: number): WorkoutBlock {
-  const rawExercises = Array.isArray(block?.exercises) ? block.exercises : [];
+function normalizeWarmupGuide(value: unknown): WorkoutWarmupGuide | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const recommended = Boolean(record.recommended);
+  const instruction = normalizeOptionalString(record.instruction);
+
+  if (!recommended && !instruction) {
+    return undefined;
+  }
 
   return {
-    type: "straight_sets",
+    recommended,
+    instruction,
+  };
+}
+
+function normalizeBlock(block: any, blockIndex: number): WorkoutBlock {
+  const rawExercises = Array.isArray(block?.exercises) ? block.exercises : [];
+  const normalizedType =
+    block?.type === "superset" || block?.type === "circuit"
+      ? block.type
+      : "straight_sets";
+
+  return {
+    type: normalizedType,
     title:
       typeof block?.title === "string" && block.title.trim()
         ? block.title.trim()
         : blockIndex === 0
           ? "Huvuddel"
           : `Block ${blockIndex + 1}`,
+    purpose: normalizeOptionalString(block?.purpose),
+    coachNote: normalizeOptionalString(
+      block?.coachNote ?? block?.coach_note,
+    ),
+    targetRpe: normalizeOptionalScore(
+      block?.targetRpe ?? block?.target_rpe,
+    ),
+    targetRir: normalizeOptionalScore(
+      block?.targetRir ?? block?.target_rir,
+    ),
+    warmup: normalizeWarmupGuide(block?.warmup),
+    rounds: normalizeOptionalPositiveNumber(block?.rounds),
+    restBetweenExercises: normalizeOptionalPositiveNumber(
+      block?.restBetweenExercises ?? block?.rest_between_exercises,
+    ),
+    restAfterRound: normalizeOptionalPositiveNumber(
+      block?.restAfterRound ?? block?.rest_after_round,
+    ),
     exercises: rawExercises.map(normalizeExercise),
   };
 }

@@ -19,6 +19,7 @@ import type {
   Workout,
   WorkoutAiDebug,
   WorkoutBlock,
+  WorkoutBlockType,
   WorkoutPreparationFeedback,
   WorkoutPreparationLevel,
 } from "@/types/workout";
@@ -518,6 +519,52 @@ function createCustomExercise(params: {
   };
 }
 
+function blockHasRoundMetadata(
+  block: WorkoutBlock,
+): block is Extract<WorkoutBlock, { rounds?: number | null }> {
+  return block.type === "superset" || block.type === "circuit";
+}
+
+function createBlockDefaults(
+  blockType: WorkoutBlockType,
+  block: WorkoutBlock,
+): Partial<WorkoutBlock> {
+  if (blockType === "straight_sets") {
+    return {
+      type: "straight_sets",
+    };
+  }
+
+  const fallbackRounds = Math.max(
+    1,
+    ...block.exercises.map((exercise) => Math.max(1, exercise.sets)),
+  );
+
+  return {
+    type: blockType,
+    rounds:
+      blockHasRoundMetadata(block) &&
+      typeof block.rounds === "number" &&
+      block.rounds > 0
+        ? block.rounds
+        : fallbackRounds,
+    restBetweenExercises:
+      blockHasRoundMetadata(block) &&
+      typeof block.restBetweenExercises === "number"
+        ? block.restBetweenExercises
+        : blockType === "superset"
+          ? 15
+          : 0,
+    restAfterRound:
+      blockHasRoundMetadata(block) &&
+      typeof block.restAfterRound === "number"
+        ? block.restAfterRound
+        : blockType === "superset"
+          ? 60
+          : 75,
+  };
+}
+
 // Säkerställer att workout alltid har minst ett block.
 function ensureWorkoutHasBlocks(workout: Workout): Workout {
   if (Array.isArray(workout.blocks) && workout.blocks.length > 0) {
@@ -548,6 +595,46 @@ function getPrimaryExercises(workout: Workout | null): Exercise[] {
   return getPrimaryBlock(workout)?.exercises ?? [];
 }
 
+type ExerciseLocation = {
+  blockIndex: number;
+  exerciseIndex: number;
+  exercise: Exercise;
+};
+
+function getAllExercises(workout: Workout | null): Exercise[] {
+  if (!workout?.blocks?.length) {
+    return [];
+  }
+
+  return workout.blocks.flatMap((block) => block.exercises ?? []);
+}
+
+function findExerciseLocation(
+  workout: Workout | null,
+  exerciseId: string,
+): ExerciseLocation | null {
+  if (!workout?.blocks?.length) {
+    return null;
+  }
+
+  for (let blockIndex = 0; blockIndex < workout.blocks.length; blockIndex += 1) {
+    const block = workout.blocks[blockIndex];
+    const exerciseIndex = block.exercises.findIndex(
+      (exercise) => exercise.id === exerciseId,
+    );
+
+    if (exerciseIndex >= 0) {
+      return {
+        blockIndex,
+        exerciseIndex,
+        exercise: block.exercises[exerciseIndex],
+      };
+    }
+  }
+
+  return null;
+}
+
 // Applicerar progression blockvis så att framtida blocktyper kan återanvända samma idé.
 function applyProgressionToWorkout(params: {
   userId: string;
@@ -575,7 +662,7 @@ function applyProgressionToWorkout(params: {
 
 // Enkel sammanfattning som preview-sidan kan visa.
 function buildSummary(workout: Workout | null): PreviewSummary {
-  const exercises = getPrimaryExercises(workout);
+  const exercises = getAllExercises(workout);
 
   const exerciseCount = exercises.length;
   const setCount = exercises.reduce(
@@ -850,6 +937,28 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
     }
   }
 
+  function updateBlock(
+    blockIndex: number,
+    updater: (block: WorkoutBlock) => WorkoutBlock,
+  ) {
+    if (!workout || blockIndex < 0 || blockIndex >= workout.blocks.length) {
+      return;
+    }
+
+    const nextBlocks = workout.blocks.map((block, index) => {
+      if (index !== blockIndex) {
+        return block;
+      }
+
+      return updater(block);
+    });
+
+    persistWorkout({
+      ...workout,
+      blocks: nextBlocks,
+    });
+  }
+
   function updatePreparationFeedback(
     patch: Partial<WorkoutPreparationFeedback>,
   ) {
@@ -878,6 +987,109 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
 
   function setPreparationNote(note: string) {
     updatePreparationFeedback({ note });
+  }
+
+  function setBlockType(blockIndex: number, blockType: WorkoutBlockType) {
+    updateBlock(blockIndex, (block) => {
+      const nextBlock = {
+        ...block,
+        ...createBlockDefaults(blockType, block),
+      } as WorkoutBlock;
+
+      if (blockType === "straight_sets") {
+        delete (nextBlock as Record<string, unknown>).rounds;
+        delete (nextBlock as Record<string, unknown>).restBetweenExercises;
+        delete (nextBlock as Record<string, unknown>).restAfterRound;
+      }
+
+      return nextBlock;
+    });
+  }
+
+  function incrementBlockRounds(blockIndex: number) {
+    updateBlock(blockIndex, (block) => {
+      if (block.type === "straight_sets") {
+        return block;
+      }
+
+      return {
+        ...block,
+        rounds: clampNumber((block.rounds ?? 1) + 1, 1, 10),
+      };
+    });
+  }
+
+  function decrementBlockRounds(blockIndex: number) {
+    updateBlock(blockIndex, (block) => {
+      if (block.type === "straight_sets") {
+        return block;
+      }
+
+      return {
+        ...block,
+        rounds: clampNumber((block.rounds ?? 1) - 1, 1, 10),
+      };
+    });
+  }
+
+  function incrementBlockRestBetweenExercises(blockIndex: number) {
+    updateBlock(blockIndex, (block) => {
+      if (block.type === "straight_sets") {
+        return block;
+      }
+
+      return {
+        ...block,
+        restBetweenExercises: clampNumber(
+          (block.restBetweenExercises ?? 0) + 15,
+          0,
+          300,
+        ),
+      };
+    });
+  }
+
+  function decrementBlockRestBetweenExercises(blockIndex: number) {
+    updateBlock(blockIndex, (block) => {
+      if (block.type === "straight_sets") {
+        return block;
+      }
+
+      return {
+        ...block,
+        restBetweenExercises: clampNumber(
+          (block.restBetweenExercises ?? 0) - 15,
+          0,
+          300,
+        ),
+      };
+    });
+  }
+
+  function incrementBlockRestAfterRound(blockIndex: number) {
+    updateBlock(blockIndex, (block) => {
+      if (block.type === "straight_sets") {
+        return block;
+      }
+
+      return {
+        ...block,
+        restAfterRound: clampNumber((block.restAfterRound ?? 45) + 15, 0, 300),
+      };
+    });
+  }
+
+  function decrementBlockRestAfterRound(blockIndex: number) {
+    updateBlock(blockIndex, (block) => {
+      if (block.type === "straight_sets") {
+        return block;
+      }
+
+      return {
+        ...block,
+        restAfterRound: clampNumber((block.restAfterRound ?? 45) - 15, 0, 300),
+      };
+    });
   }
 
   function updatePrimaryExercises(nextExercises: Exercise[]) {
@@ -916,54 +1128,78 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
     return exercises.findIndex((exercise) => exercise.id === exerciseId);
   }
 
-  function updateExercise(exerciseId: string, patch: Partial<Exercise>) {
-    const exercises = getPrimaryExercises(previewWorkout);
-
-    if (!workout || exercises.length === 0) {
-      return;
+  function updateExerciseInBlocks(
+    exerciseId: string,
+    updater: (exercise: Exercise) => Exercise | null,
+  ) {
+    if (!workout) {
+      return false;
     }
 
-    const nextExercises = exercises.map((exercise) => {
-      if (exercise.id !== exerciseId) {
-        return exercise;
+    const location = findExerciseLocation(previewWorkout, exerciseId);
+
+    if (!location) {
+      return false;
+    }
+
+    const nextBlocks = workout.blocks.map((block, blockIndex) => {
+      if (blockIndex !== location.blockIndex) {
+        return block;
       }
 
-      return applyExerciseProgression({
-        exercise: {
-          ...exercise,
-          ...patch,
-        },
-        goal: workout.goal ?? "health",
-        gymEquipmentItems:
-          matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
-        userId,
-      });
+      const nextExercises = [...block.exercises];
+      const nextExercise = updater(location.exercise);
+
+      if (nextExercise === null) {
+        nextExercises.splice(location.exerciseIndex, 1);
+      } else {
+        nextExercises[location.exerciseIndex] = applyExerciseProgression({
+          exercise: nextExercise,
+          goal: workout.goal ?? "health",
+          gymEquipmentItems:
+            matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
+          userId,
+        });
+      }
+
+      return {
+        ...block,
+        exercises: nextExercises,
+      };
     });
 
-    updatePrimaryExercises(nextExercises);
+    persistWorkout({
+      ...workout,
+      blocks: nextBlocks,
+    });
+
+    return true;
   }
 
-  function removeExercise(exerciseId: string) {
-    const exercises = getPrimaryExercises(previewWorkout);
-
+  function updateExercise(exerciseId: string, patch: Partial<Exercise>) {
     if (!workout) {
       return;
     }
 
-    const nextExercises = exercises.filter(
-      (exercise) => exercise.id !== exerciseId,
-    );
+    updateExerciseInBlocks(exerciseId, (exercise) => ({
+      ...exercise,
+      ...patch,
+    }));
+  }
 
-    updatePrimaryExercises(nextExercises);
+  function removeExercise(exerciseId: string) {
+    if (!workout) {
+      return;
+    }
+
+    updateExerciseInBlocks(exerciseId, () => null);
   }
 
   function replaceWithCatalogExercise(
     exerciseId: string,
     item: ExerciseCatalogItem,
   ): boolean {
-    const exercises = getPrimaryExercises(previewWorkout);
-
-    if (!workout || exercises.length === 0) {
+    if (!workout) {
       setError("Kunde inte ersätta övningen.");
       return false;
     }
@@ -975,51 +1211,81 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
         matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
       userId,
     });
-    const index = exercises.findIndex((exercise) => exercise.id === exerciseId);
+    const replaced = updateExerciseInBlocks(exerciseId, () => ({
+      ...replacement,
+      id: exerciseId, // Behåll id för stabil UI-hantering.
+    }));
 
-    if (index === -1) {
+    if (!replaced) {
       setError("Kunde inte hitta övningen som skulle ersättas.");
       return false;
     }
-
-    const nextExercises = [...exercises];
-    nextExercises[index] = {
-      ...replacement,
-      id: exerciseId, // Behåll id för stabil UI-hantering.
-    };
-
-    updatePrimaryExercises(nextExercises);
     setError(null);
     return true;
   }
 
   function moveExercise(exerciseId: string, direction: "up" | "down") {
-    const exercises = getPrimaryExercises(previewWorkout);
-
     if (!workout) {
       return;
     }
 
-    const index = findExerciseIndex(exerciseId);
+    const location = findExerciseLocation(previewWorkout, exerciseId);
 
-    if (index === -1) {
+    if (!location) {
       return;
     }
 
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    const nextBlocks = workout.blocks.map((block) => ({
+      ...block,
+      exercises: [...block.exercises],
+    }));
+    const currentBlock = nextBlocks[location.blockIndex];
+    const currentExercise = currentBlock.exercises[location.exerciseIndex];
 
-    if (targetIndex < 0 || targetIndex >= exercises.length) {
+    if (!currentExercise) {
       return;
     }
 
-    const nextExercises = [...exercises];
-    const current = nextExercises[index];
-    const target = nextExercises[targetIndex];
+    if (direction === "up") {
+      if (location.exerciseIndex > 0) {
+        const targetIndex = location.exerciseIndex - 1;
+        const target = currentBlock.exercises[targetIndex];
 
-    nextExercises[index] = target;
-    nextExercises[targetIndex] = current;
+        currentBlock.exercises[location.exerciseIndex] = target;
+        currentBlock.exercises[targetIndex] = currentExercise;
+      } else if (location.blockIndex > 0) {
+        const previousBlock = nextBlocks[location.blockIndex - 1];
 
-    updatePrimaryExercises(nextExercises);
+        if (previousBlock.exercises.length === 0) {
+          return;
+        }
+
+        currentBlock.exercises.splice(location.exerciseIndex, 1);
+        previousBlock.exercises.push(currentExercise);
+      } else {
+        return;
+      }
+    } else {
+      if (location.exerciseIndex < currentBlock.exercises.length - 1) {
+        const targetIndex = location.exerciseIndex + 1;
+        const target = currentBlock.exercises[targetIndex];
+
+        currentBlock.exercises[location.exerciseIndex] = target;
+        currentBlock.exercises[targetIndex] = currentExercise;
+      } else if (location.blockIndex < nextBlocks.length - 1) {
+        const nextBlock = nextBlocks[location.blockIndex + 1];
+
+        currentBlock.exercises.splice(location.exerciseIndex, 1);
+        nextBlock.exercises.unshift(currentExercise);
+      } else {
+        return;
+      }
+    }
+
+    persistWorkout({
+      ...workout,
+      blocks: nextBlocks,
+    });
   }
 
   function incrementSets(exerciseId: string) {
@@ -1205,6 +1471,13 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
     preparationFeedback: previewWorkout?.preparationFeedback ?? null,
     setPreparationLevel,
     setPreparationNote,
+    setBlockType,
+    incrementBlockRounds,
+    decrementBlockRounds,
+    incrementBlockRestBetweenExercises,
+    decrementBlockRestBetweenExercises,
+    incrementBlockRestAfterRound,
+    decrementBlockRestAfterRound,
 
     catalogSearch,
     setCatalogSearch,

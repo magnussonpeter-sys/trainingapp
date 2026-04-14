@@ -219,6 +219,13 @@ export default function RunPage() {
 
   const {
     currentExercise,
+    currentBlockType,
+    currentBlockTitle,
+    currentBlockCoachNote,
+    currentBlockExercisePosition,
+    currentBlockExerciseCount,
+    currentRound,
+    currentRoundTotal,
     currentSet,
     reps,
     setReps,
@@ -561,8 +568,58 @@ export default function RunPage() {
                 {currentExercise.name}
               </h2>
 
+              <div className="mt-3 flex flex-wrap gap-2">
+                {currentBlockType === "superset" ? (
+                  <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+                    Superset
+                  </span>
+                ) : null}
+                {currentBlockType === "circuit" ? (
+                  <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                    Circuit
+                  </span>
+                ) : null}
+                {currentBlockExerciseCount > 1 ? (
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                    Övning {currentBlockExercisePosition} av{" "}
+                    {currentBlockExerciseCount}
+                  </span>
+                ) : null}
+                {currentBlockType === "superset" || currentBlockType === "circuit" ? (
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                    Varv {currentRound} av {currentRoundTotal}
+                  </span>
+                ) : null}
+              </div>
+
+              {currentBlockTitle || currentBlockCoachNote ? (
+                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  {currentBlockTitle ? (
+                    <p className="text-sm font-semibold text-slate-900">
+                      {currentBlockTitle}
+                    </p>
+                  ) : null}
+                  {currentBlockCoachNote ? (
+                    <p className="mt-1 text-sm text-slate-600">
+                      {currentBlockCoachNote}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="mt-4">
-                <SetProgress currentSet={currentSet} totalSets={currentExercise.sets} />
+                <SetProgress
+                  currentSet={
+                    currentBlockType === "superset" || currentBlockType === "circuit"
+                      ? currentRound
+                      : currentSet
+                  }
+                  totalSets={
+                    currentBlockType === "superset" || currentBlockType === "circuit"
+                      ? currentRoundTotal
+                      : currentExercise.sets
+                  }
+                />
               </div>
 
               {!showExerciseFeedback ? (

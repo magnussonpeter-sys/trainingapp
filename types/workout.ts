@@ -48,15 +48,56 @@ export type WorkoutAiDebug = {
   normalizedWorkout?: unknown;
 };
 
-export type WorkoutBlockType = "straight_sets";
+export type WorkoutBlockType = "straight_sets" | "superset" | "circuit";
+
+export type WorkoutWarmupGuide = {
+  recommended: boolean;
+  instruction?: string;
+};
 
 export type StraightSetsWorkoutBlock = {
   type: "straight_sets";
   title?: string;
+  purpose?: string;
+  coachNote?: string;
+  targetRpe?: number | null;
+  targetRir?: number | null;
+  warmup?: WorkoutWarmupGuide;
   exercises: Exercise[];
 };
 
-export type WorkoutBlock = StraightSetsWorkoutBlock;
+export type SupersetWorkoutBlock = {
+  type: "superset";
+  title?: string;
+  purpose?: string;
+  coachNote?: string;
+  targetRpe?: number | null;
+  targetRir?: number | null;
+  warmup?: WorkoutWarmupGuide;
+  rounds?: number | null;
+  restBetweenExercises?: number | null;
+  restAfterRound?: number | null;
+  exercises: Exercise[];
+};
+
+export type CircuitWorkoutBlock = {
+  type: "circuit";
+  title?: string;
+  purpose?: string;
+  coachNote?: string;
+  targetRpe?: number | null;
+  targetRir?: number | null;
+  warmup?: WorkoutWarmupGuide;
+  rounds?: number | null;
+  restBetweenExercises?: number | null;
+  restAfterRound?: number | null;
+  exercises: Exercise[];
+};
+
+export type WorkoutBlock =
+  | StraightSetsWorkoutBlock
+  | SupersetWorkoutBlock
+  | CircuitWorkoutBlock;
 
 // Legacy-form används bara för att kunna läsa äldre sparade pass.
 // Ny kod ska alltid skapa `blocks`.

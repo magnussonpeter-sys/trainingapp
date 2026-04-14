@@ -1,12 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+
 import { saveCachedHomeSettings } from "@/lib/home-settings-cache";
+import { uiButtonClasses } from "@/lib/ui/button-classes";
+import { uiCardClasses } from "@/lib/ui/card-classes";
+import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 
 type Sex = "male" | "female" | "other" | "na";
 type Experience = "beginner" | "novice" | "intermediate" | "advanced";
 type Goal = "strength" | "hypertrophy" | "health" | "body_composition";
+type PriorityMuscle =
+  | "chest"
+  | "back"
+  | "quads"
+  | "hamstrings"
+  | "glutes"
+  | "shoulders"
+  | "biceps"
+  | "triceps"
+  | "calves"
+  | "core";
 
 type AuthUser = {
   id: number | string;
@@ -25,8 +40,39 @@ type UserSettingsResponse = {
     height_cm?: number | null;
     experience_level?: Experience | null;
     training_goal?: Goal | null;
+    avoid_supersets?: boolean | null;
+    primary_priority_muscle?: PriorityMuscle | null;
+    secondary_priority_muscle?: PriorityMuscle | null;
   };
 };
+
+const PRIORITY_MUSCLE_OPTIONS: Array<{
+  value: PriorityMuscle;
+  label: string;
+  shortLabel: string;
+}> = [
+  { value: "chest", label: "Bröst", shortLabel: "Bröst" },
+  { value: "back", label: "Rygg", shortLabel: "Rygg" },
+  { value: "quads", label: "Framsida lår", shortLabel: "Quads" },
+  { value: "hamstrings", label: "Baksida lår", shortLabel: "Hamstrings" },
+  { value: "glutes", label: "Säte", shortLabel: "Säte" },
+  { value: "shoulders", label: "Axlar", shortLabel: "Axlar" },
+  { value: "biceps", label: "Biceps", shortLabel: "Biceps" },
+  { value: "triceps", label: "Triceps", shortLabel: "Triceps" },
+  { value: "calves", label: "Vader", shortLabel: "Vader" },
+  { value: "core", label: "Bål", shortLabel: "Bål" },
+];
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function getPriorityLabel(muscle: PriorityMuscle) {
+  return (
+    PRIORITY_MUSCLE_OPTIONS.find((option) => option.value === muscle)?.label ??
+    muscle
+  );
+}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -40,17 +86,38 @@ export default function SettingsPage() {
   const [height, setHeight] = useState("");
   const [experience, setExperience] = useState("");
   const [goal, setGoal] = useState("");
+  const [avoidSupersets, setAvoidSupersets] = useState(false);
+  const [priorityMuscles, setPriorityMuscles] = useState<PriorityMuscle[]>([]);
+  const [draggedPriorityIndex, setDraggedPriorityIndex] = useState<number | null>(
+    null,
+  );
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [pageError, setPageError] = useState("");
+
+  const canUsePriorityMuscles =
+    goal === "hypertrophy" || goal === "body_composition";
+
+  const selectedPriorityDescription = useMemo(() => {
+    if (priorityMuscles.length === 0) {
+      return "Ingen särskild muskelgrupp är prioriterad just nu.";
+    }
+
+    if (priorityMuscles.length === 1) {
+      return `${getPriorityLabel(priorityMuscles[0])} får extra fokus i veckoplanen.`;
+    }
+
+    return `${getPriorityLabel(priorityMuscles[0])} prioriteras först och ${getPriorityLabel(
+      priorityMuscles[1],
+    ).toLowerCase()} därefter.`;
+  }, [priorityMuscles]);
 
   useEffect(() => {
     let isMounted = true;
 
     async function checkAuthAndLoad() {
       try {
-        // Hämta aktuell användare från nya auth-formatet: { user }.
         const authRes = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
@@ -82,25 +149,23 @@ export default function SettingsPage() {
         setAuthChecked(true);
 
         const userId = String(user.id);
-
         const settingsRes = await fetch(
           `/api/user-settings?userId=${encodeURIComponent(userId)}`,
           {
             cache: "no-store",
             credentials: "include",
-          }
+          },
         );
 
-        const settingsData =
-          (await settingsRes.json()) as UserSettingsResponse;
+        const settingsData = (await settingsRes.json()) as UserSettingsResponse;
 
         if (!settingsRes.ok || !settingsData?.ok) {
           throw new Error(
-            settingsData?.error || "Kunde inte hämta inställningar"
+            settingsData?.error || "Kunde inte hämta inställningar",
           );
         }
 
-        if (settingsData?.settings) {
+        if (settingsData.settings) {
           const s = settingsData.settings;
           setSex(s.sex ?? "");
           setAge(s.age?.toString() ?? "");
@@ -108,6 +173,12 @@ export default function SettingsPage() {
           setHeight(s.height_cm?.toString() ?? "");
           setExperience(s.experience_level ?? "");
           setGoal(s.training_goal ?? "");
+          setAvoidSupersets(Boolean(s.avoid_supersets));
+          setPriorityMuscles(
+            [s.primary_priority_muscle, s.secondary_priority_muscle].filter(
+              (value): value is PriorityMuscle => typeof value === "string",
+            ),
+          );
         }
       } catch (error) {
         if (!isMounted) return;
@@ -115,7 +186,7 @@ export default function SettingsPage() {
         setPageError(
           error instanceof Error
             ? error.message
-            : "Kunde inte hämta inställningar"
+            : "Kunde inte hämta inställningar",
         );
       } finally {
         if (isMounted) {
@@ -131,7 +202,48 @@ export default function SettingsPage() {
     };
   }, [router]);
 
-  const save = async () => {
+  useEffect(() => {
+    if (canUsePriorityMuscles) {
+      return;
+    }
+
+    setPriorityMuscles([]);
+  }, [canUsePriorityMuscles]);
+
+  function togglePriorityMuscle(muscle: PriorityMuscle) {
+    setPriorityMuscles((current) => {
+      if (current.includes(muscle)) {
+        return current.filter((item) => item !== muscle);
+      }
+
+      if (current.length >= 2) {
+        return current;
+      }
+
+      return [...current, muscle];
+    });
+  }
+
+  function movePriorityMuscle(fromIndex: number, toIndex: number) {
+    if (
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= priorityMuscles.length ||
+      toIndex >= priorityMuscles.length
+    ) {
+      return;
+    }
+
+    setPriorityMuscles((current) => {
+      const next = [...current];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }
+
+  async function save() {
     if (!authUser) return;
 
     setSaving(true);
@@ -140,6 +252,12 @@ export default function SettingsPage() {
 
     try {
       const userId = String(authUser.id);
+      const primaryPriorityMuscle = canUsePriorityMuscles
+        ? priorityMuscles[0] ?? null
+        : null;
+      const secondaryPriorityMuscle = canUsePriorityMuscles
+        ? priorityMuscles[1] ?? null
+        : null;
 
       const res = await fetch("/api/user-settings", {
         method: "POST",
@@ -155,6 +273,9 @@ export default function SettingsPage() {
           height_cm: height ? Number(height) : null,
           experience_level: experience || null,
           training_goal: goal || null,
+          avoid_supersets: avoidSupersets,
+          primary_priority_muscle: primaryPriorityMuscle,
+          secondary_priority_muscle: secondaryPriorityMuscle,
         }),
       });
 
@@ -164,198 +285,385 @@ export default function SettingsPage() {
         throw new Error(data?.error || "Kunde inte spara");
       }
 
-      // Uppdatera home-cachen direkt så att första AI-genereringen använder
-      // det nya målet även om home-sidan ännu inte hunnit refetcha.
       saveCachedHomeSettings(userId, {
         training_goal: (goal || null) as Goal | null,
+        avoid_supersets: avoidSupersets,
+        primary_priority_muscle: primaryPriorityMuscle,
+        secondary_priority_muscle: secondaryPriorityMuscle,
       });
 
-      setMessage("Sparat!");
+      setMessage("Inställningarna sparades.");
     } catch (error) {
       setPageError(error instanceof Error ? error.message : "Kunde inte spara");
       setMessage("");
     } finally {
       setSaving(false);
     }
-  };
+  }
 
   if (!authChecked) {
     return <div className="p-6">Kontrollerar inloggning...</div>;
   }
 
   return (
-    <main className="mx-auto max-w-2xl p-6">
-      <button
-        type="button"
-        onClick={() => router.back()}
-        className="text-sm font-semibold text-blue-600"
-      >
-        ← Tillbaka
-      </button>
-
-      <h1 className="mt-4 text-3xl font-bold text-gray-950">Inställningar</h1>
-
-      {pageError ? (
-        <div className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">
-          {pageError}
-        </div>
-      ) : null}
-
-      <section className="mt-6 rounded-3xl border bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-950">Profil</h2>
-
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="text-sm font-medium text-gray-900">Kön</label>
-            <select
-              value={sex}
-              onChange={(e) => setSex(e.target.value as Sex)}
-              className="mt-2 w-full rounded border p-2"
-            >
-              <option value="">Välj kön</option>
-              <option value="male">Man</option>
-              <option value="female">Kvinna</option>
-              <option value="other">Annat</option>
-              <option value="na">Vill ej ange</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium text-gray-900">Ålder</label>
-            <input
-              value={age}
-              onChange={(e) => setAge(e.target.value)}
-              placeholder="Ålder"
-              inputMode="numeric"
-              className="mt-2 w-full rounded border p-2"
-            />
-          </div>
-
-          <div>
-            <label className="text-sm font-medium text-gray-900">Vikt</label>
-            <input
-              value={weight}
-              onChange={(e) => setWeight(e.target.value)}
-              placeholder="Vikt (kg)"
-              inputMode="decimal"
-              className="mt-2 w-full rounded border p-2"
-            />
-          </div>
-
-          <div>
-            <label className="text-sm font-medium text-gray-900">Längd</label>
-            <input
-              value={height}
-              onChange={(e) => setHeight(e.target.value)}
-              placeholder="Längd (cm)"
-              inputMode="numeric"
-              className="mt-2 w-full rounded border p-2"
-            />
-          </div>
-        </div>
-      </section>
-
-      <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-950">Erfarenhet</h2>
-
-        <select
-          value={experience}
-          onChange={(e) => setExperience(e.target.value as Experience)}
-          className="mt-2 w-full rounded border p-2"
-        >
-          <option value="">Välj nivå</option>
-          <option value="beginner">Nybörjare</option>
-          <option value="novice">Viss vana</option>
-          <option value="intermediate">Erfaren</option>
-          <option value="advanced">Avancerad</option>
-        </select>
-      </section>
-
-      <section className="mt-4 rounded-3xl border bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-950">Mål</h2>
-
-        <div className="mt-4 grid gap-3">
-          <button
-            type="button"
-            onClick={() => setGoal("strength")}
-            className={`w-full rounded-xl border p-3 text-left ${
-              goal === "strength"
-                ? "border-blue-600 bg-blue-50"
-                : "border-gray-200"
-            }`}
-          >
-            <div className="font-semibold text-gray-950">Bli starkare</div>
-            <p className="mt-1 text-sm text-gray-800">
-              Fokuserar på att öka styrka i basövningar med tyngre vikter och
-              längre vila.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setGoal("hypertrophy")}
-            className={`w-full rounded-xl border p-3 text-left ${
-              goal === "hypertrophy"
-                ? "border-blue-600 bg-blue-50"
-                : "border-gray-200"
-            }`}
-          >
-            <div className="font-semibold text-gray-950">Bygga muskler</div>
-            <p className="mt-1 text-sm text-gray-800">
-              Mer träningsvolym och medelhöga reps för att stimulera
-              muskelmassa.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setGoal("health")}
-            className={`w-full rounded-xl border p-3 text-left ${
-              goal === "health"
-                ? "border-blue-600 bg-blue-50"
-                : "border-gray-200"
-            }`}
-          >
-            <div className="font-semibold text-gray-950">
-              Hälsa och funktion
-            </div>
-            <p className="mt-1 text-sm text-gray-800">
-              Helkroppsträning för att må bättre, bli starkare i vardagen och
-              minska skaderisk.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setGoal("body_composition")}
-            className={`w-full rounded-xl border p-3 text-left ${
-              goal === "body_composition"
-                ? "border-blue-600 bg-blue-50"
-                : "border-gray-200"
-            }`}
-          >
-            <div className="font-semibold text-gray-950">
-              Kroppssammansättning
-            </div>
-            <p className="mt-1 text-sm text-gray-800">
-              Kombinerar styrka och tempo för att minska fettmassa och behålla
-              muskler.
-            </p>
-          </button>
-        </div>
-      </section>
-
-      <div className="mt-6 flex items-center gap-3">
+    <main className={uiPageShellClasses.page}>
+      <div className={cn(uiPageShellClasses.content, uiPageShellClasses.stack)}>
         <button
           type="button"
-          onClick={save}
-          disabled={saving}
-          className="rounded-2xl bg-gray-900 px-5 py-3 font-semibold text-white disabled:opacity-60"
+          onClick={() => router.back()}
+          className={uiButtonClasses.ghost}
         >
-          {saving ? "Sparar..." : "Spara"}
+          ← Tillbaka
         </button>
 
-        {message ? <p className="text-sm text-green-700">{message}</p> : null}
+        <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-slate-500">Inställningar</p>
+            <h1 className="text-3xl font-semibold tracking-tight text-slate-950">
+              Din träningsprofil
+            </h1>
+            <p className="max-w-2xl text-sm leading-6 text-slate-600">
+              Här styr du hur AI:n tänker kring mål, passupplägg och vilka
+              muskelgrupper som ska få extra fokus i veckoplanen.
+            </p>
+          </div>
+        </section>
+
+        {pageError ? <div className={uiCardClasses.danger}>{pageError}</div> : null}
+        {message ? <div className={uiCardClasses.success}>{message}</div> : null}
+
+        <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">Profil</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Grunddata som hjälper planeringen att hitta rätt nivå och dos.
+              </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="text-sm font-medium text-slate-900">Kön</label>
+                <select
+                  value={sex}
+                  onChange={(e) => setSex(e.target.value as Sex)}
+                  className="mt-2 min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                >
+                  <option value="">Välj kön</option>
+                  <option value="male">Man</option>
+                  <option value="female">Kvinna</option>
+                  <option value="other">Annat</option>
+                  <option value="na">Vill ej ange</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-slate-900">Ålder</label>
+                <input
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  placeholder="Ålder"
+                  inputMode="numeric"
+                  className="mt-2 min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-slate-900">Vikt</label>
+                <input
+                  value={weight}
+                  onChange={(e) => setWeight(e.target.value)}
+                  placeholder="Vikt (kg)"
+                  inputMode="decimal"
+                  className="mt-2 min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-slate-900">Längd</label>
+                <input
+                  value={height}
+                  onChange={(e) => setHeight(e.target.value)}
+                  placeholder="Längd (cm)"
+                  inputMode="numeric"
+                  className="mt-2 min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">Erfarenhet</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Hjälper appen att välja rätt volym, svårighetsgrad och variation.
+              </p>
+            </div>
+
+            <select
+              value={experience}
+              onChange={(e) => setExperience(e.target.value as Experience)}
+              className="min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="">Välj nivå</option>
+              <option value="beginner">Nybörjare</option>
+              <option value="novice">Viss vana</option>
+              <option value="intermediate">Erfaren</option>
+              <option value="advanced">Avancerad</option>
+            </select>
+          </div>
+        </section>
+
+        <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">Mål</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Ditt mål styr veckostruktur, träningsdos och hur AI prioriterar.
+              </p>
+            </div>
+
+            <div className="grid gap-3">
+              {[
+                {
+                  value: "strength",
+                  title: "Bli starkare",
+                  description:
+                    "Fokuserar på styrkeutveckling i större lyft med mer vila och tydligare toppset.",
+                },
+                {
+                  value: "hypertrophy",
+                  title: "Bygga muskler",
+                  description:
+                    "Mer träningsvolym och fler effektiva arbetsset för att stimulera muskelmassa.",
+                },
+                {
+                  value: "health",
+                  title: "Hälsa och funktion",
+                  description:
+                    "Helkroppsträning för vardagsstyrka, hållbarhet och låg tröskel att genomföra.",
+                },
+                {
+                  value: "body_composition",
+                  title: "Kroppssammansättning",
+                  description:
+                    "Kombinerar styrka och täthet för att behålla muskler och förbättra kroppssammansättningen.",
+                },
+              ].map((option) => {
+                const selected = goal === option.value;
+
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setGoal(option.value)}
+                    className={cn(
+                      "rounded-[24px] border p-4 text-left transition",
+                      selected
+                        ? "border-lime-500 bg-lime-100 shadow-sm"
+                        : "border-slate-200 bg-white hover:bg-slate-50",
+                    )}
+                  >
+                    <div className="font-semibold text-slate-950">{option.title}</div>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {option.description}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">
+                Muskelgruppsprio
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Välj upp till två muskelgrupper som ska få extra fokus i
+                veckobudgeten. Ordningen styr vilken som är viktigast.
+              </p>
+            </div>
+
+            {canUsePriorityMuscles ? (
+              <>
+                <div className={uiCardClasses.soft}>
+                  <p className="text-sm font-medium text-slate-900">
+                    Prioriteringsordning
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    Dra korten för att byta ordning, eller använd pilarna om du
+                    föredrar det.
+                  </p>
+
+                  <div className="mt-4 space-y-3">
+                    {priorityMuscles.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-4 text-sm text-slate-500">
+                        Ingen muskelgrupp vald ännu.
+                      </div>
+                    ) : null}
+
+                    {priorityMuscles.map((muscle, index) => (
+                      <div
+                        key={muscle}
+                        draggable
+                        onDragStart={() => setDraggedPriorityIndex(index)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => {
+                          if (draggedPriorityIndex === null) {
+                            return;
+                          }
+
+                          movePriorityMuscle(draggedPriorityIndex, index);
+                          setDraggedPriorityIndex(null);
+                        }}
+                        onDragEnd={() => setDraggedPriorityIndex(null)}
+                        className={cn(
+                          "flex items-center justify-between gap-3 rounded-2xl border px-4 py-3",
+                          draggedPriorityIndex === index
+                            ? "border-lime-500 bg-lime-100"
+                            : "border-slate-200 bg-white",
+                        )}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                            {index + 1}
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-950">
+                              {getPriorityLabel(muscle)}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {index === 0 ? "Högst prioriterad" : "Sekundär prioritet"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => movePriorityMuscle(index, index - 1)}
+                            disabled={index === 0}
+                            className={uiButtonClasses.ghost}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => movePriorityMuscle(index, index + 1)}
+                            disabled={index === priorityMuscles.length - 1}
+                            className={uiButtonClasses.ghost}
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => togglePriorityMuscle(muscle)}
+                            className={uiButtonClasses.ghost}
+                          >
+                            Ta bort
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="mt-4 text-sm leading-6 text-slate-600">
+                    {selectedPriorityDescription}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {PRIORITY_MUSCLE_OPTIONS.map((option) => {
+                    const selected = priorityMuscles.includes(option.value);
+                    const disabled = !selected && priorityMuscles.length >= 2;
+
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => togglePriorityMuscle(option.value)}
+                        disabled={disabled}
+                        className={cn(
+                          uiButtonClasses.chip,
+                          selected
+                            ? uiButtonClasses.chipSelected
+                            : uiButtonClasses.chipDefault,
+                          disabled && "opacity-50",
+                        )}
+                      >
+                        {option.shortLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className={uiCardClasses.soft}>
+                <p className="text-sm font-medium text-slate-900">
+                  Muskelgruppsprio aktiveras för mål där extra fokus är mest
+                  relevant.
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Välj främst <span className="font-medium">Bygga muskler</span>{" "}
+                  eller <span className="font-medium">Kroppssammansättning</span>{" "}
+                  om du vill styra 1–2 prioriterade muskelgrupper.
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">Passupplägg</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Styr om AI:n gärna får använda supersets i korta pass.
+              </p>
+            </div>
+
+            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+              <input
+                type="checkbox"
+                checked={avoidSupersets}
+                onChange={(event) => setAvoidSupersets(event.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-slate-300"
+              />
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  Undvik supersets
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  När detta är av markerat försöker AI:n annars gärna använda
+                  supersets i korta pass för att spara tid.
+                </p>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <div className="flex items-center gap-3 pb-4">
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className={uiButtonClasses.primary}
+          >
+            {saving ? "Sparar..." : "Spara inställningar"}
+          </button>
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className={uiButtonClasses.secondary}
+          >
+            Avbryt
+          </button>
+        </div>
       </div>
     </main>
   );

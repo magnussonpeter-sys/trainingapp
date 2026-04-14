@@ -9,7 +9,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getWorkoutLogs, type WorkoutLog } from "@/lib/workout-log-storage";
+import {
+  clearWorkoutLogs,
+  getWorkoutLogs,
+  removeWorkoutLog,
+  type WorkoutLog,
+} from "@/lib/workout-log-storage";
 import { saveActiveWorkout } from "@/lib/workout-storage";
 import type { Exercise, Workout } from "@/types/workout";
 
@@ -116,26 +121,6 @@ function createWorkoutFromLog(log: WorkoutLog): Workout {
       },
     ],
   };
-}
-
-// Lokal fallback används om API inte går att nå.
-function getWorkoutLogsStorageKey(userId: string) {
-  return `workout-logs:${userId}`;
-}
-
-function persistWorkoutLogs(userId: string, logs: WorkoutLog[]) {
-  localStorage.setItem(getWorkoutLogsStorageKey(userId), JSON.stringify(logs));
-}
-
-function removeWorkoutLogFromStorage(userId: string, workoutId: string) {
-  const logs = getWorkoutLogs(userId);
-  const updatedLogs = logs.filter((log) => log.id !== workoutId);
-  persistWorkoutLogs(userId, updatedLogs);
-  return updatedLogs;
-}
-
-function clearAllWorkoutLogsFromStorage(userId: string) {
-  persistWorkoutLogs(userId, []);
 }
 
 export default function HistoryPage() {
@@ -269,10 +254,13 @@ export default function HistoryPage() {
     if (!authUser || isDeleting) return;
 
     const userId = String(authUser.id);
+    const workoutToDelete = workouts.find((workout) => workout.id === workoutId) ?? null;
+    const localLogs = getWorkoutLogs(userId);
+    const existsLocally = localLogs.some((log) => log.id === workoutId);
     setIsDeleting(true);
 
     try {
-      if (dataSource === "api") {
+      if (dataSource === "api" && workoutToDelete) {
         // Radera passet i databasen.
         const response = await fetch(
           `/api/workout-logs/${encodeURIComponent(workoutId)}?userId=${encodeURIComponent(
@@ -286,17 +274,31 @@ export default function HistoryPage() {
 
         const data = await response.json().catch(() => null);
 
-        if (!response.ok || !data?.ok) {
+        if (response.status === 404 && existsLocally) {
+          // Passet fanns bara lokalt i merged historik.
+        } else if (!response.ok || !data?.ok) {
           throw new Error(data?.error ?? "Kunde inte radera passet");
         }
-
-        // Uppdatera listan lokalt i UI:t.
-        setWorkouts((prev) => prev.filter((workout) => workout.id !== workoutId));
-      } else {
-        // Lokal fallback-radering.
-        const updatedLogs = removeWorkoutLogFromStorage(userId, workoutId);
-        setWorkouts(updatedLogs);
       }
+
+      // Rensa alltid lokal fallback också för att merged historik inte ska skapa spökposter.
+      removeWorkoutLog(userId, (log) => {
+        if (log.id === workoutId) {
+          return true;
+        }
+
+        if (!workoutToDelete) {
+          return false;
+        }
+
+        return (
+          log.workoutName === workoutToDelete.workoutName &&
+          log.completedAt === workoutToDelete.completedAt &&
+          log.status === workoutToDelete.status
+        );
+      });
+
+      setWorkouts((prev) => prev.filter((workout) => workout.id !== workoutId));
 
       setDeletingWorkoutId(null);
     } catch (error) {
@@ -332,7 +334,7 @@ export default function HistoryPage() {
       }
 
       // Rensa alltid lokal fallback också så att ingen gammal data blir kvar.
-      clearAllWorkoutLogsFromStorage(userId);
+      clearWorkoutLogs(userId);
       setWorkouts([]);
       setShowClearAllConfirm(false);
       setDeletingWorkoutId(null);

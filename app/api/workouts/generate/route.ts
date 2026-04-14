@@ -84,8 +84,10 @@ function buildDebugPayload(params: {
   confidenceScore: ConfidenceScore | null;
   nextFocus: WorkoutFocus | null;
   splitStyle: string | null;
+  avoidSupersets: boolean;
   weeklyBudget: unknown;
   weeklyPlan: unknown;
+  lessOftenExerciseIds?: string[];
   generationContext: unknown;
   prompt: string;
   rawAiText: string;
@@ -104,8 +106,10 @@ function buildDebugPayload(params: {
     confidenceScore,
     nextFocus,
     splitStyle,
+    avoidSupersets,
     weeklyBudget,
     weeklyPlan,
+    lessOftenExerciseIds,
     generationContext,
     prompt,
     rawAiText,
@@ -126,8 +130,10 @@ function buildDebugPayload(params: {
       confidenceScore,
       nextFocus,
       splitStyle,
+      avoidSupersets,
       weeklyBudget,
       weeklyPlan,
+      lessOftenExerciseIds,
     },
     generationContext,
     prompt,
@@ -145,6 +151,9 @@ type UserSettingsSummary = {
   height_cm?: number | null;
   experience_level?: string | null;
   training_goal?: string | null;
+  avoid_supersets?: boolean | null;
+  primary_priority_muscle?: string | null;
+  secondary_priority_muscle?: string | null;
 };
 
 type GymEquipmentPromptItem = {
@@ -174,6 +183,19 @@ type WeeklyBudgetPromptItem = Pick<
   | "recent4WeekAvgSets"
 >;
 
+type WeeklyBudgetValidationItem = Pick<
+  MuscleBudgetEntry,
+  "group" | "remainingSets" | "priority"
+> & {
+  loadStatus?: MuscleBudgetEntry["loadStatus"];
+};
+
+type ProgressionTrackPromptItem = {
+  name: string;
+  intent: string;
+  stepNames: string[];
+};
+
 async function getUserSettingsSummary(userId: string) {
   const result = await pool.query<UserSettingsSummary>(
     `
@@ -183,7 +205,10 @@ async function getUserSettingsSummary(userId: string) {
         weight_kg,
         height_cm,
         experience_level,
-        training_goal
+        training_goal,
+        avoid_supersets,
+        primary_priority_muscle,
+        secondary_priority_muscle
       from user_settings
       where user_id = $1
       limit 1
@@ -293,18 +318,28 @@ function buildProgressionTrackPrompt(availableEquipment: string[]) {
   const tracks = getAvailableProgressionTracks(availableEquipment);
 
   if (tracks.length === 0) {
-    return "inga tydliga progressionstrappor tillgängliga i denna miljö";
+    return {
+      text: "inga tydliga progressionstrappor tillgängliga i denna miljö",
+      items: [] as ProgressionTrackPromptItem[],
+    };
   }
 
-  return tracks
-    .map((track) => {
-      const stepNames = track.availableStepIds
-        .map((stepId) => availableExerciseNames.get(stepId) ?? stepId)
-        .join(" -> ");
+  const items = tracks.map((track) => ({
+    name: track.name,
+    intent: track.intent,
+    stepNames: track.availableStepIds.map(
+      (stepId) => availableExerciseNames.get(stepId) ?? stepId,
+    ),
+  }));
 
-      return `- ${track.name}: ${stepNames}. Syfte: ${track.intent}`;
-    })
-    .join("\n");
+  return {
+    items,
+    text: items
+      .map((track) => {
+        return `- ${track.name}: ${track.stepNames.join(" -> ")}. Syfte: ${track.intent}`;
+      })
+      .join("\n"),
+  };
 }
 
 function buildGenerationPrompt(params: {
@@ -322,8 +357,10 @@ function buildGenerationPrompt(params: {
   recentWorkouts: unknown[];
   settings: UserSettingsSummary | null;
   splitStyle: string | null;
+  avoidSupersets: boolean;
   weeklyBudget: WeeklyBudgetPromptItem[];
   weeklyPlan: WeeklyPlanPromptItem[];
+  lessOftenExerciseIds?: string[];
 }) {
   const recentWorkoutText =
     params.recentWorkouts.length > 0
@@ -359,7 +396,8 @@ function buildGenerationPrompt(params: {
   const nextFocusText = params.nextFocus ?? "full_body";
   const confidenceText = params.confidenceScore ?? "medium";
   const splitStyleText = params.splitStyle ?? "adaptive";
-  const progressionTrackText = buildProgressionTrackPrompt(params.equipment);
+  const supersetPreferenceText = params.avoidSupersets ? "AVOID" : "ALLOWED";
+  const progressionTracks = buildProgressionTrackPrompt(params.equipment);
 
   return `
 Skapa ett evidensbaserat träningspass som strikt JSON.
@@ -382,23 +420,93 @@ Kontext:
 - föreslagen split-stil denna vecka: ${splitStyleText}
 - veckans muskelbudget och återstående set: ${weeklyBudgetText}
 - enkel veckoplan för kommande 7 dagar: ${weeklyPlanText}
+- superset-preferens: ${supersetPreferenceText}
+- övningar användaren vill ha mindre av: ${
+    params.lessOftenExerciseIds && params.lessOftenExerciseIds.length > 0
+      ? params.lessOftenExerciseIds.join(", ")
+      : "inga uttryckliga negativa preferenser"
+  }
 
 Tillgängliga övningar från katalogen:
 ${params.availableExercisePrompt}
 
 Kända progressionsstegar i denna miljö:
-${progressionTrackText}
+${progressionTracks.text}
+
+För korta pass ska du tänka i denna ordning:
+1. välj blockstruktur
+2. välj om block ska vara straight_sets eller superset
+3. välj övningar som passar varje block
+4. fyll sedan in sets, reps, vila och coachning
+
+Exempel på önskat block-first-svar för ett kort pass:
+{
+  "name": "Kort helkroppspass",
+  "duration": 30,
+  "rationale": "Tidseffektivt pass med superset för att täcka push, pull och ben.",
+  "blocks": [
+    {
+      "type": "superset",
+      "title": "Överkroppssuperset",
+      "purpose": "Spara tid och balansera press och drag.",
+      "coach_note": "Växla lugnt mellan press och drag.",
+      "target_rpe": 7,
+      "target_rir": 2,
+      "rounds": 3,
+      "restBetweenExercises": 15,
+      "restAfterRound": 60,
+      "exercises": [
+        {
+          "id": "dumbbell_bench_press",
+          "name": "Hantelpress på bänk",
+          "sets": 3,
+          "reps": 10,
+          "duration": null,
+          "rest": 75,
+          "suggestedWeight": null,
+          "movementPattern": "horizontal_push",
+          "intensityTag": "primary",
+          "rationale": "Ger effektiv pressvolym."
+        },
+        {
+          "id": "ring_row",
+          "name": "Ring rows",
+          "sets": 3,
+          "reps": 10,
+          "duration": null,
+          "rest": 60,
+          "suggestedWeight": null,
+          "movementPattern": "horizontal_pull",
+          "intensityTag": "primary",
+          "rationale": "Balanserar pressen och sparar tid."
+        }
+      ],
+      "warmup": {
+        "recommended": false,
+        "instruction": ""
+      }
+    }
+  ]
+}
 
 Output-format:
 {
   "name": "...",
   "duration": number,
   "rationale": "kort motivering",
+  "superset_considered": boolean,
+  "superset_reason": "kort förklaring till varför du använde eller inte använde superset",
   "blocks": [
     {
-      "type": "straight_sets",
+      "type": "straight_sets | superset",
       "title": "...",
       "purpose": "kort syfte",
+      "coach_note": "kort coachning på max 15 ord",
+      "target_rpe": number | null,
+      "target_rir": number | null,
+      "rounds": number | null,
+      "restBetweenExercises": number | null,
+      "restAfterRound": number | null,
       "exercises": [
         {
           "id": "måste vara ett id från katalogen ovan",
@@ -412,7 +520,11 @@ Output-format:
           "intensityTag": "primary | secondary | accessory | finisher",
           "rationale": "kort motivering"
         }
-      ]
+      ],
+      "warmup": {
+        "recommended": boolean,
+        "instruction": "kort uppvärmningsinstruktion om relevant"
+      }
     }
   ]
 }
@@ -422,11 +534,30 @@ Viktiga regler:
 - Inga markdown-block, inga förklaringar utanför JSON
 - Använd blocks, inte top-level exercises om du inte absolut måste
 - Använd bara övningar från kataloglistan ovan
+- Inkludera alltid både superset_considered och superset_reason i toppnivån
+- Använd aldrig circuit just nu
+- Tolkningsregel: superset-preferens ALLOWED betyder att användaren inte har förbjudit supersets
+- Tolkningsregel: superset-preferens AVOID betyder att användaren uttryckligen vill undvika supersets
+- Om superset-preferens är AVOID ska du inte använda superset alls
+- För pass på 20 minuter eller kortare ska superset i normalfallet bestå av exakt 2 övningar, inte 3
+- För sådana mycket korta pass ska du undvika 3-övnings-superset eftersom de blir svårare att hålla tidseffektiva och robusta
+- För pass på 30 minuter eller kortare ska du som standard bygga passet runt ett eller flera superset-block när rimliga och säkra parningar finns
+- För sådana korta pass ska straight_sets bara användas för övningar som inte passar i superset eller som bör stå ensamma av kvalitets- eller säkerhetsskäl
+- Om du väljer bort superset i ett kort pass ska det bero på att säkra och logiska superset-parningar saknas
+- För pass mellan 31 och 40 minuter får du använda högst ett superset-block om det tydligt sparar tid utan att sänka kvaliteten
+- Ett superset ska helst para press + drag eller underkropp + bål/lågriskövning
+- Lägg aldrig två högrisklyft eller två tunga stora underkroppslyft i samma superset
+- Om passet är längre eller tyngre ska straight_sets vara standard
+- Varje block ska ha en kort coach_note och ett target_rpe eller target_rir
+- Tunga flerledsövningar tidigt i passet bör oftast ligga runt RPE 7-8 eller 1-3 RIR
+- Säkrare isolationsövningar eller sena block kan ligga närmare RPE 8-9
+- Om första blocket innehåller en tung eller högriskövning ska warmup.recommended vara true med en enkel uppvärmningsinstruktion
 - När en relevant progressionstege finns, välj gärna ett steg som passar användarens nivå i stället för att bara höja reps på obestämd tid
 - Prioritera stora flerledsövningar tidigt när målet eller passets längd motiverar det
 - Anpassa vila, dos och övningsval till träningsmålet
 - Om utrustning finns ska den användas men utan att förstöra passets kvalitet
 - Undvik dubbletter och nästan identiska övningar i samma pass
+- Sträva efter att dragvolymen matchar eller överstiger pressvolymen när passet innehåller båda
 - När likvärdiga alternativ finns ska du variera bort från övningar och variantgrupper som användes i de senaste 1-3 passen
 - Behåll bara samma övning som nyligen om den är tydligt bäst givet mål, utrustning eller progression
 - Låt veckoplanen påverka passets huvudfokus. Om nästa fokus är upper_body, lower_body, core eller full_body ska passet tydligt kännas som detta utan att bli obalanserat
@@ -451,6 +582,8 @@ export async function POST(req: Request) {
       splitStyle?: string | null;
       weeklyBudget?: WeeklyBudgetPromptItem[];
       weeklyPlan?: WeeklyPlanPromptItem[];
+      lessOftenExerciseIds?: string[];
+      avoidSupersets?: boolean;
       includeDebug?: boolean;
     };
 
@@ -486,6 +619,7 @@ export async function POST(req: Request) {
       body.nextFocus === "full_body"
         ? body.nextFocus
         : null;
+    const requestedAvoidSupersets = body.avoidSupersets === true;
     const confidenceScore =
       body.confidenceScore === "high" ||
       body.confidenceScore === "medium" ||
@@ -498,6 +632,12 @@ export async function POST(req: Request) {
         : null;
     const weeklyBudget = Array.isArray(body.weeklyBudget) ? body.weeklyBudget : [];
     const weeklyPlan = Array.isArray(body.weeklyPlan) ? body.weeklyPlan : [];
+    const lessOftenExerciseIds = Array.isArray(body.lessOftenExerciseIds)
+      ? body.lessOftenExerciseIds.filter(
+          (value): value is string =>
+            typeof value === "string" && value.trim().length > 0,
+        )
+      : [];
 
     const equipmentText = equipment.length > 0 ? equipment.join(", ") : "bodyweight";
     const hasEquipment =
@@ -519,6 +659,8 @@ export async function POST(req: Request) {
       splitStyle,
       weeklyBudget,
       weeklyPlan,
+      lessOftenExerciseIds,
+      avoidSupersets: requestedAvoidSupersets,
       includeDebug: body.includeDebug ?? false,
     });
 
@@ -531,6 +673,8 @@ export async function POST(req: Request) {
       : [null, []];
     const recentWorkouts = buildRecentWorkoutSummary(recentLogs);
     const recentExercisePreferences = buildRecentExercisePreferences(recentLogs);
+    const avoidSupersets =
+      requestedAvoidSupersets || settings?.avoid_supersets === true;
     const availableExercisePrompt = buildAvailableExercisePrompt(availableExercises);
     const generationContext = {
       userId,
@@ -544,6 +688,8 @@ export async function POST(req: Request) {
       splitStyle,
       weeklyBudget,
       weeklyPlan,
+      lessOftenExerciseIds,
+      avoidSupersets,
       hasEquipment,
     };
     const prompt = buildGenerationPrompt({
@@ -561,8 +707,10 @@ export async function POST(req: Request) {
       recentWorkouts,
       settings,
       splitStyle,
+      avoidSupersets,
       weeklyBudget,
       weeklyPlan,
+      lessOftenExerciseIds,
     });
 
     console.log("🔥 FINAL INPUT TO AI:", {
@@ -578,6 +726,7 @@ export async function POST(req: Request) {
       splitStyle,
       weeklyBudget,
       weeklyPlan,
+      lessOftenExerciseIds,
       generationContext,
       prompt,
     });
@@ -620,6 +769,7 @@ export async function POST(req: Request) {
               splitStyle,
               weeklyBudget,
               weeklyPlan,
+              lessOftenExerciseIds,
             },
             generationContext,
             rawAiText,
@@ -646,6 +796,9 @@ export async function POST(req: Request) {
       recentVariantGroups: recentExercisePreferences.recentExerciseIds
         .map((exerciseId) => availableExercises.find((item) => item.id === exerciseId)?.variantGroup)
         .filter((value): value is string => typeof value === "string" && value.length > 0),
+      weeklyBudget: weeklyBudget as WeeklyBudgetValidationItem[],
+      lessOftenExerciseIds,
+      avoidSupersets,
     });
 
     // Lägg tillbaka gym- och utrustningskontext på workout innan normalisering,
@@ -678,8 +831,10 @@ export async function POST(req: Request) {
             confidenceScore,
             nextFocus,
             splitStyle,
+            avoidSupersets,
             weeklyBudget,
             weeklyPlan,
+            lessOftenExerciseIds,
             generationContext,
             prompt,
             rawAiText,
@@ -707,8 +862,10 @@ export async function POST(req: Request) {
             confidenceScore,
             nextFocus,
             splitStyle,
+            avoidSupersets,
             weeklyBudget,
             weeklyPlan,
+            lessOftenExerciseIds,
             generationContext,
             prompt,
             rawAiText,

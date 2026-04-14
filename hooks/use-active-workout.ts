@@ -27,7 +27,7 @@ import {
   buildWeightChipOptions,
   formatWeightValue,
 } from "@/lib/workout-flow/exercise-progression";
-import type { Exercise, Workout } from "@/types/workout";
+import type { Exercise, Workout, WorkoutBlock } from "@/types/workout";
 
 type WorkoutExercise = Exercise;
 type TimerState = "idle" | "running" | "ready_to_save";
@@ -38,12 +38,75 @@ type UseActiveWorkoutProps = {
   workout: Workout | null;
 };
 
-function getAllExercises(workout: Workout | null): WorkoutExercise[] {
+type WorkoutExerciseEntry = {
+  block: WorkoutBlock;
+  blockIndex: number;
+  blockStartIndex: number;
+  exercise: WorkoutExercise;
+  exerciseIndexInBlock: number;
+  flatIndex: number;
+};
+
+function getAllExerciseEntries(workout: Workout | null): WorkoutExerciseEntry[] {
   if (!workout?.blocks?.length) {
     return [];
   }
 
-  return workout.blocks.flatMap((block) => block.exercises ?? []);
+  const entries: WorkoutExerciseEntry[] = [];
+  let flatIndex = 0;
+
+  workout.blocks.forEach((block, blockIndex) => {
+    const blockStartIndex = flatIndex;
+
+    block.exercises.forEach((exercise, exerciseIndexInBlock) => {
+      entries.push({
+        block,
+        blockIndex,
+        blockStartIndex,
+        exercise,
+        exerciseIndexInBlock,
+        flatIndex,
+      });
+      flatIndex += 1;
+    });
+  });
+
+  return entries;
+}
+
+function getAllExercises(workout: Workout | null): WorkoutExercise[] {
+  return getAllExerciseEntries(workout).map((entry) => entry.exercise);
+}
+
+function getBlockRoundCount(entry: WorkoutExerciseEntry | null) {
+  if (
+    !entry ||
+    (entry.block.type !== "superset" && entry.block.type !== "circuit")
+  ) {
+    return null;
+  }
+
+  const explicitRounds =
+    typeof entry.block.rounds === "number" && entry.block.rounds > 0
+      ? entry.block.rounds
+      : null;
+
+  if (explicitRounds) {
+    return explicitRounds;
+  }
+
+  return Math.max(
+    1,
+    ...entry.block.exercises.map((exercise) => Math.max(1, exercise.sets)),
+  );
+}
+
+function getExerciseSetTarget(entry: WorkoutExerciseEntry | null) {
+  if (!entry) {
+    return 1;
+  }
+
+  return getBlockRoundCount(entry) ?? Math.max(1, entry.exercise.sets);
 }
 
 function getDefaultRepsValue(value: number | null | undefined) {
@@ -161,31 +224,33 @@ function buildCompletedExercisesWithSet(params: {
 
 function buildCompletedExercisesWithFeedback(params: {
   previous: CompletedExercise[];
-  exercise: WorkoutExercise;
+  exerciseIds: string[];
   timedExercise: boolean;
   selectedExtraReps: ExtraRepsOption | null;
   selectedTimedEffort: TimedEffortOption | null;
 }) {
   const {
     previous,
-    exercise,
+    exerciseIds,
     timedExercise,
     selectedExtraReps,
     selectedTimedEffort,
   } = params;
 
   const next = [...previous];
-  const index = findCompletedExerciseIndex(next, exercise.id);
+  exerciseIds.forEach((exerciseId) => {
+    const index = findCompletedExerciseIndex(next, exerciseId);
 
-  if (index === -1) {
-    return next;
-  }
+    if (index === -1) {
+      return;
+    }
 
-  next[index] = {
-    ...next[index],
-    extraReps: timedExercise ? null : selectedExtraReps ?? null,
-    timedEffort: timedExercise ? selectedTimedEffort ?? null : null,
-  };
+    next[index] = {
+      ...next[index],
+      extraReps: timedExercise ? null : selectedExtraReps ?? null,
+      timedEffort: timedExercise ? selectedTimedEffort ?? null : null,
+    };
+  });
 
   return next;
 }
@@ -202,7 +267,14 @@ function parseFiniteNumberOrNull(value: string) {
 }
 
 export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
-  const allExercises = useMemo(() => getAllExercises(workout), [workout]);
+  const allExerciseEntries = useMemo(
+    () => getAllExerciseEntries(workout),
+    [workout],
+  );
+  const allExercises = useMemo(
+    () => allExerciseEntries.map((entry) => entry.exercise),
+    [allExerciseEntries],
+  );
 
   const [sessionStartedAt, setSessionStartedAt] = useState<string>(
     () => new Date().toISOString(),
@@ -235,10 +307,23 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
   const restIntervalRef = useRef<number | null>(null);
   const restoreKeyRef = useRef("");
   const finishedLogKeyRef = useRef<string | null>(null);
+  const pendingRestOverrideRef = useRef<number | null>(null);
+
+  const currentExerciseEntry = useMemo(() => {
+    return allExerciseEntries[currentExerciseIndex] ?? null;
+  }, [allExerciseEntries, currentExerciseIndex]);
 
   const currentExercise = useMemo(() => {
-    return allExercises[currentExerciseIndex] ?? null;
-  }, [allExercises, currentExerciseIndex]);
+    return currentExerciseEntry?.exercise ?? null;
+  }, [currentExerciseEntry]);
+
+  const currentRoundTotal = useMemo(() => {
+    return getExerciseSetTarget(currentExerciseEntry);
+  }, [currentExerciseEntry]);
+
+  const currentRound = useMemo(() => {
+    return Math.min(Math.max(currentSet, 1), currentRoundTotal);
+  }, [currentRoundTotal, currentSet]);
 
   const timedExercise = useMemo(() => {
     if (!currentExercise) {
@@ -390,9 +475,9 @@ if (draft && isDraftForWorkout(draft, workout)) {
     }
 
     setCurrentSet((previous) => {
-      return Math.min(Math.max(previous, 1), Math.max(1, currentExercise.sets));
+      return Math.min(Math.max(previous, 1), currentRoundTotal);
     });
-  }, [currentExercise]);
+  }, [currentExercise, currentRoundTotal]);
 
   // Förifyll reps och vikt när övning/set byts.
   useEffect(() => {
@@ -416,7 +501,10 @@ if (draft && isDraftForWorkout(draft, workout)) {
       return suggestedWeightValue;
     });
 
-    setRestRemainingSeconds(currentExercise.rest ?? 0);
+    const nextRest =
+      pendingRestOverrideRef.current ?? (currentExercise.rest ?? 0);
+    pendingRestOverrideRef.current = null;
+    setRestRemainingSeconds(nextRest);
   }, [currentExercise, showExerciseFeedback, suggestedWeightValue]);
 
   // Enkel set-timer.
@@ -559,9 +647,18 @@ if (draft && isDraftForWorkout(draft, workout)) {
     setTimerState("idle");
   }
 
-  function moveToNextExercise() {
-    setCurrentExerciseIndex((previous) => previous + 1);
-    setCurrentSet(1);
+  function transitionToExercise(
+    nextExerciseIndex: number,
+    nextSet: number,
+    restOverrideSeconds?: number | null,
+  ) {
+    const nextRestSeconds =
+      typeof restOverrideSeconds === "number" ? Math.max(0, restOverrideSeconds) : 0;
+
+    pendingRestOverrideRef.current =
+      typeof restOverrideSeconds === "number" ? nextRestSeconds : null;
+    setCurrentExerciseIndex(nextExerciseIndex);
+    setCurrentSet(Math.max(1, nextSet));
     setReps("");
     setWeight("");
     setElapsedSeconds(0);
@@ -569,14 +666,21 @@ if (draft && isDraftForWorkout(draft, workout)) {
     setShowExerciseFeedback(false);
     setSelectedExtraReps(null);
     setSelectedTimedEffort(null);
-    setShowRestTimer(false);
-    setRestTimerRunning(false);
-    setRestRemainingSeconds(0);
+    setShowRestTimer(nextRestSeconds > 0);
+    setRestTimerRunning(nextRestSeconds > 0);
+    setRestRemainingSeconds(nextRestSeconds);
     setSaveStatus("saved_local");
   }
 
-  function persistLastWeightForExercise(nextWeight: string) {
-    if (!currentExercise) {
+  function moveToNextExercise() {
+    transitionToExercise(currentExerciseIndex + 1, 1);
+  }
+
+  function persistLastWeightForExercise(
+    exercise: WorkoutExercise | null,
+    nextWeight: string,
+  ) {
+    if (!exercise) {
       return;
     }
 
@@ -588,7 +692,7 @@ if (draft && isDraftForWorkout(draft, workout)) {
 
     setLastWeightByExercise((previous) => ({
       ...previous,
-      [currentExercise.id]: formatWeightValue(normalizedWeight),
+      [exercise.id]: formatWeightValue(normalizedWeight),
     }));
   }
 
@@ -618,8 +722,66 @@ if (draft && isDraftForWorkout(draft, workout)) {
     };
   }
 
+  function getFeedbackExerciseIds() {
+    if (!currentExerciseEntry || !currentExercise) {
+      return [] as string[];
+    }
+
+    if (currentExerciseEntry.block.type === "superset") {
+      return currentExerciseEntry.block.exercises.map((exercise) => exercise.id);
+    }
+
+    return [currentExercise.id];
+  }
+
+  function showFeedbackState() {
+    setShowExerciseFeedback(true);
+    setTimerState("idle");
+    setElapsedSeconds(0);
+    setShowRestTimer(false);
+    setRestTimerRunning(false);
+    setSaveStatus("saved_local");
+  }
+
+  function advanceStructuredBlockAfterSet(entry: WorkoutExerciseEntry) {
+    if (entry.block.type !== "superset" && entry.block.type !== "circuit") {
+      return false;
+    }
+
+    const roundCount = getBlockRoundCount(entry) ?? 1;
+    const nextExerciseIndex = entry.flatIndex + 1;
+    const isLastExerciseInBlock =
+      entry.exerciseIndexInBlock >= entry.block.exercises.length - 1;
+
+    if (!isLastExerciseInBlock) {
+      transitionToExercise(
+        nextExerciseIndex,
+        currentSet,
+        entry.block.restBetweenExercises ?? 0,
+      );
+      return true;
+    }
+
+    if (currentSet < roundCount) {
+      transitionToExercise(
+        entry.blockStartIndex,
+        currentSet + 1,
+        entry.block.restAfterRound ?? 0,
+      );
+      return true;
+    }
+
+    if (entry.block.type === "circuit") {
+      moveToNextExercise();
+      return true;
+    }
+
+    showFeedbackState();
+    return true;
+  }
+
   function saveSet() {
-    if (!currentExercise) {
+    if (!currentExercise || !currentExerciseEntry) {
       return;
     }
 
@@ -639,7 +801,22 @@ if (draft && isDraftForWorkout(draft, workout)) {
     );
 
     if (completedSet.actualWeight !== null) {
-      persistLastWeightForExercise(String(completedSet.actualWeight));
+      persistLastWeightForExercise(
+        currentExercise,
+        String(completedSet.actualWeight),
+      );
+    }
+
+    if (
+      currentExerciseEntry.block.type === "superset" ||
+      currentExerciseEntry.block.type === "circuit"
+    ) {
+      const handledByStructuredBlock =
+        advanceStructuredBlockAfterSet(currentExerciseEntry);
+
+      if (handledByStructuredBlock) {
+        return;
+      }
     }
 
     if (currentSet < currentExercise.sets) {
@@ -667,6 +844,18 @@ if (draft && isDraftForWorkout(draft, workout)) {
   }
 
   function skipExercise() {
+    if (
+      currentExerciseEntry?.block.type === "superset" ||
+      currentExerciseEntry?.block.type === "circuit"
+    ) {
+      const handledByStructuredBlock =
+        advanceStructuredBlockAfterSet(currentExerciseEntry);
+
+      if (handledByStructuredBlock) {
+        return;
+      }
+    }
+
     moveToNextExercise();
   }
 
@@ -676,36 +865,43 @@ if (draft && isDraftForWorkout(draft, workout)) {
       return;
     }
 
-    const completedExercise = completedExercises.find(
-      (item) => item.exerciseId === currentExercise.id,
-    );
-    const lastSet = completedExercise?.sets[completedExercise.sets.length - 1];
+    const feedbackExerciseIds = getFeedbackExerciseIds();
 
     if (userId) {
-      saveExerciseProgression(userId, currentExercise.id, {
-        lastWeight: lastSet?.actualWeight ?? null,
-        lastReps: lastSet?.actualReps ?? null,
-        lastDuration: lastSet?.actualDuration ?? null,
-        lastExtraReps: timedExercise ? null : selectedExtraReps ?? null,
-        lastTimedEffort: timedExercise
-          ? mapTimedEffortForProgression(selectedTimedEffort)
-          : null,
-      });
+      feedbackExerciseIds.forEach((exerciseId) => {
+        const completedExercise = completedExercises.find(
+          (item) => item.exerciseId === exerciseId,
+        );
+        const matchingExercise = allExercises.find(
+          (exercise) => exercise.id === exerciseId,
+        );
+        const lastSet = completedExercise?.sets[completedExercise.sets.length - 1];
 
-      // Spara rå upplevelse separat så Sprint 3 kan bygga vidare utan att läsa hela workoutloggen.
-      saveExerciseFeedbackEntry(userId, {
-        exerciseId: currentExercise.id,
-        exerciseName: currentExercise.name,
-        completedAt: new Date().toISOString(),
-        extraReps: timedExercise ? undefined : selectedExtraReps ?? undefined,
-        timedEffort: timedExercise ? selectedTimedEffort ?? undefined : undefined,
+        saveExerciseProgression(userId, exerciseId, {
+          lastWeight: lastSet?.actualWeight ?? null,
+          lastReps: lastSet?.actualReps ?? null,
+          lastDuration: lastSet?.actualDuration ?? null,
+          lastExtraReps: timedExercise ? null : selectedExtraReps ?? null,
+          lastTimedEffort: timedExercise
+            ? mapTimedEffortForProgression(selectedTimedEffort)
+            : null,
+        });
+
+        // Spara rå upplevelse separat så Sprint 3 kan bygga vidare utan att läsa hela workoutloggen.
+        saveExerciseFeedbackEntry(userId, {
+          exerciseId,
+          exerciseName: matchingExercise?.name ?? currentExercise.name,
+          completedAt: new Date().toISOString(),
+          extraReps: timedExercise ? undefined : selectedExtraReps ?? undefined,
+          timedEffort: timedExercise ? selectedTimedEffort ?? undefined : undefined,
+        });
       });
     }
 
     setCompletedExercises((previous) =>
       buildCompletedExercisesWithFeedback({
         previous,
-        exercise: currentExercise,
+        exerciseIds: feedbackExerciseIds,
         timedExercise,
         selectedExtraReps,
         selectedTimedEffort,
@@ -804,6 +1000,15 @@ if (draft && isDraftForWorkout(draft, workout)) {
 
   return {
     currentExercise,
+    currentBlockType: currentExerciseEntry?.block.type ?? "straight_sets",
+    currentBlockTitle: currentExerciseEntry?.block.title ?? "",
+    currentBlockCoachNote: currentExerciseEntry?.block.coachNote ?? "",
+    currentBlockExercisePosition: currentExerciseEntry
+      ? currentExerciseEntry.exerciseIndexInBlock + 1
+      : 0,
+    currentBlockExerciseCount: currentExerciseEntry?.block.exercises.length ?? 0,
+    currentRound,
+    currentRoundTotal,
     currentSet,
     reps,
     setReps,

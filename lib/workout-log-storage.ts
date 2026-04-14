@@ -86,6 +86,40 @@ export function saveWorkoutLog(log: WorkoutLog) {
   );
 }
 
+export function replaceWorkoutLogs(userId: string, logs: WorkoutLog[]) {
+  if (typeof window === "undefined") return;
+
+  localStorage.setItem(
+    getWorkoutLogsStorageKey(userId),
+    JSON.stringify(logs)
+  );
+}
+
+export function removeWorkoutLog(
+  userId: string,
+  matcher:
+    | string
+    | ((log: WorkoutLog) => boolean)
+) {
+  if (typeof window === "undefined") return [];
+
+  const current = getWorkoutLogs(userId);
+  const updated = current.filter((log) => {
+    if (typeof matcher === "string") {
+      return log.id !== matcher;
+    }
+
+    return !matcher(log);
+  });
+
+  replaceWorkoutLogs(userId, updated);
+  return updated;
+}
+
+export function clearWorkoutLogs(userId: string) {
+  replaceWorkoutLogs(userId, []);
+}
+
 export function createEmptyExerciseLog(
   exercise: Exercise,
   isNewExercise: boolean

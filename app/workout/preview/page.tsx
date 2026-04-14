@@ -31,6 +31,26 @@ function getAllExercises(
   return workout.blocks.flatMap((block) => block.exercises ?? []);
 }
 
+function formatBlockIntensity(block: {
+  targetRpe?: number | null;
+  targetRir?: number | null;
+}) {
+  if (typeof block.targetRpe === "number") {
+    return `RPE ${block.targetRpe}`;
+  }
+
+  if (typeof block.targetRir === "number") {
+    return `${block.targetRir} RIR`;
+  }
+
+  return null;
+}
+
+function formatSecondsLabel(value?: number | null) {
+  const safeValue = Math.max(0, value ?? 0);
+  return `${safeValue}s`;
+}
+
 function PreviewPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -42,6 +62,7 @@ function PreviewPageContent() {
   const [addMode, setAddMode] = useState<"catalog" | "custom">("catalog");
   const [replaceExerciseId, setReplaceExerciseId] = useState<string | null>(null);
   const [removeExerciseId, setRemoveExerciseId] = useState<string | null>(null);
+  const [debugOpen, setDebugOpen] = useState(showDebug);
 
   const {
     workout,
@@ -79,6 +100,13 @@ function PreviewPageContent() {
     addCustomExercise,
     debugInfo,
     aiDebug,
+    setBlockType,
+    incrementBlockRounds,
+    decrementBlockRounds,
+    incrementBlockRestBetweenExercises,
+    decrementBlockRestBetweenExercises,
+    incrementBlockRestAfterRound,
+    decrementBlockRestAfterRound,
   } = useWorkoutPreview({
     userId,
   });
@@ -92,6 +120,55 @@ function PreviewPageContent() {
 
     return allExercises.find((exercise) => exercise.id === replaceExerciseId)?.name ?? "";
   }, [allExercises, replaceExerciseId]);
+
+  const debugSupersetSummary = useMemo(() => {
+    const parsedAiResponse =
+      (aiDebug?.parsedAiResponse as {
+        blocks?: unknown;
+        superset_considered?: unknown;
+        superset_reason?: unknown;
+      } | undefined) ?? undefined;
+    const normalizedWorkoutDebug =
+      (aiDebug?.normalizedWorkout as { blocks?: unknown } | undefined) ?? undefined;
+    const validatedWorkoutDebug =
+      (aiDebug?.validatedWorkout as { debug?: { warnings?: unknown } } | undefined) ??
+      undefined;
+
+    const parsedBlocks = Array.isArray(parsedAiResponse?.blocks)
+      ? (parsedAiResponse.blocks as Array<{ type?: unknown }>)
+      : [];
+    const normalizedBlocks = Array.isArray(normalizedWorkoutDebug?.blocks)
+      ? (normalizedWorkoutDebug.blocks as Array<{ type?: unknown }>)
+      : [];
+    const validationWarnings = Array.isArray(
+      validatedWorkoutDebug?.debug?.warnings,
+    )
+      ? (((validatedWorkoutDebug as { debug?: { warnings?: string[] } })
+          ?.debug?.warnings as string[]) ?? [])
+      : [];
+
+    const aiSuggestedSuperset = parsedBlocks.some(
+      (block) => block?.type === "superset",
+    );
+    const normalizedHasSuperset = normalizedBlocks.some(
+      (block) => block?.type === "superset",
+    );
+    const validatorCreatedSuperset = validationWarnings.some((warning) =>
+      warning.toLowerCase().includes("skapade") &&
+      warning.toLowerCase().includes("superset"),
+    );
+
+    return {
+      aiSuggestedSuperset,
+      normalizedHasSuperset,
+      validatorCreatedSuperset,
+      aiSupersetConsidered: parsedAiResponse?.superset_considered === true,
+      aiSupersetReason:
+        typeof parsedAiResponse?.superset_reason === "string"
+          ? parsedAiResponse.superset_reason
+          : "",
+    };
+  }, [aiDebug]);
 
   const dynamicSubtitle = useMemo(() => {
     if (!workout) {
@@ -212,6 +289,164 @@ function PreviewPageContent() {
               gymLabel={workout.gymLabel ?? undefined}
             />
 
+            {workout.blocks.length > 0 ? (
+              <div className="grid gap-3">
+                {workout.blocks.map((block, index) => {
+                  const intensityLabel = formatBlockIntensity(block);
+
+                  return (
+                    <div
+                      key={`${block.title ?? "block"}-${index}`}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-slate-900">
+                          {block.title ?? `Block ${index + 1}`}
+                        </p>
+                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                          {block.type === "superset"
+                            ? "Superset"
+                            : block.type === "circuit"
+                              ? "Circuit"
+                              : "Straight sets"}
+                        </span>
+                        {intensityLabel ? (
+                          <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700">
+                            {intensityLabel}
+                          </span>
+                        ) : null}
+                        {block.warmup?.recommended ? (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+                            Uppvärmning först
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {block.coachNote ? (
+                        <p className="mt-2 text-sm text-slate-700">{block.coachNote}</p>
+                      ) : null}
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setBlockType(index, "straight_sets")}
+                          className={cn(
+                            "rounded-xl border px-3 py-1.5 text-xs font-medium transition",
+                            block.type === "straight_sets"
+                              ? "border-slate-900 bg-slate-900 text-white"
+                              : "border-slate-200 bg-white text-slate-700",
+                          )}
+                        >
+                          Straight sets
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBlockType(index, "superset")}
+                          className={cn(
+                            "rounded-xl border px-3 py-1.5 text-xs font-medium transition",
+                            block.type === "superset"
+                              ? "border-indigo-700 bg-indigo-700 text-white"
+                              : "border-indigo-200 bg-indigo-50 text-indigo-800",
+                          )}
+                        >
+                          Gör till superset
+                        </button>
+                      </div>
+
+                      {block.purpose ? (
+                        <p className="mt-1 text-xs text-slate-500">{block.purpose}</p>
+                      ) : null}
+
+                      {block.warmup?.instruction ? (
+                        <p className="mt-2 text-xs text-amber-800">
+                          {block.warmup.instruction}
+                        </p>
+                      ) : null}
+
+                      {block.type === "superset" || block.type === "circuit" ? (
+                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                          <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+                              Varv
+                            </p>
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => decrementBlockRounds(index)}
+                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
+                              >
+                                −
+                              </button>
+                              <span className="text-sm font-semibold text-slate-900">
+                                {block.rounds ?? 1}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => incrementBlockRounds(index)}
+                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+                              Mellan övningar
+                            </p>
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => decrementBlockRestBetweenExercises(index)}
+                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
+                              >
+                                −
+                              </button>
+                              <span className="text-sm font-semibold text-slate-900">
+                                {formatSecondsLabel(block.restBetweenExercises)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => incrementBlockRestBetweenExercises(index)}
+                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+                              Efter varv
+                            </p>
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => decrementBlockRestAfterRound(index)}
+                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
+                              >
+                                −
+                              </button>
+                              <span className="text-sm font-semibold text-slate-900">
+                                {formatSecondsLabel(block.restAfterRound)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => incrementBlockRestAfterRound(index)}
+                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -238,14 +473,66 @@ function PreviewPageContent() {
           </div>
         </section>
 
-        {showDebug || aiDebug ? (
+        {workout ? (
           <section className="rounded-[24px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
-            <details>
-              <summary className="cursor-pointer list-none text-sm font-semibold uppercase tracking-[0.18em] text-amber-800">
-                AI-debug och validering
-              </summary>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-800">
+                  AI-debug och validering
+                </p>
+                <p className="mt-1 text-sm text-amber-900/80">
+                  Visa exakt request, prompt, AI-svar och validering.
+                </p>
+              </div>
 
+              <button
+                type="button"
+                onClick={() => setDebugOpen((previous) => !previous)}
+                className="rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900"
+              >
+                {debugOpen ? "Dölj debug" : "Visa debug"}
+              </button>
+            </div>
+
+            {debugOpen ? (
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-white/80 p-3">
+                  <p className="text-xs font-medium text-slate-500">AI föreslog superset</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {debugSupersetSummary.aiSuggestedSuperset ? "Ja" : "Nej"}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white/80 p-3">
+                  <p className="text-xs font-medium text-slate-500">Superset i slutligt pass</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {debugSupersetSummary.normalizedHasSuperset ? "Ja" : "Nej"}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-500">
+                    Superset tillagt av valideringen
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {debugSupersetSummary.validatorCreatedSuperset ? "Ja" : "Nej"}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white/80 p-3">
+                  <p className="text-xs font-medium text-slate-500">AI övervägde superset</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {debugSupersetSummary.aiSupersetConsidered ? "Ja" : "Nej"}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-500">AI:s skäl</p>
+                  <p className="mt-1 text-sm text-slate-900">
+                    {debugSupersetSummary.aiSupersetReason || "AI gav ingen motivering ännu."}
+                  </p>
+                </div>
+
                 <div className="rounded-2xl bg-white/80 p-3">
                   <p className="text-xs font-medium text-slate-500">workout.gym</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">
@@ -382,34 +669,72 @@ function PreviewPageContent() {
                       </pre>
                     </div>
                   </>
-                ) : null}
+                ) : (
+                  <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
+                    <p className="text-sm text-slate-700">
+                      Ingen AI-debug sparades för detta pass ännu. Generera ett nytt AI-pass så
+                      visas request, prompt, råsvar och validering här.
+                    </p>
+                  </div>
+                )}
               </div>
-            </details>
+            ) : null}
           </section>
         ) : null}
 
-        <PreviewExerciseList
-          exercises={allExercises}
-          onIncreaseSets={incrementSets}
-          onDecreaseSets={decrementSets}
-          onIncreaseReps={incrementReps}
-          onDecreaseReps={decrementReps}
-          onIncreaseDuration={incrementDuration}
-          onDecreaseDuration={decrementDuration}
-          onIncreaseRest={incrementRest}
-          onDecreaseRest={decrementRest}
-          onMoveExerciseUp={(exerciseId) => moveExercise(exerciseId, "up")}
-          onMoveExerciseDown={(exerciseId) => moveExercise(exerciseId, "down")}
-          onReplaceExercise={(exerciseId) => {
-            setError(null);
-            setReplaceExerciseId(exerciseId);
-          }}
-          onRemoveExercise={(exerciseId) => {
-            setError(null);
-            setRemoveExerciseId(exerciseId);
-          }}
-          onAddFirstExercise={() => handleOpenAddSheet("catalog")}
-        />
+        {workout.blocks.length > 0 ? (
+          <div className="space-y-6">
+            {workout.blocks.map((block, blockIndex) => (
+              <PreviewExerciseList
+                key={`${block.type}-${block.title ?? "block"}-${blockIndex}`}
+                block={block}
+                exercises={block.exercises}
+                onIncreaseSets={incrementSets}
+                onDecreaseSets={decrementSets}
+                onIncreaseReps={incrementReps}
+                onDecreaseReps={decrementReps}
+                onIncreaseDuration={incrementDuration}
+                onDecreaseDuration={decrementDuration}
+                onIncreaseRest={incrementRest}
+                onDecreaseRest={decrementRest}
+                onMoveExerciseUp={(exerciseId) => moveExercise(exerciseId, "up")}
+                onMoveExerciseDown={(exerciseId) => moveExercise(exerciseId, "down")}
+                onReplaceExercise={(exerciseId) => {
+                  setError(null);
+                  setReplaceExerciseId(exerciseId);
+                }}
+                onRemoveExercise={(exerciseId) => {
+                  setError(null);
+                  setRemoveExerciseId(exerciseId);
+                }}
+                onAddFirstExercise={() => handleOpenAddSheet("catalog")}
+              />
+            ))}
+          </div>
+        ) : (
+          <PreviewExerciseList
+            exercises={allExercises}
+            onIncreaseSets={incrementSets}
+            onDecreaseSets={decrementSets}
+            onIncreaseReps={incrementReps}
+            onDecreaseReps={decrementReps}
+            onIncreaseDuration={incrementDuration}
+            onDecreaseDuration={decrementDuration}
+            onIncreaseRest={incrementRest}
+            onDecreaseRest={decrementRest}
+            onMoveExerciseUp={(exerciseId) => moveExercise(exerciseId, "up")}
+            onMoveExerciseDown={(exerciseId) => moveExercise(exerciseId, "down")}
+            onReplaceExercise={(exerciseId) => {
+              setError(null);
+              setReplaceExerciseId(exerciseId);
+            }}
+            onRemoveExercise={(exerciseId) => {
+              setError(null);
+              setRemoveExerciseId(exerciseId);
+            }}
+            onAddFirstExercise={() => handleOpenAddSheet("catalog")}
+          />
+        )}
 
         <div className="flex items-center gap-3">
           <button

@@ -47,9 +47,24 @@ export type HomeGoal =
   | "health"
   | "body_composition";
 
+export type HomePriorityMuscle =
+  | "chest"
+  | "back"
+  | "quads"
+  | "hamstrings"
+  | "glutes"
+  | "shoulders"
+  | "biceps"
+  | "triceps"
+  | "calves"
+  | "core";
+
 export type HomeUserSettings = {
   experience_level?: "beginner" | "novice" | "intermediate" | "advanced" | null;
   training_goal?: HomeGoal | null;
+  avoid_supersets?: boolean | null;
+  primary_priority_muscle?: HomePriorityMuscle | null;
+  secondary_priority_muscle?: HomePriorityMuscle | null;
 };
 
 function mergeWorkoutLogs(apiLogs: WorkoutLog[], localLogs: WorkoutLog[]) {
@@ -248,6 +263,18 @@ export function useHomeData({ router }: UseHomeDataParams) {
           if (nextSettings) {
             saveCachedHomeSettings(userId, {
               training_goal: nextSettings.training_goal ?? null,
+              avoid_supersets:
+                typeof nextSettings.avoid_supersets === "boolean"
+                  ? nextSettings.avoid_supersets
+                  : null,
+              primary_priority_muscle:
+                typeof nextSettings.primary_priority_muscle === "string"
+                  ? (nextSettings.primary_priority_muscle as HomePriorityMuscle)
+                  : null,
+              secondary_priority_muscle:
+                typeof nextSettings.secondary_priority_muscle === "string"
+                  ? (nextSettings.secondary_priority_muscle as HomePriorityMuscle)
+                  : null,
             });
           }
         }

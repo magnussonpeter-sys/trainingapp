@@ -51,13 +51,18 @@ export async function generateWorkout(params: {
     focus: WorkoutFocus | null;
     type: "training" | "recovery";
   }>;
+  lessOftenExerciseIds?: string[];
+  avoidSupersets?: boolean | null;
 }) {
   const res = await fetch("/api/workouts/generate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(params),
+    body: JSON.stringify({
+      ...params,
+      includeDebug: true,
+    }),
   });
 
   const data = await res.json();

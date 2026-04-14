@@ -17,12 +17,14 @@ import {
   formatSplitStyle,
   formatWorkoutFocus,
 } from "@/lib/weekly-workout-structure";
+import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
 import { generateWorkout } from "@/lib/workout-generator";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 import { getPendingSyncQueue } from "@/lib/workout-flow/pending-sync-store";
 import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
+import { getExercisePreferences } from "@/lib/exercise-preference-storage";
 
 type AuthUser = {
   id?: string | number | null;
@@ -126,6 +128,19 @@ function getFrequencyLabel(frequencyCount: number) {
   }
 
   return `${frequencyCount} pass denna vecka`;
+}
+
+function formatMuscleGroup(group: MuscleBudgetGroup) {
+  if (group === "chest") return "Bröst";
+  if (group === "back") return "Rygg";
+  if (group === "quads") return "Framsida lår";
+  if (group === "hamstrings") return "Baksida lår";
+  if (group === "glutes") return "Säte";
+  if (group === "shoulders") return "Axlar";
+  if (group === "biceps") return "Biceps";
+  if (group === "triceps") return "Triceps";
+  if (group === "calves") return "Vader";
+  return "Bål";
 }
 
 function getDisplayName(user: AuthUser | null) {
@@ -356,6 +371,9 @@ export default function HomePage() {
       const gymLabel = isBodyweightGym
         ? "Kroppsvikt / utan gym"
         : selectedGym?.name ?? null;
+      const lessOftenExerciseIds = getExercisePreferences(userId)
+        .filter((entry) => entry.preference === "less_often")
+        .map((entry) => entry.exerciseId);
 
       const { workout, debug } = await generateWorkout({
         userId,
@@ -379,6 +397,8 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
         })),
         weeklyPlan: weeklyStructure.upcomingDays,
+        lessOftenExerciseIds,
+        avoidSupersets: settings?.avoid_supersets ?? null,
       });
 
       // Spara draft innan preview öppnas.
@@ -500,6 +520,21 @@ export default function HomePage() {
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 {weeklyStructure.summaryText}
               </p>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                {weeklyStructure.optimalPlanText}
+              </p>
+              {weeklyStructure.configuredPriorityMuscles.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {weeklyStructure.configuredPriorityMuscles.map((group, index) => (
+                    <span
+                      key={group}
+                      className="rounded-full border border-lime-300 bg-lime-100 px-3 py-1 text-xs font-medium text-slate-800"
+                    >
+                      {index === 0 ? "Prio 1" : "Prio 2"}: {formatMuscleGroup(group)}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-3">
@@ -542,25 +577,82 @@ export default function HomePage() {
 
             {showWeeklyInsights ? (
               <div className="mt-5 space-y-6">
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {weeklyStructure.upcomingDays.map((day) => (
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      Optimal rytm framåt
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Kör när tid finns, appen anpassar nästa pass efter läget
+                    </p>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {weeklyStructure.upcomingSteps.map((step) => (
+                      <div
+                        key={step.label}
+                        className={cn(
+                          "rounded-2xl border px-4 py-4",
+                          step.type === "training"
+                            ? "border-emerald-200 bg-emerald-50"
+                            : "border-slate-200 bg-slate-50",
+                        )}
+                      >
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          {step.label}
+                        </p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">
+                          {step.focus ? formatWorkoutFocus(step.focus) : "Återhämtning"}
+                        </p>
+                        <div className="mt-2 flex min-h-[40px] flex-wrap gap-1.5">
+                          {step.type === "training" && step.muscleGroups.length > 0 ? (
+                            step.muscleGroups.map((group) => (
+                              <span
+                                key={`${step.label}-${group}`}
+                                className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700"
+                              >
+                                {formatMuscleGroup(group)}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-slate-500">
+                              Låt återhämtning och vardag styra när nästa pass passar bäst.
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {[
+                    {
+                      label: "Nästa pass",
+                      value: weeklyStructure.nextFocusMuscleGroups.length
+                        ? weeklyStructure.nextFocusMuscleGroups
+                            .map((group) => formatMuscleGroup(group))
+                            .join(", ")
+                        : formatWorkoutFocus(weeklyStructure.nextFocus),
+                    },
+                    {
+                      label: "Planerade pass",
+                      value: `${weeklyStructure.passCount} träningspass i flexibel rytm`,
+                    },
+                    {
+                      label: "Återhämtning",
+                      value: "Växla efter tid, energi och hur förra passet kändes",
+                    },
+                  ].map((item) => (
                     <div
-                      key={day.date}
-                      className={cn(
-                        "rounded-2xl border px-4 py-4",
-                        day.type === "training"
-                          ? "border-emerald-200 bg-emerald-50"
-                          : "border-slate-200 bg-slate-50",
-                      )}
+                      key={item.label}
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
                     >
                       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                        {day.dayLabel}
+                        {item.label}
                       </p>
                       <p className="mt-2 text-sm font-semibold text-slate-900">
-                        {day.focus ? formatWorkoutFocus(day.focus) : "Återhämtning"}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {day.type === "training" ? "Planerat träningsfokus" : "Ingen planerad toppbelastning"}
+                        {item.value}
                       </p>
                     </div>
                   ))}

@@ -26,6 +26,8 @@ export type MuscleBudgetGroup =
   | "calves"
   | "core";
 
+type PriorityRank = 1 | 2;
+
 export type MuscleBudgetEntry = {
   group: MuscleBudgetGroup;
   label: string;
@@ -579,6 +581,7 @@ export function buildMuscleBudget(params: {
   goal?: PlanningGoal | null;
   logs: WorkoutLog[];
   now?: Date;
+  priorityMuscles?: MuscleBudgetGroup[];
 }) {
   const now = params.now ?? new Date();
   const completedLast7Days = filterLogsWithinDays(params.logs, now, 7);
@@ -598,17 +601,32 @@ export function buildMuscleBudget(params: {
   const experienceAdjustment = getExperienceAdjustment(params.experienceLevel);
   const confidenceAdjustment =
     params.confidenceScore === "high" ? 1 : params.confidenceScore === "low" ? -1 : 0;
+  const priorityBoosts = new Map<MuscleBudgetGroup, PriorityRank>();
+
+  (params.priorityMuscles ?? [])
+    .slice(0, 2)
+    .forEach((group, index) => {
+      priorityBoosts.set(group, index === 0 ? 1 : 2);
+    });
 
   const entries = (Object.keys(MUSCLE_LABELS) as MuscleBudgetGroup[]).map((group) => {
-    const priority = goalPriorities[group];
+    const priorityRank = priorityBoosts.get(group);
+    const priority =
+      priorityRank === 1
+        ? "high"
+        : priorityRank === 2 && goalPriorities[group] === "low"
+          ? "medium"
+          : goalPriorities[group];
     const baseTarget =
       priority === "high"
         ? baseTargets.high
         : priority === "medium"
           ? baseTargets.medium
           : baseTargets.low;
+    const priorityTargetAdjustment =
+      priorityRank === 1 ? 2 : priorityRank === 2 ? 1 : 0;
     const targetSets = clamp(
-      baseTarget + experienceAdjustment + confidenceAdjustment,
+      baseTarget + experienceAdjustment + confidenceAdjustment + priorityTargetAdjustment,
       2,
       18,
     );

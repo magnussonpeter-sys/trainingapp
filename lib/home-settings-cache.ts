@@ -6,8 +6,23 @@ type CachedHomeGoal =
   | "health"
   | "body_composition";
 
+type CachedPriorityMuscle =
+  | "chest"
+  | "back"
+  | "quads"
+  | "hamstrings"
+  | "glutes"
+  | "shoulders"
+  | "biceps"
+  | "triceps"
+  | "calves"
+  | "core";
+
 type HomeSettingsCacheValue = {
   training_goal?: CachedHomeGoal | null;
+  avoid_supersets?: boolean | null;
+  primary_priority_muscle?: CachedPriorityMuscle | null;
+  secondary_priority_muscle?: CachedPriorityMuscle | null;
 };
 
 function isCachedHomeGoal(value: unknown): value is CachedHomeGoal {
@@ -16,6 +31,21 @@ function isCachedHomeGoal(value: unknown): value is CachedHomeGoal {
     value === "hypertrophy" ||
     value === "health" ||
     value === "body_composition"
+  );
+}
+
+function isCachedPriorityMuscle(value: unknown): value is CachedPriorityMuscle {
+  return (
+    value === "chest" ||
+    value === "back" ||
+    value === "quads" ||
+    value === "hamstrings" ||
+    value === "glutes" ||
+    value === "shoulders" ||
+    value === "biceps" ||
+    value === "triceps" ||
+    value === "calves" ||
+    value === "core"
   );
 }
 
@@ -35,11 +65,26 @@ export function getCachedHomeSettings(userId: string) {
       return null;
     }
 
-    const parsed = JSON.parse(raw) as { training_goal?: unknown };
+    const parsed = JSON.parse(raw) as {
+      training_goal?: unknown;
+      avoid_supersets?: unknown;
+      primary_priority_muscle?: unknown;
+      secondary_priority_muscle?: unknown;
+    };
 
     return {
       training_goal: isCachedHomeGoal(parsed.training_goal)
         ? parsed.training_goal
+        : null,
+      avoid_supersets:
+        typeof parsed.avoid_supersets === "boolean"
+          ? parsed.avoid_supersets
+          : null,
+      primary_priority_muscle: isCachedPriorityMuscle(parsed.primary_priority_muscle)
+        ? parsed.primary_priority_muscle
+        : null,
+      secondary_priority_muscle: isCachedPriorityMuscle(parsed.secondary_priority_muscle)
+        ? parsed.secondary_priority_muscle
         : null,
     };
   } catch {

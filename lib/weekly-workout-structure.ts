@@ -4,6 +4,7 @@ import {
   getFocusDeficitScore,
   type ConfidenceScore,
   type MuscleBudgetEntry,
+  type MuscleBudgetGroup,
 } from "@/lib/planning/muscle-budget";
 import { getExerciseById } from "@/lib/exercise-catalog";
 import type { WorkoutLog } from "@/lib/workout-log-storage";
@@ -18,6 +19,8 @@ type WeeklyPlanningGoal =
 type WeeklyPlanningSettings = {
   experience_level?: string | null;
   training_goal?: WeeklyPlanningGoal | null;
+  primary_priority_muscle?: MuscleBudgetGroup | null;
+  secondary_priority_muscle?: MuscleBudgetGroup | null;
 };
 
 export type WeeklyPlanDay = {
@@ -27,16 +30,28 @@ export type WeeklyPlanDay = {
   type: "training" | "recovery";
 };
 
+export type WeeklyPlanStep = {
+  label: string;
+  focus: WorkoutFocus | null;
+  type: "training" | "recovery";
+  muscleGroups: MuscleBudgetGroup[];
+};
+
 export type WeeklyWorkoutStructure = {
   completedLast7Days: number;
   confidenceScore: ConfidenceScore;
+  configuredPriorityMuscles: MuscleBudgetGroup[];
   currentWeekFocuses: WorkoutFocus[];
   muscleBudget: MuscleBudgetEntry[];
   nextFocus: WorkoutFocus;
+  nextFocusMuscleGroups: MuscleBudgetGroup[];
   passCount: number;
+  priorityMuscles: MuscleBudgetGroup[];
+  optimalPlanText: string;
   splitStyle: "full_body" | "upper_lower" | "upper_lower_full" | "adaptive";
   summaryText: string;
   upcomingDays: WeeklyPlanDay[];
+  upcomingSteps: WeeklyPlanStep[];
 };
 
 const UPPER_PATTERNS = new Set([
@@ -49,6 +64,12 @@ const UPPER_PATTERNS = new Set([
 
 const LOWER_PATTERNS = new Set(["squat", "hinge", "lunge"]);
 const CORE_PATTERNS = new Set(["core"]);
+const FOCUS_TO_BUDGET_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
+  full_body: ["quads", "glutes", "back", "chest", "core"],
+  upper_body: ["chest", "back", "shoulders", "biceps", "triceps"],
+  lower_body: ["quads", "hamstrings", "glutes", "calves", "core"],
+  core: ["core", "glutes"],
+};
 
 function toIsoDate(value: Date) {
   return value.toISOString().slice(0, 10);
@@ -201,6 +222,28 @@ function getTrainingDayIndexes(slotCount: number) {
   return [0, 2, 4, 6];
 }
 
+function getFocusMuscleGroups(
+  entries: MuscleBudgetEntry[],
+  focus: WorkoutFocus | null,
+) {
+  if (!focus) {
+    return [];
+  }
+
+  return [...entries]
+    .filter((entry) => FOCUS_TO_BUDGET_GROUPS[focus].includes(entry.group))
+    .sort((left, right) => {
+      if (right.remainingSets !== left.remainingSets) {
+        return right.remainingSets - left.remainingSets;
+      }
+
+      const priorityRank = { high: 0, medium: 1, low: 2 };
+      return priorityRank[left.priority] - priorityRank[right.priority];
+    })
+    .slice(0, 3)
+    .map((entry) => entry.group);
+}
+
 function getDistinctTrainingWeeks(logs: WorkoutLog[]) {
   const weekKeys = new Set<string>();
 
@@ -257,6 +300,10 @@ export function buildWeeklyWorkoutStructure(params: {
     goal,
     logs: params.logs,
     now,
+    priorityMuscles: [
+      params.settings?.primary_priority_muscle ?? null,
+      params.settings?.secondary_priority_muscle ?? null,
+    ].filter((value): value is MuscleBudgetGroup => typeof value === "string"),
   }).entries;
   const currentWeekFocuses = recentCompletedLogs.map((log) => detectWorkoutFocus(log));
   const passCount = getGoalPassCount(goal);
@@ -273,6 +320,11 @@ export function buildWeeklyWorkoutStructure(params: {
   const nextFocus =
     focusScores.sort((left, right) => right.score - left.score)[0]?.focus ??
     patternPreferredFocus;
+  const nextFocusMuscleGroups = getFocusMuscleGroups(muscleBudget, nextFocus);
+  const configuredPriorityMuscles = [
+    params.settings?.primary_priority_muscle ?? null,
+    params.settings?.secondary_priority_muscle ?? null,
+  ].filter((value): value is MuscleBudgetGroup => typeof value === "string");
   const trainingDayIndexes = getTrainingDayIndexes(passCount);
   const upcomingDays = Array.from({ length: 7 }, (_, index) => {
     const date = addDays(now, index);
@@ -291,6 +343,32 @@ export function buildWeeklyWorkoutStructure(params: {
       type: focus ? "training" : "recovery",
     } satisfies WeeklyPlanDay;
   });
+  let trainingStepCount = 0;
+  let recoveryStepCount = 0;
+  const upcomingSteps = upcomingDays.map((day) => {
+    if (day.type === "training") {
+      trainingStepCount += 1;
+      return {
+        label: `Pass ${trainingStepCount}`,
+        focus: day.focus,
+        type: day.type,
+        muscleGroups: getFocusMuscleGroups(muscleBudget, day.focus),
+      } satisfies WeeklyPlanStep;
+    }
+
+    recoveryStepCount += 1;
+    return {
+      label: recoveryStepCount === 1 ? "Återhämtning" : `Återhämtning ${recoveryStepCount}`,
+      focus: null,
+      type: "recovery",
+      muscleGroups: [],
+    } satisfies WeeklyPlanStep;
+  });
+  const priorityMuscles = muscleBudget
+    .filter((entry) => entry.priority === "high" && entry.remainingSets > 0)
+    .sort((left, right) => right.remainingSets - left.remainingSets)
+    .slice(0, 2)
+    .map((entry) => entry.group);
 
   const summaryText =
     currentWeekFocuses.length > 0
@@ -300,16 +378,25 @@ export function buildWeeklyWorkoutStructure(params: {
       : `Ingen genomförd veckocykel ännu. Nästa rekommenderade fokus är ${formatWorkoutFocus(
           nextFocus,
         ).toLowerCase()}.`;
+  const optimalPlanText =
+    passCount <= 3
+      ? `Optimalt just nu: sikta på ${passCount} pass i valfri rytm, med återhämtning mellan passen när du behöver det.`
+      : `Optimalt just nu: sikta på ${passCount} pass där du växlar träning och återhämtning utifrån tid och energi, inte fasta veckodagar.`;
 
   return {
     completedLast7Days: recentCompletedLogs.length,
     confidenceScore,
+    configuredPriorityMuscles,
     currentWeekFocuses,
     muscleBudget,
     nextFocus,
+    nextFocusMuscleGroups,
     passCount,
+    priorityMuscles,
+    optimalPlanText,
     splitStyle: getSplitStyle(passCount),
     summaryText,
     upcomingDays,
+    upcomingSteps,
   };
 }
