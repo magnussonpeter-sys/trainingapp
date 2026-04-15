@@ -72,78 +72,6 @@ function normalizeEquipmentList(input: unknown): string[] {
   return Array.from(values);
 }
 
-// Hjälper debug utan att göra response för tung.
-function buildDebugPayload(params: {
-  goal: string;
-  durationMinutes: number;
-  userId: string | null;
-  gym: string | null;
-  gymLabel: string | null;
-  equipment: string[];
-  gymEquipmentDetails: unknown;
-  confidenceScore: ConfidenceScore | null;
-  nextFocus: WorkoutFocus | null;
-  splitStyle: string | null;
-  avoidSupersets: boolean;
-  weeklyBudget: unknown;
-  weeklyPlan: unknown;
-  lessOftenExerciseIds?: string[];
-  generationContext: unknown;
-  prompt: string;
-  rawAiText: string;
-  parsed: unknown;
-  validated: unknown;
-  normalizedWorkout: unknown;
-}) {
-  const {
-    goal,
-    durationMinutes,
-    userId,
-    gym,
-    gymLabel,
-    equipment,
-    gymEquipmentDetails,
-    confidenceScore,
-    nextFocus,
-    splitStyle,
-    avoidSupersets,
-    weeklyBudget,
-    weeklyPlan,
-    lessOftenExerciseIds,
-    generationContext,
-    prompt,
-    rawAiText,
-    parsed,
-    validated,
-    normalizedWorkout,
-  } = params;
-
-  return {
-    request: {
-      userId,
-      goal,
-      durationMinutes,
-      gym,
-      gymLabel,
-      equipment,
-      gymEquipmentDetails,
-      confidenceScore,
-      nextFocus,
-      splitStyle,
-      avoidSupersets,
-      weeklyBudget,
-      weeklyPlan,
-      lessOftenExerciseIds,
-    },
-    generationContext,
-    prompt,
-    rawAiText,
-    parsedAiResponse: parsed,
-    validatedWorkout: validated,
-    normalizedWorkout,
-  };
-}
-
 type UserSettingsSummary = {
   sex?: string | null;
   age?: number | null;
@@ -616,7 +544,6 @@ export async function POST(req: Request) {
       lessOftenExerciseIds?: string[];
       avoidSupersets?: boolean;
       supersetPreference?: SupersetPreference | null;
-      includeDebug?: boolean;
     };
 
     const goal =
@@ -679,27 +606,6 @@ export async function POST(req: Request) {
       equipment.length > 0 &&
       !(equipment.length === 1 && equipment[0] === "bodyweight");
 
-    // Behåll gärna denna logg tills allt känns stabilt.
-    console.log("🔥 GENERATE ROUTE INPUT:", {
-      userId,
-      goal,
-      durationMinutes,
-      gym,
-      gymLabel,
-      equipmentFromBody: body.equipment ?? null,
-      equipmentFiltered: equipment,
-      gymEquipmentDetails,
-      confidenceScore,
-      nextFocus,
-      splitStyle,
-      weeklyBudget,
-      weeklyPlan,
-      lessOftenExerciseIds,
-      avoidSupersets: requestedAvoidSupersets,
-      supersetPreference: requestedSupersetPreference,
-      includeDebug: body.includeDebug ?? false,
-    });
-
     const availableExercises = getAvailableExercises(equipment);
     const [settings, recentLogs] = userId
       ? await Promise.all([
@@ -754,24 +660,6 @@ export async function POST(req: Request) {
       lessOftenExerciseIds,
     });
 
-    console.log("🔥 FINAL INPUT TO AI:", {
-      userId,
-      goal,
-      durationMinutes,
-      gym,
-      gymLabel,
-      equipment,
-      gymEquipmentDetails,
-      confidenceScore,
-      nextFocus,
-      splitStyle,
-      weeklyBudget,
-      weeklyPlan,
-      lessOftenExerciseIds,
-      generationContext,
-      prompt,
-    });
-
     const response = await client.chat.completions.create({
       model: "gpt-5.4-mini",
       messages: [
@@ -796,25 +684,6 @@ export async function POST(req: Request) {
         {
           ok: false,
           error: "AI-svar kunde inte tolkas",
-          debug: {
-            request: {
-              userId,
-              goal,
-              durationMinutes,
-              gym,
-              gymLabel,
-              equipment,
-              gymEquipmentDetails,
-              confidenceScore,
-              nextFocus,
-              splitStyle,
-              weeklyBudget,
-              weeklyPlan,
-              lessOftenExerciseIds,
-            },
-            generationContext,
-            rawAiText,
-          },
         },
         { status: 500 },
       );
@@ -862,28 +731,6 @@ export async function POST(req: Request) {
         {
           ok: false,
           error: "Kunde inte normalisera träningspass",
-          debug: buildDebugPayload({
-            goal,
-            durationMinutes,
-            userId,
-            gym,
-            gymLabel,
-            equipment,
-            gymEquipmentDetails,
-            confidenceScore,
-            nextFocus,
-            splitStyle,
-            avoidSupersets,
-            weeklyBudget,
-            weeklyPlan,
-            lessOftenExerciseIds,
-            generationContext,
-            prompt,
-            rawAiText,
-            parsed,
-            validated,
-            normalizedWorkout: null,
-          }),
         },
         { status: 500 },
       );
@@ -892,30 +739,6 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       workout: normalizedWorkout,
-      debug: body.includeDebug
-        ? buildDebugPayload({
-            goal,
-            durationMinutes,
-            userId,
-            gym,
-            gymLabel,
-            equipment,
-            gymEquipmentDetails,
-            confidenceScore,
-            nextFocus,
-            splitStyle,
-            avoidSupersets,
-            weeklyBudget,
-            weeklyPlan,
-            lessOftenExerciseIds,
-            generationContext,
-            prompt,
-            rawAiText,
-            parsed,
-            validated,
-            normalizedWorkout,
-          })
-        : undefined,
     });
   } catch (error) {
     console.error("Workout generate error:", error);

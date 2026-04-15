@@ -17,7 +17,6 @@ import {
 import type {
   Exercise,
   Workout,
-  WorkoutAiDebug,
   WorkoutBlock,
   WorkoutBlockType,
   WorkoutPreparationFeedback,
@@ -55,22 +54,6 @@ type PreviewSummary = {
   setCount: number;
   timedExercises: number;
   estimatedMinutes: number;
-};
-
-type PreviewDebugInfo = {
-  workoutGym: string | null;
-  workoutGymLabel: string | null;
-  workoutAvailableEquipment: string[];
-  gymsLoaded: boolean;
-  gymsCount: number;
-  matchedGymName: string | null;
-  matchedGymEquipment: string[];
-  extractedEquipment: string[];
-  equipmentSeed: string[];
-  availableCatalogCount: number;
-  filteredCatalogCount: number;
-  firstAvailableExerciseNames: string[];
-  firstFilteredExerciseNames: string[];
 };
 
 const KNOWN_EQUIPMENT_TYPES = [
@@ -749,13 +732,6 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
 
         const normalized = normalizePreviewWorkout(draft) as Workout | null;
 
-console.log("🔥 RAW DRAFT:", draft);
-console.log("🔥 NORMALIZED WORKOUT:", normalized);
-console.log(
-  "🔥 EXERCISES:",
-  normalized?.blocks?.flatMap((b) => b.exercises?.map((e) => e.name))
-);
-
         if (!normalized) {
           setWorkout(null);
           setLoading(false);
@@ -885,40 +861,6 @@ console.log(
   }, [availableCatalogExercises, catalogSearch, effectiveEquipment]);
 
   const summary = useMemo(() => buildSummary(previewWorkout), [previewWorkout]);
-
-const debugInfo = useMemo<PreviewDebugInfo>(() => {
-  return {
-    workoutGym: workout?.gym ?? null,
-    workoutGymLabel: workout?.gymLabel ?? null,
-    workoutAvailableEquipment:
-      extractEquipmentFromWorkoutInternal(previewWorkout),
-    gymsLoaded,
-    gymsCount: gyms.length,
-    matchedGymName: equipmentContext.matchedGymName,
-    matchedGymEquipment: equipmentContext.matchedGymEquipment,
-    extractedEquipment: extractEquipmentFromWorkoutInternal(previewWorkout),
-    equipmentSeed: effectiveEquipment,
-    availableCatalogCount: availableCatalogExercises.length,
-    filteredCatalogCount: filteredCatalogExercises.length,
-    firstAvailableExerciseNames: availableCatalogExercises
-      .slice(0, 10)
-      .map((exercise) => exercise.name),
-    firstFilteredExerciseNames: filteredCatalogExercises
-      .slice(0, 10)
-      .map((exercise) => exercise.name),
-  };
-}, [
-    availableCatalogExercises,
-    effectiveEquipment,
-    equipmentContext.matchedGymEquipment,
-    equipmentContext.matchedGymName,
-    filteredCatalogExercises,
-    gyms.length,
-    gymsLoaded,
-    previewWorkout,
-    workout?.gym,
-    workout?.gymLabel,
-  ]);
 
   function persistWorkout(nextWorkout: Workout) {
     const matchedGym = matchGymByWorkout(nextWorkout, gyms);
@@ -1466,8 +1408,6 @@ const debugInfo = useMemo<PreviewDebugInfo>(() => {
     error,
     setError,
     summary,
-    debugInfo,
-    aiDebug: previewWorkout?.aiDebug ?? null,
     preparationFeedback: previewWorkout?.preparationFeedback ?? null,
     setPreparationLevel,
     setPreparationNote,

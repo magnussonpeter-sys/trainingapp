@@ -36,13 +36,11 @@ function PreviewPageContent() {
   const searchParams = useSearchParams();
 
   const userId = searchParams.get("userId") ?? "";
-  const showDebug = searchParams.get("debug") === "1";
 
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [addMode, setAddMode] = useState<"catalog" | "custom">("catalog");
   const [replaceExerciseId, setReplaceExerciseId] = useState<string | null>(null);
   const [removeExerciseId, setRemoveExerciseId] = useState<string | null>(null);
-  const [debugOpen, setDebugOpen] = useState(showDebug);
 
   const {
     workout,
@@ -78,8 +76,6 @@ function PreviewPageContent() {
     customDescription,
     setCustomDescription,
     addCustomExercise,
-    debugInfo,
-    aiDebug,
     setBlockType,
     incrementBlockRounds,
     decrementBlockRounds,
@@ -100,55 +96,6 @@ function PreviewPageContent() {
 
     return allExercises.find((exercise) => exercise.id === replaceExerciseId)?.name ?? "";
   }, [allExercises, replaceExerciseId]);
-
-  const debugSupersetSummary = useMemo(() => {
-    const parsedAiResponse =
-      (aiDebug?.parsedAiResponse as {
-        blocks?: unknown;
-        superset_considered?: unknown;
-        superset_reason?: unknown;
-      } | undefined) ?? undefined;
-    const normalizedWorkoutDebug =
-      (aiDebug?.normalizedWorkout as { blocks?: unknown } | undefined) ?? undefined;
-    const validatedWorkoutDebug =
-      (aiDebug?.validatedWorkout as { debug?: { warnings?: unknown } } | undefined) ??
-      undefined;
-
-    const parsedBlocks = Array.isArray(parsedAiResponse?.blocks)
-      ? (parsedAiResponse.blocks as Array<{ type?: unknown }>)
-      : [];
-    const normalizedBlocks = Array.isArray(normalizedWorkoutDebug?.blocks)
-      ? (normalizedWorkoutDebug.blocks as Array<{ type?: unknown }>)
-      : [];
-    const validationWarnings = Array.isArray(
-      validatedWorkoutDebug?.debug?.warnings,
-    )
-      ? (((validatedWorkoutDebug as { debug?: { warnings?: string[] } })
-          ?.debug?.warnings as string[]) ?? [])
-      : [];
-
-    const aiSuggestedSuperset = parsedBlocks.some(
-      (block) => block?.type === "superset",
-    );
-    const normalizedHasSuperset = normalizedBlocks.some(
-      (block) => block?.type === "superset",
-    );
-    const validatorCreatedSuperset = validationWarnings.some((warning) =>
-      warning.toLowerCase().includes("skapade") &&
-      warning.toLowerCase().includes("superset"),
-    );
-
-    return {
-      aiSuggestedSuperset,
-      normalizedHasSuperset,
-      validatorCreatedSuperset,
-      aiSupersetConsidered: parsedAiResponse?.superset_considered === true,
-      aiSupersetReason:
-        typeof parsedAiResponse?.superset_reason === "string"
-          ? parsedAiResponse.superset_reason
-          : "",
-    };
-  }, [aiDebug]);
 
   const dynamicSubtitle = useMemo(() => {
     if (!workout) {
@@ -289,221 +236,12 @@ function PreviewPageContent() {
             </div>
           </div>
 
-          {error ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </div>
-          ) : null}
-        </section>
-
-        {showDebug && workout ? (
-          <section className="rounded-[24px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-800">
-                  AI-debug och validering
-                </p>
-                <p className="mt-1 text-sm text-amber-900/80">
-                  Visa exakt request, prompt, AI-svar och validering.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setDebugOpen((previous) => !previous)}
-                className="rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900"
-              >
-                {debugOpen ? "Dölj debug" : "Visa debug"}
-              </button>
-            </div>
-
-            {debugOpen ? (
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl bg-white/80 p-3">
-                  <p className="text-xs font-medium text-slate-500">AI föreslog superset</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {debugSupersetSummary.aiSuggestedSuperset ? "Ja" : "Nej"}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3">
-                  <p className="text-xs font-medium text-slate-500">Superset i slutligt pass</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {debugSupersetSummary.normalizedHasSuperset ? "Ja" : "Nej"}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                  <p className="text-xs font-medium text-slate-500">
-                    Superset tillagt av valideringen
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {debugSupersetSummary.validatorCreatedSuperset ? "Ja" : "Nej"}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3">
-                  <p className="text-xs font-medium text-slate-500">AI övervägde superset</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {debugSupersetSummary.aiSupersetConsidered ? "Ja" : "Nej"}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                  <p className="text-xs font-medium text-slate-500">AI:s skäl</p>
-                  <p className="mt-1 text-sm text-slate-900">
-                    {debugSupersetSummary.aiSupersetReason || "AI gav ingen motivering ännu."}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3">
-                  <p className="text-xs font-medium text-slate-500">workout.gym</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {String(debugInfo.workoutGym)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3">
-                  <p className="text-xs font-medium text-slate-500">workout.gymLabel</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {String(debugInfo.workoutGymLabel)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                  <p className="text-xs font-medium text-slate-500">availableEquipment på workout</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {JSON.stringify(debugInfo.workoutAvailableEquipment)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3">
-                  <p className="text-xs font-medium text-slate-500">gymsLoaded</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {String(debugInfo.gymsLoaded)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3">
-                  <p className="text-xs font-medium text-slate-500">gymsCount</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {String(debugInfo.gymsCount)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                  <p className="text-xs font-medium text-slate-500">matchedGymName</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {String(debugInfo.matchedGymName)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                  <p className="text-xs font-medium text-slate-500">matchedGymEquipment</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {JSON.stringify(debugInfo.matchedGymEquipment)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                  <p className="text-xs font-medium text-slate-500">extractEquipmentFromWorkout()</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {JSON.stringify(debugInfo.extractedEquipment)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                  <p className="text-xs font-medium text-slate-500">equipmentSeed</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {JSON.stringify(debugInfo.equipmentSeed)}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3">
-                  <p className="text-xs font-medium text-slate-500">availableCatalogCount</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {debugInfo.availableCatalogCount}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3">
-                  <p className="text-xs font-medium text-slate-500">filteredCatalogCount</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {debugInfo.filteredCatalogCount}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                  <p className="text-xs font-medium text-slate-500">Första tillgängliga övningar</p>
-                  <p className="mt-1 text-sm text-slate-900">
-                    {debugInfo.firstAvailableExerciseNames.join(", ")}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                  <p className="text-xs font-medium text-slate-500">Första filtrerade övningar</p>
-                  <p className="mt-1 text-sm text-slate-900">
-                    {debugInfo.firstFilteredExerciseNames.join(", ")}
-                  </p>
-                </div>
-
-                {aiDebug ? (
-                  <>
-                    <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                      <p className="text-xs font-medium text-slate-500">AI request / context</p>
-                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-slate-800">
-                        {JSON.stringify(
-                          {
-                            request: aiDebug.request,
-                            generationContext: aiDebug.generationContext,
-                          },
-                          null,
-                          2,
-                        )}
-                      </pre>
-                    </div>
-
-                    <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                      <p className="text-xs font-medium text-slate-500">AI prompt</p>
-                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-slate-800">
-                        {aiDebug.prompt ?? "Ingen prompt sparad"}
-                      </pre>
-                    </div>
-
-                    <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                      <p className="text-xs font-medium text-slate-500">Raw AI response</p>
-                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-slate-800">
-                        {aiDebug.rawAiText ?? "Inget råsvar sparat"}
-                      </pre>
-                    </div>
-
-                    <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                      <p className="text-xs font-medium text-slate-500">Parsed + validated</p>
-                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-slate-800">
-                        {JSON.stringify(
-                          {
-                            parsedAiResponse: aiDebug.parsedAiResponse,
-                            validatedWorkout: aiDebug.validatedWorkout,
-                            normalizedWorkout: aiDebug.normalizedWorkout,
-                          },
-                          null,
-                          2,
-                        )}
-                      </pre>
-                    </div>
-                  </>
-                ) : (
-                  <div className="rounded-2xl bg-white/80 p-3 sm:col-span-2">
-                    <p className="text-sm text-slate-700">
-                      Ingen AI-debug sparades för detta pass ännu. Generera ett nytt AI-pass så
-                      visas request, prompt, råsvar och validering här.
-                    </p>
-                  </div>
-                )}
-              </div>
-            ) : null}
-          </section>
+        {error ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {error}
+          </div>
         ) : null}
+        </section>
 
         {workout.blocks.length > 0 ? (
           <div className="space-y-6">

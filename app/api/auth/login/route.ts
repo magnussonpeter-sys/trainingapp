@@ -66,10 +66,6 @@ export async function POST(req: NextRequest) {
         email: user.email,
         username: user.username,
       },
-      debug: {
-        sessionCreated: true,
-        sessionTokenPreview: sessionToken.slice(0, 8),
-      },
     });
 
 response.headers.append(

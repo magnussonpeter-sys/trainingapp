@@ -5,16 +5,6 @@ import type {
   MuscleBudgetEntry,
 } from "@/lib/planning/muscle-budget";
 
-export type GenerateWorkoutDebug = {
-  request?: unknown;
-  generationContext?: unknown;
-  prompt?: string;
-  rawAiText?: string;
-  parsedAiResponse?: unknown;
-  validatedWorkout?: unknown;
-  normalizedWorkout?: unknown;
-};
-
 export async function generateWorkout(params: {
   userId: string;
   goal: string;
@@ -60,10 +50,7 @@ export async function generateWorkout(params: {
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      ...params,
-      includeDebug: true,
-    }),
+    body: JSON.stringify(params),
   });
 
   const data = await res.json();
@@ -75,6 +62,5 @@ export async function generateWorkout(params: {
   return {
     // Typa workout så att resten av appen får rätt fält direkt.
     workout: data.workout as Workout,
-    debug: (data.debug ?? null) as GenerateWorkoutDebug | null,
   };
 }

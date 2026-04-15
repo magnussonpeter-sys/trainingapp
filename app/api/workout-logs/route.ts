@@ -70,25 +70,9 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    console.log("POST /api/workout-logs body:", body);
-
     const parsed = createWorkoutLogSchema.parse(body);
 
-    console.log("POST /api/workout-logs parsed:", {
-      userId: parsed.userId,
-      workoutId: parsed.workoutId,
-      workoutName: parsed.workoutName,
-      status: parsed.status,
-      exerciseCount: parsed.exercises.length,
-      clientSyncId:
-        typeof parsed.metadata?.clientSyncId === "string"
-          ? parsed.metadata.clientSyncId
-          : null,
-    });
-
     const result = await insertWorkoutLog(parsed);
-
-    console.log("POST /api/workout-logs inserted:", result);
 
     return NextResponse.json(
       {
@@ -150,11 +134,7 @@ export async function GET(request: Request) {
       );
     }
 
-    console.log("GET /api/workout-logs", { userId, limit });
-
     const logs = await getWorkoutLogsByUser(userId, limit);
-
-    console.log("GET /api/workout-logs result count:", logs.length);
 
     return NextResponse.json({
       ok: true,

@@ -971,7 +971,7 @@ export default function HomePage() {
         .filter((entry) => entry.preference === "less_often")
         .map((entry) => entry.exerciseId);
 
-      const { workout, debug } = await generateWorkout({
+      const { workout } = await generateWorkout({
         userId,
         goal,
         durationMinutes,
@@ -1006,7 +1006,6 @@ export default function HomePage() {
         gymLabel,
         availableEquipment: equipment,
         plannedFocus: weeklyStructure.nextFocus,
-        aiDebug: debug ?? undefined,
       });
 
       router.push(`/workout/preview?userId=${encodeURIComponent(userId)}`);
@@ -1040,7 +1039,7 @@ export default function HomePage() {
 
       const quickDuration = recommendedDuration;
 
-      const { workout, debug } = await generateWorkout({
+      const { workout } = await generateWorkout({
         userId,
         goal,
         durationMinutes: quickDuration,
@@ -1075,7 +1074,6 @@ export default function HomePage() {
         gymLabel,
         availableEquipment: equipment,
         plannedFocus: weeklyStructure.nextFocus,
-        aiDebug: debug ?? undefined,
       });
 
       router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);

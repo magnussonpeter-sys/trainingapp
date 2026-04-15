@@ -209,8 +209,7 @@ export function useHomeData({ router }: UseHomeDataParams) {
           hasRunInitialSyncRef.current = true;
 
           try {
-            const syncResult = await syncPendingWorkoutQueue();
-            console.log("Home pending sync result:", syncResult);
+            await syncPendingWorkoutQueue();
           } catch (error) {
             console.error("Kunde inte synka pending queue på home:", error);
           }
@@ -250,10 +249,6 @@ export function useHomeData({ router }: UseHomeDataParams) {
           setGyms([]);
         } else {
           const normalizedGyms = normalizeGyms(gymsData);
-
-          // Liten debug för att verifiera att equipment verkligen följer med.
-          console.log("Home gyms loaded:", normalizedGyms);
-
           setGyms(normalizedGyms);
         }
 
@@ -343,8 +338,7 @@ export function useHomeData({ router }: UseHomeDataParams) {
 
     async function handleOnline() {
       try {
-        const result = await syncPendingWorkoutQueue();
-        console.log("Online sync result:", result);
+        await syncPendingWorkoutQueue();
       } catch (error) {
         console.error("Kunde inte köra online-sync:", error);
       }
