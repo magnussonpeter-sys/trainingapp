@@ -17,13 +17,6 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function getCurrentTimeLabel() {
-  return new Intl.DateTimeFormat("sv-SE", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date());
-}
-
 function getProgressPercent(totalCompletedSets: number, totalPlannedSets: number) {
   if (totalPlannedSets <= 0) {
     return 0;
@@ -44,64 +37,13 @@ function getCurrentSetTotal(props: RunScreenProps) {
   return Math.max(1, props.currentExercise.sets);
 }
 
-function getProgressTitle(props: RunScreenProps) {
+function getPrimaryActionLabel(props: RunScreenProps, currentSetTotal: number) {
+  // Keep the CTA self-explanatory so the active card can stay visually lighter.
   if (props.currentBlockType === "superset") {
-    return props.currentBlockTitle || "Superset";
+    return `${props.primaryButtonLabel} A${props.currentBlockExercisePosition} · ${props.currentRound}/${props.currentRoundTotal}`;
   }
 
-  if (props.currentBlockType === "circuit") {
-    return props.currentBlockTitle || "Circuit";
-  }
-
-  return props.currentExercise?.name || "Pågående pass";
-}
-
-function getProgressDetail(props: RunScreenProps, progressPercent: number) {
-  if (props.currentBlockType === "superset") {
-    return `Varv ${props.currentRound}/${props.currentRoundTotal} · ${progressPercent}%`;
-  }
-
-  return `${progressPercent}%`;
-}
-
-function getNextStepLabel(props: RunScreenProps) {
-  if (!props.currentExercise) {
-    return "";
-  }
-
-  if (props.currentBlockType === "superset") {
-    if (props.showRestTimer) {
-      const firstExercise = props.currentBlockExercises[0];
-      return firstExercise ? `${firstExercise.name} (A1)` : "Nästa varv";
-    }
-
-    if (props.currentBlockExercisePosition < props.currentBlockExerciseCount) {
-      return (
-        props.currentBlockExercises[props.currentBlockExercisePosition]?.name || ""
-      );
-    }
-
-    if (props.currentRound < props.currentRoundTotal) {
-      const firstExercise = props.currentBlockExercises[0];
-      return firstExercise ? `Vila, sedan ${firstExercise.name}` : "Vila";
-    }
-
-    return props.nextExerciseName || "Feedback";
-  }
-
-  if (props.showRestTimer) {
-    if (props.currentSet < getCurrentSetTotal(props)) {
-      return `${props.currentExercise.name} · Set ${props.currentSet + 1}`;
-    }
-
-    return props.nextExerciseName || "Nästa övning";
-  }
-
-  if (props.currentSet < getCurrentSetTotal(props)) {
-    return `${props.currentExercise.name} · Set ${props.currentSet + 1}`;
-  }
-
-  return props.nextExerciseName || "Nästa övning";
+  return `${props.primaryButtonLabel} ${props.currentSet}/${currentSetTotal}`;
 }
 
 function playCountdownBeep() {
@@ -142,13 +84,9 @@ export default function RunScreenStructured(props: RunScreenProps) {
   const {
     workoutName,
     pageError,
-    restoreNotice,
-    saveStatus,
-    pendingSyncCount,
     totalPlannedSets,
     currentExercise,
     currentBlockType,
-    currentBlockTitle,
     currentBlockExercisePosition,
     currentBlockExerciseCount,
     currentBlockExercises,
@@ -182,17 +120,16 @@ export default function RunScreenStructured(props: RunScreenProps) {
     confirmAbortWorkout,
   } = props;
 
-  const [clockLabel, setClockLabel] = useState(getCurrentTimeLabel);
   const [isOverviewExpanded, setIsOverviewExpanded] = useState(false);
   const restCountdownRef = useRef<string | null>(null);
   const exerciseCountdownRef = useRef<string | null>(null);
 
   const progressPercent = getProgressPercent(totalCompletedSets, totalPlannedSets);
   const currentSetTotal = getCurrentSetTotal(props);
-  const nextStepLabel = getNextStepLabel(props);
+  const primaryActionLabel = getPrimaryActionLabel(props, currentSetTotal);
   const overviewHeight = isOverviewExpanded
-    ? "min(52dvh, 430px)"
-    : "min(20dvh, 160px)";
+    ? "min(50dvh, 400px)"
+    : "min(18dvh, 148px)";
   const overviewItems = useMemo(() => {
     return buildOverviewItems({
       workoutBlocks,
@@ -202,12 +139,21 @@ export default function RunScreenStructured(props: RunScreenProps) {
   }, [props.currentBlockIndex, props.currentExerciseId, workoutBlocks]);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setClockLabel(getCurrentTimeLabel());
-    }, 30000);
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousBodyOverscroll = document.body.style.overscrollBehavior;
+    const previousHtmlOverscroll = document.documentElement.style.overscrollBehavior;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    document.documentElement.style.overscrollBehavior = "none";
 
     return () => {
-      window.clearInterval(intervalId);
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overscrollBehavior = previousBodyOverscroll;
+      document.documentElement.style.overscrollBehavior = previousHtmlOverscroll;
     };
   }, []);
 
@@ -254,15 +200,12 @@ export default function RunScreenStructured(props: RunScreenProps) {
     props.timerState,
   ]);
 
-  const statusText =
-    saveStatus === "error_local" ? "Kunde inte spara lokalt" : null;
-
   return (
     <main className="fixed inset-0 flex h-[100dvh] flex-col overflow-hidden overscroll-none bg-[radial-gradient(circle_at_top,_rgba(241,245,249,0.9),_rgba(248,250,252,1)_42%)]">
       <div className="z-30 border-b border-white/70 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto max-w-3xl px-4 pb-4 pt-3 sm:px-6">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-slate-500">{clockLabel}</p>
+            <div className="h-11 w-11 shrink-0" aria-hidden="true" />
             <h1 className="min-w-0 truncate text-base font-semibold tracking-tight text-slate-950">
               {workoutName}
             </h1>
@@ -277,26 +220,14 @@ export default function RunScreenStructured(props: RunScreenProps) {
           </div>
 
           <div className="mt-4">
-            <WorkoutProgressBar
-              title={getProgressTitle(props)}
-              detail={getProgressDetail(props, progressPercent)}
-              percent={progressPercent}
-            />
+            <WorkoutProgressBar percent={progressPercent} />
           </div>
-
-          {(restoreNotice || pendingSyncCount > 0 || statusText) && (
-            <p className="mt-3 text-xs text-slate-500">
-              {restoreNotice ? `${restoreNotice} · ` : ""}
-              {statusText ?? ""}
-              {pendingSyncCount > 0 ? ` · ${pendingSyncCount} väntar på synk` : ""}
-            </p>
-          )}
         </div>
       </div>
 
       <div className="relative mx-auto flex min-h-0 w-full max-w-3xl flex-1 overflow-hidden">
         <div
-          className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-4 pb-3 pt-4 sm:px-6"
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 pb-3 pt-4 sm:px-6"
           style={{
             paddingBottom: `calc(${overviewHeight} + env(safe-area-inset-bottom) + 12px)`,
           }}
@@ -308,7 +239,7 @@ export default function RunScreenStructured(props: RunScreenProps) {
           ) : null}
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
-            <div className="space-y-4 pb-2">
+            <div className="space-y-3 pb-2">
               <ActiveExerciseCard
                 exercise={currentExercise}
                 blockType={currentBlockType}
@@ -316,9 +247,6 @@ export default function RunScreenStructured(props: RunScreenProps) {
                 currentSetTotal={currentSetTotal}
                 currentRound={currentRound}
                 currentRoundTotal={currentRoundTotal}
-                currentExerciseIndex={currentBlockExercisePosition}
-                currentExerciseCount={currentBlockExerciseCount}
-                nextStepLabel={nextStepLabel}
                 timedExercise={props.timedExercise}
                 timerState={props.timerState}
                 elapsedSeconds={props.elapsedSeconds}
@@ -330,7 +258,7 @@ export default function RunScreenStructured(props: RunScreenProps) {
                 suggestedWeightValue={props.suggestedWeightValue}
                 weightUnitLabel={props.weightUnitLabel}
                 weightChipOptions={props.weightChipOptions}
-                primaryButtonLabel={props.primaryButtonLabel}
+                primaryButtonLabel={primaryActionLabel}
                 onPrimaryAction={props.handlePrimaryAction}
                 onSkip={props.skipExercise}
                 showRestTimer={props.showRestTimer}
@@ -365,7 +293,7 @@ export default function RunScreenStructured(props: RunScreenProps) {
         </div>
 
         <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 mx-auto max-w-3xl px-2 sm:px-4"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 mx-auto max-w-3xl px-2 transition-[height] duration-150 ease-out will-change-[height] sm:px-4"
           style={{ height: overviewHeight }}
         >
           <div className="pointer-events-auto h-full">

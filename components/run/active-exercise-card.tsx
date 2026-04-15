@@ -45,6 +45,19 @@ function formatStructure(exercise: Exercise, blockType: string) {
   return `${perSet} × ${exercise.sets} ${setWord}${blockSuffix}`;
 }
 
+function formatCurrentWeightLabel(params: {
+  weight: string;
+  suggestedWeightValue: string;
+  weightUnitLabel: string;
+}) {
+  const value = params.weight.trim() || params.suggestedWeightValue.trim();
+  if (!value) {
+    return null;
+  }
+
+  return `${value} ${params.weightUnitLabel}`;
+}
+
 type ActiveExerciseCardProps = {
   exercise: Exercise | null;
   blockType: "straight_sets" | "superset" | "circuit";
@@ -52,9 +65,6 @@ type ActiveExerciseCardProps = {
   currentSetTotal: number;
   currentRound: number;
   currentRoundTotal: number;
-  currentExerciseIndex: number;
-  currentExerciseCount: number;
-  nextStepLabel?: string;
   timedExercise: boolean;
   timerState: "idle" | "running" | "ready_to_save";
   elapsedSeconds: number;
@@ -87,9 +97,6 @@ export default function ActiveExerciseCard({
   currentSetTotal,
   currentRound,
   currentRoundTotal,
-  currentExerciseIndex,
-  currentExerciseCount,
-  nextStepLabel,
   timedExercise,
   timerState,
   elapsedSeconds,
@@ -134,14 +141,18 @@ export default function ActiveExerciseCard({
     suggestedWeightValue,
     weightChipOptions,
   });
-
-  const stepLabel =
+  const currentWeightLabel = formatCurrentWeightLabel({
+    weight,
+    suggestedWeightValue,
+    weightUnitLabel,
+  });
+  const eyebrowLabel =
     blockType === "superset"
-      ? `A${currentExerciseIndex} · Varv ${currentRound} av ${currentRoundTotal}`
-      : `Set ${currentSet} av ${currentSetTotal}`;
+      ? `Superset varv ${currentRound}/${currentRoundTotal}`
+      : "Aktiv övning";
 
   return (
-    <section className="rounded-[32px] border border-slate-200/80 bg-white px-5 py-5 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
+    <section className="rounded-[32px] border border-slate-200/80 bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
       {showExerciseFeedback ? (
         <div className="space-y-4">
           <div>
@@ -175,24 +186,32 @@ export default function ActiveExerciseCard({
           )}
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-4">
           <div className="min-w-0">
-            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
-              Aktiv övning
+            <p
+              className={cn(
+                "text-[11px] font-medium uppercase tracking-[0.18em]",
+                blockType === "superset"
+                  ? "text-emerald-700 italic"
+                  : "text-slate-400",
+              )}
+            >
+              {eyebrowLabel}
             </p>
 
             <button
               type="button"
               onClick={() => setShowDescription((previous) => !previous)}
-              className="mt-2 text-left"
+              className="mt-2 w-full text-left"
             >
-              <h2 className="text-[34px] font-semibold leading-tight tracking-tight text-slate-950">
+              <h2 className="truncate text-[clamp(1.75rem,7vw,2.4rem)] font-semibold leading-tight tracking-tight text-slate-950">
                 {exercise.name}
               </h2>
             </button>
 
             <p className="mt-2 text-base text-slate-500">
               {formatStructure(exercise, blockType)}
+              {currentWeightLabel ? ` · ${currentWeightLabel}` : ""}
             </p>
           </div>
 
@@ -201,13 +220,6 @@ export default function ActiveExerciseCard({
               {exercise.description?.trim() || "Ingen beskrivning tillgänglig ännu."}
             </div>
           ) : null}
-
-          <div className="rounded-2xl bg-slate-50 px-4 py-3">
-            <p className="text-sm font-semibold text-slate-900">{stepLabel}</p>
-            <p className="mt-1 text-sm text-slate-500">
-              {nextStepLabel ? `Nästa: ${nextStepLabel}` : "Fokusera på detta set nu."}
-            </p>
-          </div>
 
           {timedExercise ? (
             <TimerPanel
