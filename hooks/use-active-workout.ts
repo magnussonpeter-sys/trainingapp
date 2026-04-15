@@ -336,16 +336,16 @@ export function useActiveWorkout({ userId, workout }: UseActiveWorkoutProps) {
   }, [currentExercise]);
 
   const suggestedWeightValue = useMemo(() => {
-    const fromExercise = getSuggestedWeightFromExercise(currentExercise);
-    if (fromExercise) {
-      return fromExercise;
-    }
-
     if (!currentExercise) {
       return "";
     }
 
-    return lastWeightByExercise[currentExercise.id] ?? "";
+    const lastUsedWeight = lastWeightByExercise[currentExercise.id] ?? "";
+    if (lastUsedWeight) {
+      return lastUsedWeight;
+    }
+
+    return getSuggestedWeightFromExercise(currentExercise);
   }, [currentExercise, lastWeightByExercise]);
 
   const weightChipOptions = useMemo(() => {
@@ -544,6 +544,7 @@ if (draft && isDraftForWorkout(draft, workout)) {
     restIntervalRef.current = window.setInterval(() => {
       setRestRemainingSeconds((previous) => {
         if (previous <= 1) {
+          setShowRestTimer(false);
           setRestTimerRunning(false);
           return 0;
         }
@@ -754,10 +755,17 @@ if (draft && isDraftForWorkout(draft, workout)) {
       entry.exerciseIndexInBlock >= entry.block.exercises.length - 1;
 
     if (!isLastExerciseInBlock) {
+      // Supersets ska flyta direkt mellan A1/A2.
+      // Vila visas bara efter ett helt varv för att minska friktion i /run.
+      const restBetweenExercises =
+        entry.block.type === "superset"
+          ? 0
+          : entry.block.restBetweenExercises ?? 0;
+
       transitionToExercise(
         nextExerciseIndex,
         currentSet,
-        entry.block.restBetweenExercises ?? 0,
+        restBetweenExercises,
       );
       return true;
     }
