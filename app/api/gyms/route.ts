@@ -1,8 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 
+async function ensureGymSharingColumn() {
+  // Enkel delningsflagga nu gör att vi kan bygga UI utan att låsa framtida delningsflöden.
+  await pool.query(`
+    ALTER TABLE gyms
+    ADD COLUMN IF NOT EXISTS is_shared BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+}
+
+async function ensureBandLevelsColumn() {
+  // Gymöversikten ska kunna visa flera valda bandnivåer när de finns.
+  await pool.query(`
+    ALTER TABLE gym_equipment
+    ADD COLUMN IF NOT EXISTS band_levels TEXT[]
+  `);
+}
+
 export async function GET(req: NextRequest) {
   try {
+    await ensureGymSharingColumn();
+    await ensureBandLevelsColumn();
+
     const userId = req.nextUrl.searchParams.get("userId");
 
     if (!userId || !userId.trim()) {
@@ -19,6 +38,7 @@ export async function GET(req: NextRequest) {
         g.user_id,
         g.name,
         g.description,
+        g.is_shared,
         g.created_at,
         COALESCE(
           json_agg(
@@ -30,6 +50,7 @@ export async function GET(req: NextRequest) {
               'notes', ge.notes,
               'weights_kg', ge.weights_kg,
               'band_level', ge.band_level,
+              'band_levels', ge.band_levels,
               'quantity', ge.quantity
             )
             ORDER BY ge.created_at ASC
@@ -63,8 +84,10 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureGymSharingColumn();
+
     const body = await req.json();
-    const { userId, name, description } = body;
+    const { userId, name, description, is_shared } = body;
 
     if (!userId || !String(userId).trim()) {
       return NextResponse.json(
@@ -82,14 +105,15 @@ export async function POST(req: NextRequest) {
 
     const result = await pool.query(
       `
-      INSERT INTO gyms (user_id, name, description)
-      VALUES ($1, $2, $3)
-      RETURNING id, user_id, name, description, created_at
+      INSERT INTO gyms (user_id, name, description, is_shared)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, user_id, name, description, is_shared, created_at
       `,
       [
         String(userId).trim(),
         String(name).trim(),
         description ? String(description).trim() : null,
+        Boolean(is_shared),
       ]
     );
 

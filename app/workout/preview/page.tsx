@@ -4,10 +4,10 @@ import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import AddExerciseSheet from "@/components/preview/add-exercise-sheet";
-import PreviewExerciseList from "@/components/preview/preview-exercise-list";
-import PreviewHeader from "@/components/preview/preview-header";
-import PreviewMetaRow from "@/components/preview/preview-meta-row";
+import PreviewBlockCard from "@/components/preview/preview-block-card";
+import PreviewSummaryCard from "@/components/preview/preview-summary-card";
 import ReplaceExerciseSheet from "@/components/preview/replace-exercise-sheet";
+import StickyActionBar from "@/components/app-shell/sticky-action-bar";
 import ConfirmSheet from "@/components/shared/confirm-sheet";
 import { useWorkoutPreview } from "@/hooks/use-workout-preview";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
@@ -29,26 +29,6 @@ function getAllExercises(
   }
 
   return workout.blocks.flatMap((block) => block.exercises ?? []);
-}
-
-function formatBlockIntensity(block: {
-  targetRpe?: number | null;
-  targetRir?: number | null;
-}) {
-  if (typeof block.targetRpe === "number") {
-    return `RPE ${block.targetRpe}`;
-  }
-
-  if (typeof block.targetRir === "number") {
-    return `${block.targetRir} RIR`;
-  }
-
-  return null;
-}
-
-function formatSecondsLabel(value?: number | null) {
-  const safeValue = Math.max(0, value ?? 0);
-  return `${safeValue}s`;
 }
 
 function PreviewPageContent() {
@@ -175,6 +155,10 @@ function PreviewPageContent() {
       return "";
     }
 
+    if (workout.aiComment?.trim()) {
+      return workout.aiComment.trim();
+    }
+
     if (summary.exerciseCount <= 4) {
       return "Kort och fokuserat pass.";
     }
@@ -262,218 +246,57 @@ function PreviewPageContent() {
   const startDisabled = allExercises.length === 0;
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+    <main className="mx-auto w-full max-w-3xl px-4 py-6 pb-32 sm:px-6">
       <div className="space-y-6">
-        <PreviewHeader
+        <PreviewSummaryCard
           workoutName={workout.name}
+          durationMinutes={workout.duration}
+          exerciseCount={summary.exerciseCount}
+          totalSets={summary.setCount}
+          gymLabel={workout.gymLabel ?? undefined}
+          subtitle={dynamicSubtitle}
+          startDisabled={startDisabled}
           onBack={() => router.push("/home")}
+          onStart={handleStartWorkout}
         />
 
-        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-          <div className="flex flex-col gap-4">
+        <section className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-600">
-                Känsla
+              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
+                Passöversikt
               </p>
-              <h1 className="mt-2 text-2xl font-bold text-slate-950 sm:text-3xl">
-                {workout.name}
-              </h1>
-              <p className="mt-2 text-sm leading-6 text-slate-600">{dynamicSubtitle}</p>
+              <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
+                Block och flöde
+              </h2>
             </div>
 
-            <PreviewMetaRow
-              durationMinutes={workout.duration}
-              exerciseCount={summary.exerciseCount}
-              totalSets={summary.setCount}
-              timedExercises={summary.timedExercises}
-              gymLabel={workout.gymLabel ?? undefined}
-            />
-
-            {workout.blocks.length > 0 ? (
-              <div className="grid gap-3">
-                {workout.blocks.map((block, index) => {
-                  const intensityLabel = formatBlockIntensity(block);
-
-                  return (
-                    <div
-                      key={`${block.title ?? "block"}-${index}`}
-                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold text-slate-900">
-                          {block.title ?? `Block ${index + 1}`}
-                        </p>
-                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600">
-                          {block.type === "superset"
-                            ? "Superset"
-                            : block.type === "circuit"
-                              ? "Circuit"
-                              : "Straight sets"}
-                        </span>
-                        {intensityLabel ? (
-                          <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700">
-                            {intensityLabel}
-                          </span>
-                        ) : null}
-                        {block.warmup?.recommended ? (
-                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
-                            Uppvärmning först
-                          </span>
-                        ) : null}
-                      </div>
-
-                      {block.coachNote ? (
-                        <p className="mt-2 text-sm text-slate-700">{block.coachNote}</p>
-                      ) : null}
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setBlockType(index, "straight_sets")}
-                          className={cn(
-                            "rounded-xl border px-3 py-1.5 text-xs font-medium transition",
-                            block.type === "straight_sets"
-                              ? "border-slate-900 bg-slate-900 text-white"
-                              : "border-slate-200 bg-white text-slate-700",
-                          )}
-                        >
-                          Straight sets
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setBlockType(index, "superset")}
-                          className={cn(
-                            "rounded-xl border px-3 py-1.5 text-xs font-medium transition",
-                            block.type === "superset"
-                              ? "border-indigo-700 bg-indigo-700 text-white"
-                              : "border-indigo-200 bg-indigo-50 text-indigo-800",
-                          )}
-                        >
-                          Gör till superset
-                        </button>
-                      </div>
-
-                      {block.purpose ? (
-                        <p className="mt-1 text-xs text-slate-500">{block.purpose}</p>
-                      ) : null}
-
-                      {block.warmup?.instruction ? (
-                        <p className="mt-2 text-xs text-amber-800">
-                          {block.warmup.instruction}
-                        </p>
-                      ) : null}
-
-                      {block.type === "superset" || block.type === "circuit" ? (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                          <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                              Varv
-                            </p>
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <button
-                                type="button"
-                                onClick={() => decrementBlockRounds(index)}
-                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
-                              >
-                                −
-                              </button>
-                              <span className="text-sm font-semibold text-slate-900">
-                                {block.rounds ?? 1}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => incrementBlockRounds(index)}
-                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                              Mellan övningar
-                            </p>
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <button
-                                type="button"
-                                onClick={() => decrementBlockRestBetweenExercises(index)}
-                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
-                              >
-                                −
-                              </button>
-                              <span className="text-sm font-semibold text-slate-900">
-                                {formatSecondsLabel(block.restBetweenExercises)}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => incrementBlockRestBetweenExercises(index)}
-                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-                              Efter varv
-                            </p>
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <button
-                                type="button"
-                                onClick={() => decrementBlockRestAfterRound(index)}
-                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
-                              >
-                                −
-                              </button>
-                              <span className="text-sm font-semibold text-slate-900">
-                                {formatSecondsLabel(block.restAfterRound)}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => incrementBlockRestAfterRound(index)}
-                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap gap-3">
+            <div className="flex gap-2">
               <button
                 type="button"
                 onClick={() => handleOpenAddSheet("catalog")}
-                className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-900"
+                className={cn(uiButtonClasses.secondary, "px-3 py-2 text-xs")}
               >
-                Lägg till övning
+                Lägg till
               </button>
-
               <button
                 type="button"
                 onClick={() => handleOpenAddSheet("custom")}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+                className={cn(uiButtonClasses.secondary, "px-3 py-2 text-xs")}
               >
-                Egen övning
+                Egen
               </button>
             </div>
-
-            {error ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {error}
-              </div>
-            ) : null}
           </div>
+
+          {error ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+          ) : null}
         </section>
 
-        {workout ? (
+        {showDebug && workout ? (
           <section className="rounded-[24px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -685,10 +508,17 @@ function PreviewPageContent() {
         {workout.blocks.length > 0 ? (
           <div className="space-y-6">
             {workout.blocks.map((block, blockIndex) => (
-              <PreviewExerciseList
+              <PreviewBlockCard
                 key={`${block.type}-${block.title ?? "block"}-${blockIndex}`}
                 block={block}
-                exercises={block.exercises}
+                blockIndex={blockIndex}
+                onSetBlockType={setBlockType}
+                onIncrementBlockRounds={incrementBlockRounds}
+                onDecrementBlockRounds={decrementBlockRounds}
+                onIncrementBlockRestBetweenExercises={incrementBlockRestBetweenExercises}
+                onDecrementBlockRestBetweenExercises={decrementBlockRestBetweenExercises}
+                onIncrementBlockRestAfterRound={incrementBlockRestAfterRound}
+                onDecrementBlockRestAfterRound={decrementBlockRestAfterRound}
                 onIncreaseSets={incrementSets}
                 onDecreaseSets={decrementSets}
                 onIncreaseReps={incrementReps}
@@ -707,54 +537,49 @@ function PreviewPageContent() {
                   setError(null);
                   setRemoveExerciseId(exerciseId);
                 }}
-                onAddFirstExercise={() => handleOpenAddSheet("catalog")}
               />
             ))}
           </div>
         ) : (
-          <PreviewExerciseList
-            exercises={allExercises}
-            onIncreaseSets={incrementSets}
-            onDecreaseSets={decrementSets}
-            onIncreaseReps={incrementReps}
-            onDecreaseReps={decrementReps}
-            onIncreaseDuration={incrementDuration}
-            onDecreaseDuration={decrementDuration}
-            onIncreaseRest={incrementRest}
-            onDecreaseRest={decrementRest}
-            onMoveExerciseUp={(exerciseId) => moveExercise(exerciseId, "up")}
-            onMoveExerciseDown={(exerciseId) => moveExercise(exerciseId, "down")}
-            onReplaceExercise={(exerciseId) => {
-              setError(null);
-              setReplaceExerciseId(exerciseId);
-            }}
-            onRemoveExercise={(exerciseId) => {
-              setError(null);
-              setRemoveExerciseId(exerciseId);
-            }}
-            onAddFirstExercise={() => handleOpenAddSheet("catalog")}
-          />
+          <section className="rounded-[28px] border border-dashed border-slate-300 bg-white p-6 text-center shadow-sm">
+            <p className="text-base font-semibold tracking-tight text-slate-900">
+              Inga block ännu
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Lägg till första övningen innan du startar passet.
+            </p>
+            <button
+              type="button"
+              onClick={() => handleOpenAddSheet("catalog")}
+              className={cn(uiButtonClasses.primary, "mt-4")}
+            >
+              Lägg till första övningen
+            </button>
+          </section>
         )}
+      </div>
 
+      <StickyActionBar>
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => router.push("/home")}
-            className={cn(uiButtonClasses.secondary, "flex-1")}
-          >
-            Tillbaka
-          </button>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">
+              Redo att köra
+            </p>
+            <p className="mt-1 truncate text-sm font-semibold text-slate-900">
+              {summary.exerciseCount} övningar · {summary.setCount} set · {workout.duration} min
+            </p>
+          </div>
 
           <button
             type="button"
             onClick={handleStartWorkout}
             disabled={startDisabled}
-            className={cn(uiButtonClasses.primary, "flex-1")}
+            className={cn(uiButtonClasses.primary, "shrink-0 px-5")}
           >
             Starta pass
           </button>
         </div>
-      </div>
+      </StickyActionBar>
 
       <AddExerciseSheet
         open={showAddSheet}

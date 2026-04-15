@@ -1,8 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { signIn } from "next-auth/react";
+
+import { uiButtonClasses } from "@/lib/ui/button-classes";
+import { uiCardClasses } from "@/lib/ui/card-classes";
+import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function EyeIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="3" />
+      {!open ? <path d="M4 4l16 16" /> : null}
+    </svg>
+  );
+}
 
 export default function LoginPage() {
   const [identifier, setIdentifier] = useState("");
@@ -10,24 +37,25 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [loadingPage, setLoadingPage] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
 
     async function checkAuth() {
       try {
-        // Kolla om användaren redan har en giltig session.
-        const res = await fetch("/api/auth/me", {
+        // Skicka redan inloggade användare direkt vidare för att hålla flödet snabbt.
+        const response = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
         });
+        const data = await response.json().catch(() => null);
 
-        const data = await res.json();
+        if (!isMounted) {
+          return;
+        }
 
-        if (!isMounted) return;
-
-        if (res.ok && data?.user) {
-          // Använd hård navigation här för att undvika Next-router/HMR-problem i dev.
+        if (response.ok && data?.user) {
           window.location.replace("/home");
           return;
         }
@@ -47,21 +75,24 @@ export default function LoginPage() {
     };
   }, []);
 
-  async function handleLogin(e: FormEvent) {
-    e.preventDefault();
+  const trimmedIdentifier = useMemo(() => identifier.trim(), [identifier]);
+  const formInvalid = trimmedIdentifier.length === 0 || password.length === 0;
 
-    if (submitting) return;
+  async function handleLogin(event: FormEvent) {
+    event.preventDefault();
 
-    setSubmitting(true);
-    setMessage("");
-
-    const trimmedIdentifier = identifier.trim();
-
-    if (!trimmedIdentifier || !password) {
-      setMessage("Fyll i användarnamn eller e-post samt lösenord");
-      setSubmitting(false);
+    if (submitting) {
       return;
     }
+
+    setMessage("");
+
+    if (formInvalid) {
+      setMessage("Fyll i e-post eller användarnamn samt lösenord.");
+      return;
+    }
+
+    setSubmitting(true);
 
     try {
       const result = await signIn("credentials", {
@@ -71,86 +102,138 @@ export default function LoginPage() {
       });
 
       if (!result || result.error) {
-        setMessage("Fel användarnamn/e-post eller lösenord");
+        setMessage("Fel användarnamn/e-post eller lösenord.");
         setSubmitting(false);
         return;
       }
 
-      // Verifiera att sessionen verkligen finns innan redirect.
-      const meRes = await fetch("/api/auth/me", {
+      const meResponse = await fetch("/api/auth/me", {
         cache: "no-store",
         credentials: "include",
       });
+      const meData = await meResponse.json().catch(() => null);
 
-      const meData = await meRes.json();
-
-      if (meRes.ok && meData?.user) {
-        // Hård navigation även här för att undvika router-race i dev.
+      if (meResponse.ok && meData?.user) {
         window.location.replace("/home");
         return;
       }
 
-      setMessage("Inloggningen lyckades inte skapa en giltig session");
+      setMessage("Inloggningen lyckades inte skapa en giltig session.");
     } catch (error) {
       console.error("Login failed:", error);
-      setMessage("Kunde inte logga in");
+      setMessage("Kunde inte logga in.");
     } finally {
       setSubmitting(false);
     }
   }
 
   if (loadingPage) {
-    return <main className="p-6">Laddar...</main>;
+    return (
+      <main className={uiPageShellClasses.page}>
+        <div className={uiPageShellClasses.content}>
+          <div className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+            <p className="text-sm text-slate-500">Laddar...</p>
+          </div>
+        </div>
+      </main>
+    );
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center p-6">
-      <div className="rounded-2xl border bg-white p-6 shadow-sm">
-        <h1 className="mb-2 text-3xl font-bold">Logga in</h1>
-        <p className="mb-6 text-sm text-gray-600">
-          Logga in med e-post eller användarnamn.
-        </p>
+    <main className="min-h-screen bg-slate-50 px-4 pb-[calc(env(safe-area-inset-bottom)+24px)] pt-8">
+      <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-md flex-col justify-center">
+        <section className={cn(uiCardClasses.section, "px-5 py-6 sm:px-6 sm:py-7")}>
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">
+              Träningsapp
+            </p>
+            <h1 className="text-3xl font-semibold tracking-tight text-slate-950">
+              Logga in
+            </h1>
+            <p className="text-sm text-slate-600">
+              AI-pass anpassade efter dig
+            </p>
+          </div>
 
-        <form onSubmit={handleLogin} className="space-y-4">
-          <input
-            type="text"
-            placeholder="E-post eller användarnamn"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
-            autoComplete="username"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            className="w-full rounded-xl border px-3 py-3 text-base"
-          />
+          <form onSubmit={handleLogin} className="mt-6 space-y-4">
+            <div>
+              <label
+                htmlFor="identifier"
+                className="mb-2 block text-sm font-medium text-slate-700"
+              >
+                E-post eller användarnamn
+              </label>
+              <input
+                id="identifier"
+                type="text"
+                placeholder="namn@mail.se eller användarnamn"
+                value={identifier}
+                onChange={(event) => setIdentifier(event.target.value)}
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                autoFocus
+                className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-lime-300 focus:ring-4 focus:ring-lime-100"
+              />
+            </div>
 
-          <input
-            type="password"
-            placeholder="Lösenord"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            className="w-full rounded-xl border px-3 py-3 text-base"
-          />
+            <div>
+              <label
+                htmlFor="password"
+                className="mb-2 block text-sm font-medium text-slate-700"
+              >
+                Lösenord
+              </label>
+              <div className="relative">
+                <input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Ange lösenord"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete="current-password"
+                  className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-14 text-base text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-lime-300 focus:ring-4 focus:ring-lime-100"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                  className="absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-xl text-slate-500 transition active:scale-[0.98]"
+                  aria-label={showPassword ? "Dölj lösenord" : "Visa lösenord"}
+                >
+                  <EyeIcon open={showPassword} />
+                </button>
+              </div>
+            </div>
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full rounded-xl bg-black px-4 py-3 text-white disabled:opacity-60"
-          >
-            {submitting ? "Loggar in..." : "Logga in"}
-          </button>
+            {message ? (
+              <div className={uiCardClasses.danger}>{message}</div>
+            ) : null}
 
-          {message ? <p className="text-sm text-red-600">{message}</p> : null}
-        </form>
+            <button
+              type="submit"
+              disabled={submitting || formInvalid}
+              className={cn(uiButtonClasses.primary, "w-full shadow-sm")}
+            >
+              {submitting ? "Loggar in..." : "Logga in"}
+            </button>
+          </form>
 
-        <p className="mt-6 text-sm text-gray-600">
-          Har du inget konto?{" "}
-          <Link href="/register" className="font-medium underline">
-            Skapa konto
-          </Link>
-        </p>
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-center">
+            <p className="text-sm text-slate-600">Har du inget konto?</p>
+            <Link
+              href="/register"
+              className={cn(
+                uiButtonClasses.secondary,
+                "mt-3 inline-flex min-w-[180px] items-center justify-center",
+              )}
+            >
+              Skapa konto
+            </Link>
+          </div>
+        </section>
       </div>
     </main>
   );
 }
+

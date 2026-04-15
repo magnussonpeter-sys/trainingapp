@@ -78,6 +78,8 @@ type WeeklyBudgetScoringItem = Pick<
   loadStatus?: MuscleBudgetEntry["loadStatus"];
 };
 
+type SupersetPreference = "allowed" | "avoid_all" | "avoid_all_dumbbell";
+
 const RAW_MUSCLE_TO_BUDGET_GROUP = {
   chest: "chest",
   lats: "back",
@@ -141,11 +143,11 @@ function getTargetExerciseCount(durationMinutes: number) {
 function getEffectiveTargetExerciseCount(params: {
   durationMinutes: number;
   rawBlocks: AiGeneratedBlockCandidate[];
-  avoidSupersets?: boolean;
+  supersetPreference?: SupersetPreference;
 }) {
   const defaultTargetExerciseCount = getTargetExerciseCount(params.durationMinutes);
 
-  if (params.avoidSupersets || params.durationMinutes > 20) {
+  if (params.supersetPreference === "avoid_all" || params.durationMinutes > 20) {
     return defaultTargetExerciseCount;
   }
 
@@ -182,11 +184,11 @@ function getMaxBlockCount(durationMinutes: number) {
 function getEffectiveMaxBlockCount(params: {
   durationMinutes: number;
   rawBlocks: AiGeneratedBlockCandidate[];
-  avoidSupersets?: boolean;
+  supersetPreference?: SupersetPreference;
 }) {
   const defaultMaxBlockCount = getMaxBlockCount(params.durationMinutes);
 
-  if (defaultMaxBlockCount !== 1 || params.avoidSupersets) {
+  if (defaultMaxBlockCount !== 1 || params.supersetPreference === "avoid_all") {
     return defaultMaxBlockCount;
   }
 
@@ -333,6 +335,7 @@ function getSupersetSuitability(params: {
   goal?: GoalType;
   weeklyBudget?: WeeklyBudgetScoringItem[];
   lessOftenExerciseIds?: string[];
+  supersetPreference?: SupersetPreference;
 }) {
   if (params.durationMinutes > 40) {
     return { allowed: false, score: Number.NEGATIVE_INFINITY };
@@ -351,6 +354,19 @@ function getSupersetSuitability(params: {
     .filter((item): item is ExerciseCatalogItem => item !== null);
 
   if (catalogExercises.length !== params.blockExercises.length) {
+    return { allowed: false, score: Number.NEGATIVE_INFINITY };
+  }
+
+  if (params.supersetPreference === "avoid_all") {
+    return { allowed: false, score: Number.NEGATIVE_INFINITY };
+  }
+
+  if (
+    params.supersetPreference === "avoid_all_dumbbell" &&
+    catalogExercises.every((exercise) =>
+      exercise.requiredEquipment.includes("dumbbells"),
+    )
+  ) {
     return { allowed: false, score: Number.NEGATIVE_INFINITY };
   }
 
@@ -491,6 +507,7 @@ function splitStraightSetsIntoTimeEfficientBlocks(params: {
   goal: GoalType;
   weeklyBudget?: WeeklyBudgetScoringItem[];
   lessOftenExerciseIds?: string[];
+  supersetPreference?: SupersetPreference;
 }) {
   const nextBlocks: WorkoutBlock[] = [];
   let pendingStraightExercises: typeof params.block.exercises = [];
@@ -530,6 +547,7 @@ function splitStraightSetsIntoTimeEfficientBlocks(params: {
         goal: params.goal,
         weeklyBudget: params.weeklyBudget,
         lessOftenExerciseIds: params.lessOftenExerciseIds,
+        supersetPreference: params.supersetPreference,
       });
 
       if (suitability.allowed && suitability.score > bestPartnerScore) {
@@ -789,13 +807,18 @@ export function validateGeneratedWorkout(params: {
   weeklyBudget?: WeeklyBudgetScoringItem[];
   lessOftenExerciseIds?: string[];
   avoidSupersets?: boolean;
+  supersetPreference?: SupersetPreference;
 }): ValidateGeneratedWorkoutResult {
+  // Keep legacy boolean support while letting newer preference rules be more granular.
+  const effectiveSupersetPreference: SupersetPreference =
+    params.supersetPreference ??
+    (params.avoidSupersets ? "avoid_all" : "allowed");
   const availableCatalog = getAvailableExercises(params.availableEquipment);
   const rawBlocks = getRawBlocks(params.candidate);
   const maxBlockCount = getEffectiveMaxBlockCount({
     durationMinutes: params.durationMinutes,
     rawBlocks,
-    avoidSupersets: params.avoidSupersets,
+    supersetPreference: effectiveSupersetPreference,
   });
   const selectedBlocks =
     rawBlocks.length > 0 ? rawBlocks.slice(0, maxBlockCount) : [{ title: "Huvuddel", exercises: [] }];
@@ -805,7 +828,7 @@ export function validateGeneratedWorkout(params: {
   const targetExerciseCount = getEffectiveTargetExerciseCount({
     durationMinutes: params.durationMinutes,
     rawBlocks: selectedBlocks,
-    avoidSupersets: params.avoidSupersets,
+    supersetPreference: effectiveSupersetPreference,
   });
 
   // Validera alla AI-val globalt först för att undvika dubletter mellan block.
@@ -856,7 +879,7 @@ export function validateGeneratedWorkout(params: {
     const canAddAnotherSuperset =
       params.durationMinutes <= 30 || supersetBlocksUsed === 0;
     const shouldUseSuperset =
-      !params.avoidSupersets &&
+      effectiveSupersetPreference !== "avoid_all" &&
       requestedBlockType === "superset" &&
       canAddAnotherSuperset &&
       getSupersetSuitability({
@@ -865,6 +888,7 @@ export function validateGeneratedWorkout(params: {
         goal: params.goal,
         weeklyBudget: params.weeklyBudget,
         lessOftenExerciseIds: params.lessOftenExerciseIds,
+        supersetPreference: effectiveSupersetPreference,
       }).allowed;
 
     if (requestedBlockType === "superset" && !shouldUseSuperset) {
@@ -949,7 +973,10 @@ export function validateGeneratedWorkout(params: {
     };
   });
 
-  if (params.durationMinutes <= 30 && !params.avoidSupersets) {
+  if (
+    params.durationMinutes <= 30 &&
+    effectiveSupersetPreference !== "avoid_all"
+  ) {
     let createdSupersetCount = 0;
 
     blocks = blocks.flatMap((block) => {
@@ -963,6 +990,7 @@ export function validateGeneratedWorkout(params: {
         goal: params.goal,
         weeklyBudget: params.weeklyBudget,
         lessOftenExerciseIds: params.lessOftenExerciseIds,
+        supersetPreference: effectiveSupersetPreference,
       });
 
       createdSupersetCount += splitResult.supersetCount;

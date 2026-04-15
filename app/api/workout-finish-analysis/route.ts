@@ -11,6 +11,8 @@ const requestSchema = z.object({
   totalVolume: z.number().min(0),
   timedExercises: z.number().int().min(0),
   durationMinutes: z.number().int().min(0),
+  weightedSetCount: z.number().int().min(0).optional(),
+  bodyweightSetCount: z.number().int().min(0).optional(),
 });
 
 const responseSchema = z.object({
@@ -20,6 +22,7 @@ const responseSchema = z.object({
   nextStep: z.string().min(1),
   nextSessionTiming: z.string().min(1),
   coachNote: z.string().min(1),
+  scienceMinute: z.string().min(1),
 });
 
 type FinishAnalysis = z.infer<typeof responseSchema>;
@@ -70,6 +73,8 @@ function getDeterministicFallback(params: {
   totalVolume: number;
   durationMinutes: number;
   recentWorkouts: RecentWorkoutRow[];
+  weightedSetCount?: number;
+  bodyweightSetCount?: number;
 }): FinishAnalysis {
   const {
     goal,
@@ -77,6 +82,8 @@ function getDeterministicFallback(params: {
     totalVolume,
     durationMinutes,
     recentWorkouts,
+    weightedSetCount = 0,
+    bodyweightSetCount = 0,
   } = params;
 
   const recent7d = countWithinDays(recentWorkouts, 7);
@@ -97,7 +104,8 @@ function getDeterministicFallback(params: {
 
   const lowLoad =
     totalCompletedSets <= 8 &&
-    totalVolume <= Math.max(2500, avgRecentVolume * 0.8);
+    totalVolume <= Math.max(2500, avgRecentVolume * 0.8) &&
+    bodyweightSetCount === 0;
 
   let title = "Stabil träningsstimulans";
   let achieved =
@@ -115,6 +123,15 @@ function getDeterministicFallback(params: {
       : "Nästa pass kan oftast fungera inom 24–48 timmar.";
   let coachNote =
     "Prioritera jämn träningsfrekvens och små, upprepade förbättringar framför stora hopp från pass till pass.";
+  let scienceMinute =
+    "Dagens pass gav en tydlig träningssignal genom tillräcklig volym och meningsfull ansträngning. Den viktigaste mekanismen nu är fortsatt kontinuitet så att stimulansen upprepas över tid.";
+
+  if (bodyweightSetCount > 0 && weightedSetCount === 0) {
+    achieved =
+      "Det här passet gav en användbar träningssignal även utan extern belastning, framför allt genom arbetsset och upplevd ansträngning.";
+    scienceMinute =
+      "När ett pass bygger på kroppsvikt är extern volym i kilo ett svagare mått än antal arbetsset och faktisk ansträngning. Effekten avgörs därför mer av hur utmanande seten var än av registrerad vikt.";
+  }
 
   if (highLoad) {
     title = "Hög träningsbelastning";
@@ -130,6 +147,8 @@ function getDeterministicFallback(params: {
       "Planera nästa liknande styrkepass om cirka 48 timmar, särskilt om du känner tydlig trötthet eller muskelömhet.";
     coachNote =
       "Stark progression byggs ofta bäst genom att växla mellan tunga och mer moderata pass snarare än att pressa maximal belastning varje gång.";
+    scienceMinute =
+      "Hög träningsbelastning ökar den akuta stimulansen, men adaptation sker främst när du hinner återhämta dig till nästa kvalitativa pass. Mer är därför inte alltid bättre om återhämtningen inte hänger med.";
   } else if (lowLoad) {
     title = "Låg till måttlig belastning";
     achieved =
@@ -144,6 +163,8 @@ function getDeterministicFallback(params: {
       "Nästa pass kan ofta fungera redan inom cirka 24 timmar om kroppen känns återhämtad.";
     coachNote =
       "Om målet är styrka eller muskeltillväxt behöver passen över tid ligga på en nivå som är tydligt utmanande, inte bara genomförbara.";
+    scienceMinute =
+      "Lägre belastning kan fortfarande vara värdefull, men progression kräver att passen över tid når en tillräckligt utmanande nivå. Effekten formas alltså mer av den samlade veckostimulansen än av ett enstaka lätt pass.";
   }
 
   if (normalizedGoal.includes("styrka")) {
@@ -151,6 +172,8 @@ function getDeterministicFallback(params: {
       "Om målet är styrka bör nästa pass helst prioritera god kvalitet i huvudlyften och liten belastningsökning i någon central övning.";
     coachNote =
       "För styrka är det oftast bättre att göra små viktökningar med bra teknik än att jaga mycket extra volym i varje pass.";
+    scienceMinute =
+      "För styrkeutveckling är kvaliteten i de belastade repetitionerna central. Små, återkommande ökningar med stabil teknik brukar ge bättre långsiktig effekt än stora hopp i vikt eller volym.";
   }
 
   if (
@@ -161,6 +184,8 @@ function getDeterministicFallback(params: {
       "Om målet är muskeltillväxt bör nästa pass antingen matcha eller något överträffa dagens totala stimulans i relevanta muskelgrupper.";
     coachNote =
       "För hypertrofi är jämn veckovolym, tillräcklig ansträngning och återkommande progression viktigare än enstaka extremt hårda pass.";
+    scienceMinute =
+      "För hypertrofi byggs resultat främst av tillräcklig ansträngning och återkommande träningsvolym över veckan. Ett pass bidrar alltså mest när det passar in i en jämn kedja av liknande stimulans.";
   }
 
   return {
@@ -170,6 +195,7 @@ function getDeterministicFallback(params: {
     nextStep,
     nextSessionTiming,
     coachNote,
+    scienceMinute,
   };
 }
 
@@ -242,6 +268,8 @@ function buildPrompt(params: {
   timedExercises: number;
   durationMinutes: number;
   workoutName: string;
+  weightedSetCount?: number;
+  bodyweightSetCount?: number;
 }) {
   const {
     goal,
@@ -263,6 +291,10 @@ Uppgift:
 Analysera ett precis avslutat träningspass och ge korta, tydliga PT-råd på svenska.
 
 Viktiga regler:
+- title ska vara sidans huvudinsikt, alltså en mycket kort coachande slutsats i en enda mening.
+- title får inte vara en generisk rubrik som "Kort analys av passet", "Sammanfattning", "Bra jobbat" eller liknande.
+- title ska säga något konkret om belastning, träningssignal, kontinuitet eller nästa steg.
+- Om total volym är 0 men passet innehåller kroppsviktsset får du inte tolka det som att träningsstimulansen automatiskt var låg.
 - Fokusera bara på träningseffekt, progression, återhämtning och plan framåt.
 - Nämn inte vätska, kost eller sömn.
 - Bygg resonemanget på stark praktisk evidens för styrketräning:
@@ -284,7 +316,8 @@ Returnera ENDAST giltig JSON med exakt dessa fält:
   "historicalContext": string,
   "nextStep": string,
   "nextSessionTiming": string,
-  "coachNote": string
+  "coachNote": string,
+  "scienceMinute": string
 }
 
 Data:
@@ -294,6 +327,8 @@ Data:
 - Total volym: ${Math.round(totalVolume)}
 - Antal tidsövningar: ${timedExercises}
 - Passlängd: ${durationMinutes} minuter
+- Antal set med extern vikt: ${params.weightedSetCount ?? 0}
+- Antal kroppsviktsset utan extern vikt: ${params.bodyweightSetCount ?? 0}
 - Antal pass senaste 7 dagar: ${recent7d}
 - Antal pass senaste 14 dagar: ${recent14d}
 - Senaste pass:
@@ -309,6 +344,8 @@ async function getAiAnalysis(params: {
   timedExercises: number;
   durationMinutes: number;
   workoutName: string;
+  weightedSetCount?: number;
+  bodyweightSetCount?: number;
 }) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
 
@@ -367,6 +404,8 @@ export async function POST(request: Request) {
       totalVolume: parsed.totalVolume,
       durationMinutes: parsed.durationMinutes,
       recentWorkouts,
+      weightedSetCount: parsed.weightedSetCount ?? 0,
+      bodyweightSetCount: parsed.bodyweightSetCount ?? 0,
     });
 
     let analysis: FinishAnalysis = fallback;
@@ -381,6 +420,8 @@ export async function POST(request: Request) {
         timedExercises: parsed.timedExercises,
         durationMinutes: parsed.durationMinutes,
         workoutName: parsed.workoutName,
+        weightedSetCount: parsed.weightedSetCount ?? 0,
+        bodyweightSetCount: parsed.bodyweightSetCount ?? 0,
       });
 
       if (aiAnalysis) {

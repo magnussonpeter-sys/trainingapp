@@ -152,6 +152,7 @@ type UserSettingsSummary = {
   experience_level?: string | null;
   training_goal?: string | null;
   avoid_supersets?: boolean | null;
+  superset_preference?: "allowed" | "avoid_all" | "avoid_all_dumbbell" | null;
   primary_priority_muscle?: string | null;
   secondary_priority_muscle?: string | null;
 };
@@ -190,11 +191,21 @@ type WeeklyBudgetValidationItem = Pick<
   loadStatus?: MuscleBudgetEntry["loadStatus"];
 };
 
+type SupersetPreference = "allowed" | "avoid_all" | "avoid_all_dumbbell";
+
 type ProgressionTrackPromptItem = {
   name: string;
   intent: string;
   stepNames: string[];
 };
+
+function normalizeSupersetPreference(value: unknown): SupersetPreference | null {
+  return value === "allowed" ||
+    value === "avoid_all" ||
+    value === "avoid_all_dumbbell"
+    ? value
+    : null;
+}
 
 async function getUserSettingsSummary(userId: string) {
   const result = await pool.query<UserSettingsSummary>(
@@ -207,6 +218,7 @@ async function getUserSettingsSummary(userId: string) {
         experience_level,
         training_goal,
         avoid_supersets,
+        superset_preference,
         primary_priority_muscle,
         secondary_priority_muscle
       from user_settings
@@ -357,7 +369,7 @@ function buildGenerationPrompt(params: {
   recentWorkouts: unknown[];
   settings: UserSettingsSummary | null;
   splitStyle: string | null;
-  avoidSupersets: boolean;
+  supersetPreference: SupersetPreference;
   weeklyBudget: WeeklyBudgetPromptItem[];
   weeklyPlan: WeeklyPlanPromptItem[];
   lessOftenExerciseIds?: string[];
@@ -396,7 +408,12 @@ function buildGenerationPrompt(params: {
   const nextFocusText = params.nextFocus ?? "full_body";
   const confidenceText = params.confidenceScore ?? "medium";
   const splitStyleText = params.splitStyle ?? "adaptive";
-  const supersetPreferenceText = params.avoidSupersets ? "AVOID" : "ALLOWED";
+  const supersetPreferenceText =
+    params.supersetPreference === "avoid_all"
+      ? "AVOID"
+      : params.supersetPreference === "avoid_all_dumbbell"
+        ? "AVOID_ALL_DUMBBELL_SUPERSETS"
+        : "ALLOWED";
   const progressionTracks = buildProgressionTrackPrompt(params.equipment);
 
   return `
@@ -432,6 +449,15 @@ ${params.availableExercisePrompt}
 
 Kända progressionsstegar i denna miljö:
 ${progressionTracks.text}
+
+Viktförslag:
+- Om övningen använder extern belastning ska du fylla i suggestedWeight med ett realistiskt startförslag i kg.
+- suggestedWeight ska för en övning utan tidigare historik uppskattas utifrån användarens kön, kroppsvikt, ålder, träningsvana och den aktuella övningens karaktär.
+- Anpassa viktförslaget till övningens risknivå, repintervall och om övningen är unilateral, bilateral, hantel per hand eller total skivstångsvikt.
+- Var konservativ för nybörjare, låg confidence score, högre ålder och tekniskt krävande övningar.
+- Om registrerade vikter finns i gymmet ska du försöka lägga suggestedWeight nära en rimlig faktisk vikt i gymmet.
+- För kroppsviktsövningar eller tidsstyrda övningar där extern vikt inte är relevant ska suggestedWeight vara null.
+- Om du är osäker mellan två nivåer, välj den lättare och säkrare nivån.
 
 För korta pass ska du tänka i denna ordning:
 1. välj blockstruktur
@@ -535,10 +561,15 @@ Viktiga regler:
 - Använd blocks, inte top-level exercises om du inte absolut måste
 - Använd bara övningar från kataloglistan ovan
 - Inkludera alltid både superset_considered och superset_reason i toppnivån
+- suggestedWeight ska vara ett genomtänkt startförslag när övningen använder extern belastning, inte ett slumpmässigt eller tomt värde
+- Basera suggestedWeight på användarens kön, kroppsvikt, ålder, träningsvana och den aktuella övningen om tidigare historik saknas
+- För kroppsviktsövningar och andra övningar där extern belastning inte är relevant ska suggestedWeight vara null
 - Använd aldrig circuit just nu
 - Tolkningsregel: superset-preferens ALLOWED betyder att användaren inte har förbjudit supersets
 - Tolkningsregel: superset-preferens AVOID betyder att användaren uttryckligen vill undvika supersets
+- Tolkningsregel: superset-preferens AVOID_ALL_DUMBBELL_SUPERSETS betyder att du ska undvika superset där alla ingående övningar använder hantlar, men andra supersets är tillåtna
 - Om superset-preferens är AVOID ska du inte använda superset alls
+- Om superset-preferens är AVOID_ALL_DUMBBELL_SUPERSETS ska du inte skapa superset där samtliga övningar använder hantlar
 - För pass på 20 minuter eller kortare ska superset i normalfallet bestå av exakt 2 övningar, inte 3
 - För sådana mycket korta pass ska du undvika 3-övnings-superset eftersom de blir svårare att hålla tidseffektiva och robusta
 - För pass på 30 minuter eller kortare ska du som standard bygga passet runt ett eller flera superset-block när rimliga och säkra parningar finns
@@ -584,6 +615,7 @@ export async function POST(req: Request) {
       weeklyPlan?: WeeklyPlanPromptItem[];
       lessOftenExerciseIds?: string[];
       avoidSupersets?: boolean;
+      supersetPreference?: SupersetPreference | null;
       includeDebug?: boolean;
     };
 
@@ -620,6 +652,9 @@ export async function POST(req: Request) {
         ? body.nextFocus
         : null;
     const requestedAvoidSupersets = body.avoidSupersets === true;
+    const requestedSupersetPreference = normalizeSupersetPreference(
+      body.supersetPreference,
+    );
     const confidenceScore =
       body.confidenceScore === "high" ||
       body.confidenceScore === "medium" ||
@@ -661,6 +696,7 @@ export async function POST(req: Request) {
       weeklyPlan,
       lessOftenExerciseIds,
       avoidSupersets: requestedAvoidSupersets,
+      supersetPreference: requestedSupersetPreference,
       includeDebug: body.includeDebug ?? false,
     });
 
@@ -673,8 +709,13 @@ export async function POST(req: Request) {
       : [null, []];
     const recentWorkouts = buildRecentWorkoutSummary(recentLogs);
     const recentExercisePreferences = buildRecentExercisePreferences(recentLogs);
-    const avoidSupersets =
-      requestedAvoidSupersets || settings?.avoid_supersets === true;
+    const supersetPreference =
+      requestedSupersetPreference ??
+      normalizeSupersetPreference(settings?.superset_preference) ??
+      (requestedAvoidSupersets || settings?.avoid_supersets === true
+        ? "avoid_all"
+        : "allowed");
+    const avoidSupersets = supersetPreference === "avoid_all";
     const availableExercisePrompt = buildAvailableExercisePrompt(availableExercises);
     const generationContext = {
       userId,
@@ -689,7 +730,7 @@ export async function POST(req: Request) {
       weeklyBudget,
       weeklyPlan,
       lessOftenExerciseIds,
-      avoidSupersets,
+      supersetPreference,
       hasEquipment,
     };
     const prompt = buildGenerationPrompt({
@@ -707,7 +748,7 @@ export async function POST(req: Request) {
       recentWorkouts,
       settings,
       splitStyle,
-      avoidSupersets,
+      supersetPreference,
       weeklyBudget,
       weeklyPlan,
       lessOftenExerciseIds,
@@ -799,6 +840,7 @@ export async function POST(req: Request) {
       weeklyBudget: weeklyBudget as WeeklyBudgetValidationItem[],
       lessOftenExerciseIds,
       avoidSupersets,
+      supersetPreference,
     });
 
     // Lägg tillbaka gym- och utrustningskontext på workout innan normalisering,

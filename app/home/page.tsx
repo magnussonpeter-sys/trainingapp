@@ -1,20 +1,18 @@
 "use client";
 
-// Home-sidan ska vara navet i appen.
-// Fokus här:
-// - behålla fungerande logik
-// - AI-pass ska fungera
-// - resume + pending sync tydligt
-// - ljus grön, lugn design
-// - tydlig knapp för att logga ut
-// - förvalda passlängder + eget val i minuter
+// Home ska kännas som en tydlig startskärm för träning:
+// - nästa steg först
+// - coachande ton
+// - snabb väg till AI-pass eller eget pass
+// - detaljer längre ned som sekundär information
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+
 import { useHomeData } from "@/hooks/use-home-data";
 import {
   buildWeeklyWorkoutStructure,
-  formatSplitStyle,
+  detectWorkoutFocus,
   formatWorkoutFocus,
 } from "@/lib/weekly-workout-structure";
 import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
@@ -23,8 +21,13 @@ import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 import { getPendingSyncQueue } from "@/lib/workout-flow/pending-sync-store";
-import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
+import {
+  getWorkoutDraft,
+  saveWorkoutDraft,
+} from "@/lib/workout-flow/workout-draft-store";
 import { getExercisePreferences } from "@/lib/exercise-preference-storage";
+import type { WorkoutFocus } from "@/types/workout";
+import type { WorkoutLog } from "@/lib/workout-log-storage";
 
 type AuthUser = {
   id?: string | number | null;
@@ -50,12 +53,6 @@ type GymWithEquipment = {
   equipment?: GymEquipmentItem[];
 };
 
-type BudgetStatusTone = {
-  barClassName: string;
-  chipClassName: string;
-  chipText: string;
-};
-
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -64,70 +61,6 @@ function formatDecimal(value: number) {
   return new Intl.NumberFormat("sv-SE", {
     maximumFractionDigits: value >= 10 ? 0 : 1,
   }).format(value);
-}
-
-function getBudgetStatusTone(loadStatus: string): BudgetStatusTone {
-  if (loadStatus === "high_risk") {
-    return {
-      barClassName: "bg-gradient-to-r from-rose-500 to-red-500",
-      chipClassName: "border border-rose-200 bg-rose-50 text-rose-700",
-      chipText: "Överbelastning",
-    };
-  }
-
-  if (loadStatus === "over") {
-    return {
-      barClassName: "bg-gradient-to-r from-amber-500 to-orange-500",
-      chipClassName: "border border-amber-200 bg-amber-50 text-amber-700",
-      chipText: "Över budget",
-    };
-  }
-
-  if (loadStatus === "on_target") {
-    return {
-      barClassName: "bg-gradient-to-r from-emerald-500 to-lime-500",
-      chipClassName: "border border-emerald-200 bg-emerald-50 text-emerald-700",
-      chipText: "På rätt nivå",
-    };
-  }
-
-  return {
-    barClassName: "bg-gradient-to-r from-sky-500 to-cyan-500",
-    chipClassName: "border border-sky-200 bg-sky-50 text-sky-700",
-    chipText: "Bygg vidare",
-  };
-}
-
-function getProgressLabel(progressStatus: string) {
-  if (progressStatus === "improving") {
-    return "Framåt";
-  }
-
-  if (progressStatus === "plateau") {
-    return "Platå";
-  }
-
-  if (progressStatus === "fatigued") {
-    return "Hög trötthet";
-  }
-
-  if (progressStatus === "stable") {
-    return "Stabil";
-  }
-
-  return "Begränsad data";
-}
-
-function getFrequencyLabel(frequencyCount: number) {
-  if (frequencyCount <= 0) {
-    return "Inte tränad ännu";
-  }
-
-  if (frequencyCount === 1) {
-    return "1 pass denna vecka";
-  }
-
-  return `${frequencyCount} pass denna vecka`;
 }
 
 function formatMuscleGroup(group: MuscleBudgetGroup) {
@@ -157,8 +90,7 @@ function getDisplayName(user: AuthUser | null) {
   );
 }
 
-// Normaliserar equipment till stabila interna id:n.
-// Viktigt: vi skickar inte både svenska labels och interna namn till AI.
+// Normaliserar equipment till stabila interna id:n för AI-flödet.
 function normalizeEquipmentStrings(input: GymEquipmentItem[] | undefined) {
   if (!Array.isArray(input) || input.length === 0) {
     return ["bodyweight"];
@@ -234,7 +166,6 @@ function normalizeEquipmentStrings(input: GymEquipmentItem[] | undefined) {
       normalized.includes("kabel")
     ) {
       values.add("cable_machine");
-      return;
     }
   };
 
@@ -261,9 +192,655 @@ function clampDuration(value: number) {
   return Math.min(Math.max(Math.round(value), 5), 180);
 }
 
+function getStoredHomeGymId(userId: string) {
+  try {
+    const raw = localStorage.getItem(`ai-workout-settings:${userId}`);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as { gymId?: unknown };
+    return typeof parsed.gymId === "string" && parsed.gymId.trim()
+      ? parsed.gymId.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getLastUsedGymId(userId: string, gymOptions: Array<{ id: string | number }>) {
+  // Prefer the latest saved workout draft since it reflects the most recent active choice.
+  const draft = getWorkoutDraft(userId) as { gym?: unknown } | null;
+  const draftGymId =
+    typeof draft?.gym === "string" && draft.gym.trim() ? draft.gym.trim() : null;
+
+  if (draftGymId && gymOptions.some((gym) => String(gym.id) === draftGymId)) {
+    return draftGymId;
+  }
+
+  const storedGymId = getStoredHomeGymId(userId);
+  if (storedGymId && gymOptions.some((gym) => String(gym.id) === storedGymId)) {
+    return storedGymId;
+  }
+
+  return null;
+}
+
+function getRecommendedDuration(nextFocus: WorkoutFocus) {
+  if (nextFocus === "core") {
+    return 20;
+  }
+
+  if (nextFocus === "full_body") {
+    return 30;
+  }
+
+  return 30;
+}
+
+function getCoachMessage(params: {
+  logs: WorkoutLog[];
+  nextFocus: WorkoutFocus;
+  completedLast7Days: number;
+  durationMinutes: number;
+}) {
+  const { logs, nextFocus, completedLast7Days, durationMinutes } = params;
+  const latestCompletedLog = [...logs]
+    .filter((log) => log.status === "completed")
+    .sort(
+      (left, right) =>
+        new Date(right.completedAt).getTime() - new Date(left.completedAt).getTime(),
+    )[0];
+  const latestFocus = latestCompletedLog ? detectWorkoutFocus(latestCompletedLog) : null;
+
+  if (logs.length === 0) {
+    return `Bra läge att komma igång. Ett ${durationMinutes}-minuters ${formatWorkoutFocus(nextFocus).toLowerCase()}pass passar bra idag.`;
+  }
+
+  if (completedLast7Days >= 3) {
+    return `Bra kontinuitet senaste veckan. ${formatWorkoutFocus(nextFocus)} passar bra idag.`;
+  }
+
+  if (completedLast7Days === 0) {
+    return `Det har varit lugnt några dagar. Börja enkelt med ${formatWorkoutFocus(nextFocus).toLowerCase()} idag.`;
+  }
+
+  if (latestFocus) {
+    return `Du har tränat ${formatWorkoutFocus(latestFocus).toLowerCase()} nyligen. Nästa bästa steg nu är ${formatWorkoutFocus(nextFocus).toLowerCase()}.`;
+  }
+
+  return `Du har tränat nyligen. Nästa bästa steg nu är ${formatWorkoutFocus(nextFocus).toLowerCase()}.`;
+}
+
+function getWorkoutStreak(logs: WorkoutLog[]) {
+  const completedDates = Array.from(
+    new Set(
+      logs
+        .filter((log) => log.status === "completed")
+        .map((log) => new Date(log.completedAt).toISOString().slice(0, 10)),
+    ),
+  ).sort((left, right) => (left > right ? -1 : 1));
+
+  if (completedDates.length === 0) {
+    return 0;
+  }
+
+  let streak = 1;
+  let previousDate = new Date(`${completedDates[0]}T00:00:00`);
+
+  for (let index = 1; index < completedDates.length; index += 1) {
+    const currentDate = new Date(`${completedDates[index]}T00:00:00`);
+    const diffDays = Math.round(
+      (previousDate.getTime() - currentDate.getTime()) / (24 * 60 * 60 * 1000),
+    );
+
+    if (diffDays !== 1) {
+      break;
+    }
+
+    streak += 1;
+    previousDate = currentDate;
+  }
+
+  return streak;
+}
+
+function getBudgetStatusTone(loadStatus: string) {
+  if (loadStatus === "high_risk") {
+    return {
+      barClassName: "bg-gradient-to-r from-rose-500 to-red-500",
+      chipClassName: "border border-rose-200 bg-rose-50 text-rose-700",
+      chipText: "Överbelastning",
+    };
+  }
+
+  if (loadStatus === "over") {
+    return {
+      barClassName: "bg-gradient-to-r from-amber-500 to-orange-500",
+      chipClassName: "border border-amber-200 bg-amber-50 text-amber-700",
+      chipText: "Över budget",
+    };
+  }
+
+  if (loadStatus === "on_target") {
+    return {
+      barClassName: "bg-gradient-to-r from-emerald-500 to-lime-500",
+      chipClassName: "border border-emerald-200 bg-emerald-50 text-emerald-700",
+      chipText: "På rätt nivå",
+    };
+  }
+
+  return {
+    barClassName: "bg-gradient-to-r from-sky-500 to-cyan-500",
+    chipClassName: "border border-sky-200 bg-sky-50 text-sky-700",
+    chipText: "Bygg vidare",
+  };
+}
+
+function getProgressLabel(progressStatus: string) {
+  if (progressStatus === "improving") {
+    return "Framåt";
+  }
+
+  if (progressStatus === "plateau") {
+    return "Platå";
+  }
+
+  if (progressStatus === "fatigued") {
+    return "Hög trötthet";
+  }
+
+  if (progressStatus === "stable") {
+    return "Stabil";
+  }
+
+  return "Begränsad data";
+}
+
+function HomeHeroCard(props: {
+  name: string;
+  coachMessage: string;
+  onLogout: () => void;
+  isLoggingOut: boolean;
+  pendingCount: number;
+}) {
+  return (
+    <section className={cn(uiCardClasses.section, "overflow-hidden border-slate-200/80")}>
+      <div className="bg-[radial-gradient(circle_at_top,_rgba(217,249,157,0.75),_rgba(236,253,245,0.98)_42%,_rgba(255,255,255,1)_82%)] px-5 py-6 sm:px-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
+              Hej
+            </p>
+            <h1 className="mt-2 text-[clamp(2rem,7vw,2.8rem)] font-semibold tracking-tight text-slate-950">
+              {props.name}
+            </h1>
+            <p className="mt-3 text-base leading-7 text-slate-700">
+              Nästa bästa steg är att starta ett pass som passar läget idag.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={props.onLogout}
+            disabled={props.isLoggingOut}
+            className={cn(uiButtonClasses.secondary, "shrink-0 px-3")}
+          >
+            {props.isLoggingOut ? "Loggar ut..." : "Logga ut"}
+          </button>
+        </div>
+
+        <div className="mt-5 rounded-[24px] border border-emerald-200/80 bg-white/85 px-4 py-4 shadow-sm backdrop-blur">
+          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-700">
+            AI-coach
+          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-800">{props.coachMessage}</p>
+        </div>
+
+        {props.pendingCount > 0 ? (
+          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            {props.pendingCount} pass väntar på synk. Du kan fortsätta träna som vanligt.
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function TodayFocusCard(props: {
+  focus: WorkoutFocus;
+  muscleGroups: MuscleBudgetGroup[];
+  summaryText: string;
+  recommendedDuration: number;
+  gymLabel: string;
+  onAction: () => void;
+  isGenerating: boolean;
+}) {
+  return (
+    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
+      <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+        Dagens fokus
+      </p>
+      <div className="mt-2 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
+            {formatWorkoutFocus(props.focus)}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{props.summaryText}</p>
+        </div>
+
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-right">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-emerald-700">
+            Rek. längd
+          </p>
+          <p className="mt-1 text-lg font-semibold text-slate-900">
+            {props.recommendedDuration} min
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700">
+          Gym: {props.gymLabel}
+        </span>
+        {props.muscleGroups.length > 0 ? (
+          props.muscleGroups.map((group) => (
+            <span
+              key={group}
+              className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
+            >
+              {formatMuscleGroup(group)}
+            </span>
+          ))
+        ) : (
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">
+            Balans över hela kroppen
+          </span>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={props.onAction}
+        disabled={props.isGenerating}
+        className={cn(uiButtonClasses.secondary, "mt-4 w-full justify-center")}
+      >
+        {props.isGenerating ? "Skapar..." : "Snabbstarta dagens pass"}
+      </button>
+    </section>
+  );
+}
+
+function WeeklyMomentumCard(props: {
+  completedLast7Days: number;
+  passCount: number;
+  streak: number;
+  priorityMuscles: MuscleBudgetGroup[];
+}) {
+  const progressPercent =
+    props.passCount > 0
+      ? Math.min(100, Math.round((props.completedLast7Days / props.passCount) * 100))
+      : 0;
+
+  return (
+    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+            Veckans momentum
+          </p>
+          <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
+            {Math.min(props.completedLast7Days, props.passCount)} av {props.passCount} planerade pass
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Håll rytmen uppe med ett nytt pass när du har tid och energi.
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-right">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
+            Streak
+          </p>
+          <p className="mt-1 text-lg font-semibold text-slate-900">
+            {props.streak > 0 ? `${props.streak} dagar` : "Starta idag"}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-lime-400"
+          style={{ width: `${Math.max(8, progressPercent)}%` }}
+        />
+      </div>
+
+      {props.priorityMuscles.length > 0 ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {props.priorityMuscles.slice(0, 2).map((group) => (
+            <span
+              key={group}
+              className="rounded-full border border-lime-300 bg-lime-100 px-3 py-1 text-xs font-medium text-slate-800"
+            >
+              Mer att hämta i {formatMuscleGroup(group).toLowerCase()}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function QuickStartCard(props: {
+  gymOptions: Array<{ id: string | number; name: string }>;
+  selectedGymId: string;
+  setSelectedGymId: (value: string) => void;
+  selectedDurationPreset: string;
+  setSelectedDurationPreset: (value: string) => void;
+  customDurationInput: string;
+  setCustomDurationInput: (value: string) => void;
+  durationMinutes: number;
+  onAiPass: () => void;
+  onCustomWorkout: () => void;
+  isGenerating: boolean;
+  userId: string;
+  aiError: string | null;
+  gymError: string | null;
+  pageError: string | null;
+}) {
+  return (
+    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
+      <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+        Starta snabbt
+      </p>
+      <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
+        Skapa pass
+      </h2>
+      <p className="mt-2 text-sm leading-6 text-slate-600">
+        Välj gym och längd. Sedan kan du starta direkt med AI eller bygga ett eget pass.
+      </p>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-2 block text-sm font-medium text-slate-700">Gym</span>
+          <select
+            value={props.selectedGymId}
+            onChange={(event) => props.setSelectedGymId(event.target.value)}
+            className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+          >
+            {props.gymOptions.map((gym) => (
+              <option key={String(gym.id)} value={String(gym.id)}>
+                {gym.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="block">
+          <span className="mb-2 block text-sm font-medium text-slate-700">Längd</span>
+
+          <div className="space-y-3">
+            <select
+              value={props.selectedDurationPreset}
+              onChange={(event) => props.setSelectedDurationPreset(event.target.value)}
+              className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+            >
+              <option value={15}>15 min</option>
+              <option value={20}>20 min</option>
+              <option value={30}>30 min</option>
+              <option value={45}>45 min</option>
+              <option value={60}>60 min</option>
+              <option value="custom">Eget val</option>
+            </select>
+
+            {props.selectedDurationPreset === "custom" ? (
+              <input
+                type="number"
+                min={5}
+                max={180}
+                step={1}
+                value={props.customDurationInput}
+                onChange={(event) => props.setCustomDurationInput(event.target.value)}
+                placeholder="Ange minuter"
+                className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+              />
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <p className="mt-3 text-xs text-slate-500">Vald passlängd: {props.durationMinutes} min</p>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={props.onAiPass}
+          disabled={props.isGenerating || !props.userId}
+          className={cn(uiButtonClasses.primary, "w-full justify-center")}
+        >
+          {props.isGenerating ? "Skapar AI-pass..." : "AI-pass"}
+        </button>
+
+        <button
+          type="button"
+          onClick={props.onCustomWorkout}
+          disabled={!props.userId}
+          className={cn(uiButtonClasses.secondary, "w-full justify-center")}
+        >
+          Eget pass
+        </button>
+      </div>
+
+      {props.aiError ? <div className={cn(uiCardClasses.danger, "mt-4")}>{props.aiError}</div> : null}
+      {props.gymError ? <div className={cn(uiCardClasses.danger, "mt-4")}>{props.gymError}</div> : null}
+      {props.pageError ? <div className={cn(uiCardClasses.danger, "mt-4")}>{props.pageError}</div> : null}
+    </section>
+  );
+}
+
+function RecentWorkoutCard(props: {
+  latestWorkout: WorkoutLog | null;
+  logsSource: string;
+  onHistory: () => void;
+  onRepeat: () => void;
+  isGenerating: boolean;
+}) {
+  return (
+    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+            Senaste aktivitet
+          </p>
+          {props.latestWorkout ? (
+            <>
+              <h2 className="mt-1 truncate text-xl font-semibold tracking-tight text-slate-950">
+                {props.latestWorkout.workoutName}
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Senast genomfört {new Date(props.latestWorkout.completedAt).toLocaleDateString("sv-SE")} ·{" "}
+                {props.logsSource === "api" ? "synkad historik" : "lokal historik"}
+              </p>
+            </>
+          ) : (
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Ingen träningshistorik ännu. Ditt första pass bygger momentum direkt.
+            </p>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={props.onHistory}
+          className={cn(uiButtonClasses.secondary, "shrink-0 px-3")}
+        >
+          Historik
+        </button>
+      </div>
+
+      {props.latestWorkout ? (
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={props.onRepeat}
+            disabled={props.isGenerating}
+            className={cn(uiButtonClasses.secondary, "justify-center")}
+          >
+            {props.isGenerating ? "Skapar..." : "Skapa liknande"}
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function SecondaryActionsCard(props: {
+  onGyms: () => void;
+  onSettings: () => void;
+}) {
+  return (
+    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
+      <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+        Mer
+      </p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <button type="button" onClick={props.onGyms} className={uiButtonClasses.secondary}>
+          Gym & utrustning
+        </button>
+        <button type="button" onClick={props.onSettings} className={uiButtonClasses.secondary}>
+          Inställningar
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function WeeklyInsightsPanel(props: {
+  showWeeklyInsights: boolean;
+  onToggle: () => void;
+  weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+}) {
+  return (
+    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+            Fördjupning
+          </p>
+          <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
+            Veckoplan och muskelbudget
+          </h2>
+        </div>
+
+        <button type="button" onClick={props.onToggle} className={cn(uiButtonClasses.secondary, "px-3")}>
+          {props.showWeeklyInsights ? "Dölj" : "Visa"}
+        </button>
+      </div>
+
+      {props.showWeeklyInsights ? (
+        <div className="mt-5 space-y-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {props.weeklyStructure.upcomingSteps.map((step) => (
+              <div
+                key={step.label}
+                className={cn(
+                  "rounded-2xl border px-4 py-4",
+                  step.type === "training"
+                    ? "border-emerald-200 bg-emerald-50"
+                    : "border-slate-200 bg-slate-50",
+                )}
+              >
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  {step.label}
+                </p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">
+                  {step.focus ? formatWorkoutFocus(step.focus) : "Återhämtning"}
+                </p>
+                <div className="mt-2 flex min-h-[40px] flex-wrap gap-1.5">
+                  {step.type === "training" && step.muscleGroups.length > 0 ? (
+                    step.muscleGroups.map((group) => (
+                      <span
+                        key={`${step.label}-${group}`}
+                        className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700"
+                      >
+                        {formatMuscleGroup(group)}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-slate-500">
+                      Återhämtning efter tid, energi och senaste pass.
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {props.weeklyStructure.muscleBudget
+              .filter((entry) => {
+                return (
+                  entry.priority !== "low" ||
+                  entry.completedSets > 0 ||
+                  entry.remainingSets > 0
+                );
+              })
+              .sort((left, right) => right.remainingSets - left.remainingSets)
+              .slice(0, 6)
+              .map((entry) => {
+                const progress =
+                  entry.targetSets > 0
+                    ? Math.min(100, (entry.effectiveSets / entry.targetSets) * 100)
+                    : 0;
+                const tone = getBudgetStatusTone(entry.loadStatus);
+
+                return (
+                  <div key={entry.group} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{entry.label}</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <span
+                            className={cn(
+                              "rounded-full px-2.5 py-1 text-[11px] font-medium",
+                              tone.chipClassName,
+                            )}
+                          >
+                            {tone.chipText}
+                          </span>
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                            {getProgressLabel(entry.progressStatus)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <p className="text-sm font-semibold text-slate-900">
+                        {entry.remainingSets > 0 ? `${entry.remainingSets} kvar` : "Klar"}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 h-3 overflow-hidden rounded-full bg-white">
+                      <div
+                        className={cn("h-full rounded-full", tone.barClassName)}
+                        style={{ width: `${Math.max(8, progress)}%` }}
+                      />
+                    </div>
+
+                    <p className="mt-3 text-xs text-slate-600">
+                      {formatDecimal(entry.effectiveSets)}/{entry.targetSets} effektiva set · 4v-snitt{" "}
+                      {formatDecimal(entry.recent4WeekAvgEffectiveSets)}
+                    </p>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export default function HomePage() {
   const router = useRouter();
-
   const {
     authChecked,
     authUser,
@@ -277,16 +854,15 @@ export default function HomePage() {
   } = useHomeData({ router });
 
   const userId = authUser?.id ? String(authUser.id) : "";
-
   const [selectedGymId, setSelectedGymId] = useState<string>("bodyweight");
-  const [selectedDurationPreset, setSelectedDurationPreset] =
-    useState<string>("30");
+  const [selectedDurationPreset, setSelectedDurationPreset] = useState<string>("30");
   const [customDurationInput, setCustomDurationInput] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [showWeeklyInsights, setShowWeeklyInsights] = useState(false);
+  const hasAppliedInitialGymRef = useRef(false);
 
   const gymOptions = useMemo(() => {
     const normalizedGyms = (gyms as GymWithEquipment[]) ?? [];
@@ -302,18 +878,8 @@ export default function HomePage() {
   }, [gyms]);
 
   const selectedGym = useMemo(() => {
-    return (
-      gymOptions.find((gym) => String(gym.id) === selectedGymId) ?? gymOptions[0]
-    );
+    return gymOptions.find((gym) => String(gym.id) === selectedGymId) ?? gymOptions[0];
   }, [gymOptions, selectedGymId]);
-
-  const latestWorkout = workoutLogs?.[0] ?? null;
-  const weeklyStructure = useMemo(() => {
-    return buildWeeklyWorkoutStructure({
-      logs: workoutLogs,
-      settings,
-    });
-  }, [settings, workoutLogs]);
 
   const durationMinutes = useMemo(() => {
     if (selectedDurationPreset === "custom") {
@@ -323,19 +889,54 @@ export default function HomePage() {
     return clampDuration(Number(selectedDurationPreset));
   }, [customDurationInput, selectedDurationPreset]);
 
+  const latestWorkout = workoutLogs?.[0] ?? null;
+  const weeklyStructure = useMemo(() => {
+    return buildWeeklyWorkoutStructure({
+      logs: workoutLogs,
+      settings,
+    });
+  }, [settings, workoutLogs]);
+
+  const coachMessage = useMemo(() => {
+    return getCoachMessage({
+      logs: workoutLogs,
+      nextFocus: weeklyStructure.nextFocus,
+      completedLast7Days: weeklyStructure.completedLast7Days,
+      durationMinutes,
+    });
+  }, [durationMinutes, weeklyStructure.completedLast7Days, weeklyStructure.nextFocus, workoutLogs]);
+
+  const workoutStreak = useMemo(() => getWorkoutStreak(workoutLogs), [workoutLogs]);
+  const recommendedDuration = useMemo(
+    () => getRecommendedDuration(weeklyStructure.nextFocus),
+    [weeklyStructure.nextFocus],
+  );
+
+  useEffect(() => {
+    hasAppliedInitialGymRef.current = false;
+  }, [userId]);
+
   useEffect(() => {
     if (gymOptions.length === 0) {
       return;
     }
 
-    const stillExists = gymOptions.some(
-      (gym) => String(gym.id) === String(selectedGymId),
-    );
+    if (userId && !hasAppliedInitialGymRef.current) {
+      const lastUsedGymId = getLastUsedGymId(userId, gymOptions);
+      if (lastUsedGymId && lastUsedGymId !== selectedGymId) {
+        hasAppliedInitialGymRef.current = true;
+        setSelectedGymId(lastUsedGymId);
+        return;
+      }
 
+      hasAppliedInitialGymRef.current = true;
+    }
+
+    const stillExists = gymOptions.some((gym) => String(gym.id) === String(selectedGymId));
     if (!stillExists) {
       setSelectedGymId(String(gymOptions[0].id));
     }
-  }, [gymOptions, selectedGymId]);
+  }, [gymOptions, selectedGymId, userId]);
 
   useEffect(() => {
     if (!userId) {
@@ -361,16 +962,11 @@ export default function HomePage() {
       setAiError(null);
       setIsGenerating(true);
 
-      // Hämta stabila equipment-id:n från valt gym.
       const equipment = normalizeEquipmentStrings(selectedGym?.equipment);
       const goal = settings?.training_goal?.trim() || "health";
       const isBodyweightGym = String(selectedGym?.id) === "bodyweight";
-
-      // Skicka både gym-id och gymnamn vidare.
       const gymId = isBodyweightGym ? null : String(selectedGym?.id ?? "");
-      const gymLabel = isBodyweightGym
-        ? "Kroppsvikt / utan gym"
-        : selectedGym?.name ?? null;
+      const gymLabel = isBodyweightGym ? "Kroppsvikt / utan gym" : selectedGym?.name ?? null;
       const lessOftenExerciseIds = getExercisePreferences(userId)
         .filter((entry) => entry.preference === "less_often")
         .map((entry) => entry.exerciseId);
@@ -399,9 +995,10 @@ export default function HomePage() {
         weeklyPlan: weeklyStructure.upcomingDays,
         lessOftenExerciseIds,
         avoidSupersets: settings?.avoid_supersets ?? null,
+        supersetPreference: settings?.superset_preference ?? null,
       });
 
-      // Spara draft innan preview öppnas.
+      // Spara draft innan preview öppnas så run/preview kan återta samma flöde.
       saveWorkoutDraft(userId, {
         ...workout,
         duration: durationMinutes,
@@ -409,15 +1006,82 @@ export default function HomePage() {
         gymLabel,
         availableEquipment: equipment,
         plannedFocus: weeklyStructure.nextFocus,
-        // Behåll AI-debug med draften så preview kan visa exakt input/output vid behov.
         aiDebug: debug ?? undefined,
       });
+
       router.push(`/workout/preview?userId=${encodeURIComponent(userId)}`);
     } catch (error) {
       setAiError(
-        error instanceof Error
-          ? error.message
-          : "Kunde inte skapa AI-pass just nu.",
+        error instanceof Error ? error.message : "Kunde inte skapa AI-pass just nu.",
+      );
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  async function handleQuickStartTodayWorkout() {
+    if (!userId) {
+      setAiError("Kunde inte läsa in användaren.");
+      return;
+    }
+
+    try {
+      setAiError(null);
+      setIsGenerating(true);
+
+      const equipment = normalizeEquipmentStrings(selectedGym?.equipment);
+      const goal = settings?.training_goal?.trim() || "health";
+      const isBodyweightGym = String(selectedGym?.id) === "bodyweight";
+      const gymId = isBodyweightGym ? null : String(selectedGym?.id ?? "");
+      const gymLabel = isBodyweightGym ? "Kroppsvikt / utan gym" : selectedGym?.name ?? null;
+      const lessOftenExerciseIds = getExercisePreferences(userId)
+        .filter((entry) => entry.preference === "less_often")
+        .map((entry) => entry.exerciseId);
+
+      const quickDuration = recommendedDuration;
+
+      const { workout, debug } = await generateWorkout({
+        userId,
+        goal,
+        durationMinutes: quickDuration,
+        equipment,
+        gym: gymId,
+        gymLabel,
+        gymEquipmentDetails: selectedGym?.equipment ?? [],
+        confidenceScore: weeklyStructure.confidenceScore,
+        nextFocus: weeklyStructure.nextFocus,
+        splitStyle: weeklyStructure.splitStyle,
+        weeklyBudget: weeklyStructure.muscleBudget.map((entry) => ({
+          group: entry.group,
+          label: entry.label,
+          priority: entry.priority,
+          targetSets: entry.targetSets,
+          completedSets: entry.completedSets,
+          effectiveSets: entry.effectiveSets,
+          remainingSets: entry.remainingSets,
+          recent4WeekAvgSets: entry.recent4WeekAvgSets,
+        })),
+        weeklyPlan: weeklyStructure.upcomingDays,
+        lessOftenExerciseIds,
+        avoidSupersets: settings?.avoid_supersets ?? null,
+        supersetPreference: settings?.superset_preference ?? null,
+      });
+
+      // Save draft before entering /run so the active session restores correctly offline too.
+      saveWorkoutDraft(userId, {
+        ...workout,
+        duration: quickDuration,
+        gym: gymId,
+        gymLabel,
+        availableEquipment: equipment,
+        plannedFocus: weeklyStructure.nextFocus,
+        aiDebug: debug ?? undefined,
+      });
+
+      router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);
+    } catch (error) {
+      setAiError(
+        error instanceof Error ? error.message : "Kunde inte snabbstarta passet just nu.",
       );
     } finally {
       setIsGenerating(false);
@@ -467,463 +1131,68 @@ export default function HomePage() {
 
   return (
     <main className={uiPageShellClasses.page}>
-      <div className={cn(uiPageShellClasses.content, uiPageShellClasses.stack)}>
-        <section className={cn(uiCardClasses.section, "overflow-hidden")}>
-          <div className="bg-gradient-to-br from-emerald-100 via-emerald-50 to-lime-50 px-6 py-6 text-slate-900">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
-                  Hej
-                </p>
-                <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-                  {getDisplayName(authUser)}
-                </h1>
-                <p className="mt-3 text-sm leading-6 text-slate-700">
-                  Vad vill du göra idag?
-                </p>
-              </div>
+      <div className={cn(uiPageShellClasses.content, "space-y-5 pb-8")}>
+        <HomeHeroCard
+          name={getDisplayName(authUser)}
+          coachMessage={coachMessage}
+          onLogout={handleLogout}
+          isLoggingOut={isLoggingOut}
+          pendingCount={pendingCount}
+        />
 
-              <button
-                type="button"
-                onClick={handleLogout}
-                disabled={isLoggingOut}
-                className={uiButtonClasses.secondary}
-              >
-                {isLoggingOut ? "Loggar ut..." : "Logga ut"}
-              </button>
-            </div>
-          </div>
+        <TodayFocusCard
+          focus={weeklyStructure.nextFocus}
+          muscleGroups={weeklyStructure.nextFocusMuscleGroups}
+          summaryText={weeklyStructure.optimalPlanText}
+          recommendedDuration={recommendedDuration}
+          gymLabel={selectedGym?.name ?? "Kroppsvikt / utan gym"}
+          onAction={handleQuickStartTodayWorkout}
+          isGenerating={isGenerating}
+        />
 
-          <div className="space-y-3 px-6 py-5">
-            {pendingCount > 0 ? (
-              <div className={uiCardClasses.success}>
-                <p className="font-medium">
-                  {pendingCount} pass väntar på synk
-                </p>
-                <p className="mt-1 text-sm">
-                  De skickas automatiskt när internet finns tillgängligt.
-                </p>
-              </div>
-            ) : null}
-          </div>
-        </section>
+        <WeeklyMomentumCard
+          completedLast7Days={weeklyStructure.completedLast7Days}
+          passCount={weeklyStructure.passCount}
+          streak={workoutStreak}
+          priorityMuscles={weeklyStructure.priorityMuscles}
+        />
 
-        <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">
-                Veckostruktur
-              </p>
-              <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-900">
-                Nästa fokus: {formatWorkoutFocus(weeklyStructure.nextFocus)}
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {weeklyStructure.summaryText}
-              </p>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                {weeklyStructure.optimalPlanText}
-              </p>
-              {weeklyStructure.configuredPriorityMuscles.length > 0 ? (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {weeklyStructure.configuredPriorityMuscles.map((group, index) => (
-                    <span
-                      key={group}
-                      className="rounded-full border border-lime-300 bg-lime-100 px-3 py-1 text-xs font-medium text-slate-800"
-                    >
-                      {index === 0 ? "Prio 1" : "Prio 2"}: {formatMuscleGroup(group)}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+        <QuickStartCard
+          gymOptions={gymOptions}
+          selectedGymId={selectedGymId}
+          setSelectedGymId={setSelectedGymId}
+          selectedDurationPreset={selectedDurationPreset}
+          setSelectedDurationPreset={setSelectedDurationPreset}
+          customDurationInput={customDurationInput}
+          setCustomDurationInput={setCustomDurationInput}
+          durationMinutes={durationMinutes}
+          onAiPass={handleReviewAiWorkout}
+          onCustomWorkout={handleCustomWorkout}
+          isGenerating={isGenerating || isLoadingGyms}
+          userId={userId}
+          aiError={aiError}
+          gymError={gymError}
+          pageError={pageError}
+        />
 
-            <div className="space-y-3">
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-right">
-                <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">
-                  7 dagar
-                </p>
-                <p className="mt-1 text-2xl font-semibold text-slate-900">
-                  {weeklyStructure.completedLast7Days}
-                </p>
-                <p className="text-xs text-slate-600">genomförda pass</p>
-              </div>
+        <RecentWorkoutCard
+          latestWorkout={latestWorkout}
+          logsSource={logsSource}
+          onHistory={() => router.push("/history")}
+          onRepeat={handleReviewAiWorkout}
+          isGenerating={isGenerating}
+        />
 
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-right">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Confidence
-                </p>
-                <p className="mt-1 text-lg font-semibold text-slate-900">
-                  {weeklyStructure.confidenceScore === "high"
-                    ? "Hög"
-                    : weeklyStructure.confidenceScore === "medium"
-                      ? "Medel"
-                      : "Låg"}
-                </p>
-                <p className="text-xs text-slate-600">
-                  {formatSplitStyle(weeklyStructure.splitStyle)}
-                </p>
-              </div>
-            </div>
-          </div>
+        <WeeklyInsightsPanel
+          showWeeklyInsights={showWeeklyInsights}
+          onToggle={() => setShowWeeklyInsights((previous) => !previous)}
+          weeklyStructure={weeklyStructure}
+        />
 
-          <div className="mt-5">
-            <button
-              type="button"
-              onClick={() => setShowWeeklyInsights((previous) => !previous)}
-              className={cn(uiButtonClasses.secondary, "w-full")}
-            >
-              {showWeeklyInsights ? "Dölj veckoplan & muskelbudget" : "Visa veckoplan & muskelbudget"}
-            </button>
-
-            {showWeeklyInsights ? (
-              <div className="mt-5 space-y-6">
-                <div>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-                      Optimal rytm framåt
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      Kör när tid finns, appen anpassar nästa pass efter läget
-                    </p>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    {weeklyStructure.upcomingSteps.map((step) => (
-                      <div
-                        key={step.label}
-                        className={cn(
-                          "rounded-2xl border px-4 py-4",
-                          step.type === "training"
-                            ? "border-emerald-200 bg-emerald-50"
-                            : "border-slate-200 bg-slate-50",
-                        )}
-                      >
-                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                          {step.label}
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900">
-                          {step.focus ? formatWorkoutFocus(step.focus) : "Återhämtning"}
-                        </p>
-                        <div className="mt-2 flex min-h-[40px] flex-wrap gap-1.5">
-                          {step.type === "training" && step.muscleGroups.length > 0 ? (
-                            step.muscleGroups.map((group) => (
-                              <span
-                                key={`${step.label}-${group}`}
-                                className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700"
-                              >
-                                {formatMuscleGroup(group)}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-xs text-slate-500">
-                              Låt återhämtning och vardag styra när nästa pass passar bäst.
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {[
-                    {
-                      label: "Nästa pass",
-                      value: weeklyStructure.nextFocusMuscleGroups.length
-                        ? weeklyStructure.nextFocusMuscleGroups
-                            .map((group) => formatMuscleGroup(group))
-                            .join(", ")
-                        : formatWorkoutFocus(weeklyStructure.nextFocus),
-                    },
-                    {
-                      label: "Planerade pass",
-                      value: `${weeklyStructure.passCount} träningspass i flexibel rytm`,
-                    },
-                    {
-                      label: "Återhämtning",
-                      value: "Växla efter tid, energi och hur förra passet kändes",
-                    },
-                  ].map((item) => (
-                    <div
-                      key={item.label}
-                      className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
-                    >
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                        {item.label}
-                      </p>
-                      <p className="mt-2 text-sm font-semibold text-slate-900">
-                        {item.value}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-                      Muskelbudget denna vecka
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      Effektiva set väger in både volym och upplevd ansträngning
-                    </p>
-                  </div>
-
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    {weeklyStructure.muscleBudget
-                      .filter((entry) => {
-                        return (
-                          entry.priority !== "low" ||
-                          entry.completedSets > 0 ||
-                          entry.remainingSets > 0
-                        );
-                      })
-                      .sort((left, right) => {
-                        const priorityRank = { high: 0, medium: 1, low: 2 };
-                        const rankDifference =
-                          priorityRank[left.priority] - priorityRank[right.priority];
-
-                        if (rankDifference !== 0) {
-                          return rankDifference;
-                        }
-
-                        return right.remainingSets - left.remainingSets;
-                      })
-                      .map((entry) => {
-                        const progress =
-                          entry.targetSets > 0
-                            ? Math.min(100, (entry.effectiveSets / entry.targetSets) * 100)
-                            : 0;
-                        const tone = getBudgetStatusTone(entry.loadStatus);
-                        const qualityPercent =
-                          entry.qualityScore != null
-                            ? Math.round(entry.qualityScore * 100)
-                            : null;
-
-                        return (
-                          <div key={entry.group} className="rounded-2xl border border-slate-200 bg-white p-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <div>
-                                <p className="text-sm font-semibold text-slate-900">{entry.label}</p>
-                                <div className="mt-2 flex flex-wrap gap-2">
-                                  <span
-                                    className={cn(
-                                      "rounded-full px-2.5 py-1 text-[11px] font-medium",
-                                      tone.chipClassName,
-                                    )}
-                                  >
-                                    {tone.chipText}
-                                  </span>
-                                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
-                                    {getProgressLabel(entry.progressStatus)}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="text-right">
-                                <p className="text-sm font-semibold text-slate-900">
-                                  {entry.remainingSets > 0 ? `${entry.remainingSets} kvar` : "Klar"}
-                                </p>
-                                <p className="text-xs text-slate-500">
-                                  4v-snitt {formatDecimal(entry.recent4WeekAvgEffectiveSets)} effektiva set
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
-                              <div
-                                className={cn("h-full rounded-full", tone.barClassName)}
-                                style={{ width: `${Math.max(8, progress)}%` }}
-                              />
-                            </div>
-
-                            <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
-                              <p>
-                                <span className="font-medium text-slate-800">
-                                  {formatDecimal(entry.effectiveSets)}/{entry.targetSets}
-                                </span>{" "}
-                                effektiva set
-                              </p>
-                              <p>
-                                Direkt/indirekt:{" "}
-                                <span className="font-medium text-slate-800">
-                                  {formatDecimal(entry.directSets)} / {formatDecimal(entry.indirectSets)}
-                                </span>
-                              </p>
-                              <p>
-                                Kvalitet:{" "}
-                                <span className="font-medium text-slate-800">
-                                  {qualityPercent != null ? `${qualityPercent}%` : "saknas"}
-                                </span>
-                              </p>
-                              <p>{getFrequencyLabel(entry.frequencyCount)}</p>
-                            </div>
-
-                            <p className="mt-2 text-xs text-slate-500">
-                              Direkta set kommer från övningar där muskeln är huvudmål. Indirekta set
-                              är assisterande stimulans, till exempel triceps i pressövningar.
-                            </p>
-
-                            {entry.warningText ? (
-                              <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                {entry.warningText}
-                              </p>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </section>
-
-        <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">
-            Skapa pass
-          </p>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">
-                Gym
-              </span>
-              <select
-                value={selectedGymId}
-                onChange={(event) => setSelectedGymId(event.target.value)}
-                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none"
-                disabled={isLoadingGyms}
-              >
-                {gymOptions.map((gym) => (
-                  <option key={String(gym.id)} value={String(gym.id)}>
-                    {gym.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">
-                Längd
-              </span>
-
-              <div className="space-y-3">
-                <select
-                  value={selectedDurationPreset}
-                  onChange={(event) => setSelectedDurationPreset(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none"
-                >
-                  <option value={15}>15 min</option>
-                  <option value={20}>20 min</option>
-                  <option value={30}>30 min</option>
-                  <option value={60}>60 min</option>
-                  <option value="custom">Eget val</option>
-                </select>
-
-                {selectedDurationPreset === "custom" ? (
-                  <input
-                    type="number"
-                    min={5}
-                    max={180}
-                    step={1}
-                    value={customDurationInput}
-                    onChange={(event) => setCustomDurationInput(event.target.value)}
-                    placeholder="Ange minuter, t.ex. 45"
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none"
-                  />
-                ) : null}
-
-                <p className="text-xs text-slate-500">
-                  Vald passlängd: {durationMinutes} min
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={handleReviewAiWorkout}
-              disabled={isGenerating || !userId}
-              className={cn(uiButtonClasses.primary, "w-full")}
-            >
-              {isGenerating ? "Skapar AI-pass..." : "AI-pass"}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleCustomWorkout}
-              disabled={!userId}
-              className={cn(uiButtonClasses.secondary, "w-full")}
-            >
-              Eget pass
-            </button>
-          </div>
-
-          {aiError ? (
-            <div className={cn(uiCardClasses.danger, "mt-4")}>{aiError}</div>
-          ) : null}
-
-          {gymError ? (
-            <div className={cn(uiCardClasses.danger, "mt-4")}>{gymError}</div>
-          ) : null}
-
-          {pageError ? (
-            <div className={cn(uiCardClasses.danger, "mt-4")}>{pageError}</div>
-          ) : null}
-        </section>
-
-        <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">
-                Senaste aktivitet
-              </p>
-              {latestWorkout ? (
-                <>
-                  <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-900">
-                    {latestWorkout.workoutName}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Källa: {logsSource === "api" ? "synkad historik" : "lokal fallback"}
-                  </p>
-                </>
-              ) : (
-                <p className="mt-2 text-sm text-slate-600">
-                  Ingen träningshistorik ännu.
-                </p>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => router.push("/history")}
-              className={uiButtonClasses.secondary}
-            >
-              Historik
-            </button>
-          </div>
-        </section>
-
-        <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => router.push("/gyms")}
-              className={uiButtonClasses.secondary}
-            >
-              Gym & utrustning
-            </button>
-
-            <button
-              type="button"
-              onClick={() => router.push("/settings")}
-              className={uiButtonClasses.secondary}
-            >
-              Inställningar
-            </button>
-          </div>
-        </section>
+        <SecondaryActionsCard
+          onGyms={() => router.push("/gyms")}
+          onSettings={() => router.push("/settings")}
+        />
       </div>
     </main>
   );

@@ -5,8 +5,27 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
+async function ensureGymSharingColumn() {
+  // Håll delningsflaggan tillgänglig i alla gym-endpoints så UI:t kan vara konsekvent.
+  await pool.query(`
+    ALTER TABLE gyms
+    ADD COLUMN IF NOT EXISTS is_shared BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+}
+
+async function ensureBandLevelsColumn() {
+  // Håll detaljvyn kompatibel med både gamla och nya band-fält.
+  await pool.query(`
+    ALTER TABLE gym_equipment
+    ADD COLUMN IF NOT EXISTS band_levels TEXT[]
+  `);
+}
+
 export async function GET(req: NextRequest, { params }: RouteContext) {
   try {
+    await ensureGymSharingColumn();
+    await ensureBandLevelsColumn();
+
     const { id } = await params;
     const gymId = String(id).trim();
     const userId = req.nextUrl.searchParams.get("userId")?.trim() ?? "";
@@ -28,7 +47,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     // Hämta själva gymet först.
     const gymResult = await pool.query(
       `
-      SELECT id, user_id, name, description, created_at
+      SELECT id, user_id, name, description, is_shared, created_at
       FROM gyms
       WHERE id = $1
         AND user_id = $2
@@ -60,6 +79,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
         specific_weights,
         weights_kg,
         band_level,
+        band_levels,
         created_at
       FROM gym_equipment
       WHERE gym_id = $1
@@ -91,10 +111,13 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   try {
+    await ensureGymSharingColumn();
+
     const { id } = await params;
     const body = await req.json();
     const userId = String(body.userId ?? "").trim();
     const name = String(body.name ?? "").trim();
+    const isShared = Boolean(body.is_shared);
     const description =
       body.description == null ? null : String(body.description).trim();
 
@@ -125,12 +148,13 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       `
       UPDATE gyms
       SET name = $1,
-          description = $2
-      WHERE id = $3
-        AND user_id = $4
-      RETURNING id, user_id, name, description, created_at
+          description = $2,
+          is_shared = $3
+      WHERE id = $4
+        AND user_id = $5
+      RETURNING id, user_id, name, description, is_shared, created_at
       `,
-      [name, description, gymId, userId]
+      [name, description, isShared, gymId, userId]
     );
 
     if (result.rows.length === 0) {

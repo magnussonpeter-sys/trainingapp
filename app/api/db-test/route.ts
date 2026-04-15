@@ -46,6 +46,11 @@ export async function GET() {
       }
     }
 
+    await client.query(`
+      ALTER TABLE gyms
+      ADD COLUMN IF NOT EXISTS is_shared BOOLEAN NOT NULL DEFAULT FALSE;
+    `);
+
     // 3. Lägg till kolumner i gym_equipment
     await client.query(`
       ALTER TABLE gym_equipment
@@ -55,6 +60,11 @@ export async function GET() {
     await client.query(`
       ALTER TABLE gym_equipment
       ADD COLUMN IF NOT EXISTS band_level TEXT;
+    `);
+
+    await client.query(`
+      ALTER TABLE gym_equipment
+      ADD COLUMN IF NOT EXISTS band_levels TEXT[];
     `);
 
     await client.query(`

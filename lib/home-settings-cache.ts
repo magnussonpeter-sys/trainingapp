@@ -18,9 +18,15 @@ type CachedPriorityMuscle =
   | "calves"
   | "core";
 
+type CachedSupersetPreference =
+  | "allowed"
+  | "avoid_all"
+  | "avoid_all_dumbbell";
+
 type HomeSettingsCacheValue = {
   training_goal?: CachedHomeGoal | null;
   avoid_supersets?: boolean | null;
+  superset_preference?: CachedSupersetPreference | null;
   primary_priority_muscle?: CachedPriorityMuscle | null;
   secondary_priority_muscle?: CachedPriorityMuscle | null;
 };
@@ -49,6 +55,16 @@ function isCachedPriorityMuscle(value: unknown): value is CachedPriorityMuscle {
   );
 }
 
+function isCachedSupersetPreference(
+  value: unknown,
+): value is CachedSupersetPreference {
+  return (
+    value === "allowed" ||
+    value === "avoid_all" ||
+    value === "avoid_all_dumbbell"
+  );
+}
+
 function getStorageKey(userId: string) {
   return `home_settings_cache:${userId}`;
 }
@@ -68,6 +84,7 @@ export function getCachedHomeSettings(userId: string) {
     const parsed = JSON.parse(raw) as {
       training_goal?: unknown;
       avoid_supersets?: unknown;
+      superset_preference?: unknown;
       primary_priority_muscle?: unknown;
       secondary_priority_muscle?: unknown;
     };
@@ -80,6 +97,9 @@ export function getCachedHomeSettings(userId: string) {
         typeof parsed.avoid_supersets === "boolean"
           ? parsed.avoid_supersets
           : null,
+      superset_preference: isCachedSupersetPreference(parsed.superset_preference)
+        ? parsed.superset_preference
+        : null,
       primary_priority_muscle: isCachedPriorityMuscle(parsed.primary_priority_muscle)
         ? parsed.primary_priority_muscle
         : null,

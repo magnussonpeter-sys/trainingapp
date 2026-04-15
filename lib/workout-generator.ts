@@ -53,6 +53,7 @@ export async function generateWorkout(params: {
   }>;
   lessOftenExerciseIds?: string[];
   avoidSupersets?: boolean | null;
+  supersetPreference?: "allowed" | "avoid_all" | "avoid_all_dumbbell" | null;
 }) {
   const res = await fetch("/api/workouts/generate", {
     method: "POST",

@@ -55,6 +55,23 @@ function normalizeWeights(input: unknown): number[] | null {
   return [...new Set(numbers)].sort((a, b) => a - b);
 }
 
+function normalizeBandLevels(input: unknown): BandLevel[] | null {
+  if (!Array.isArray(input)) return null;
+
+  const levels = input.filter((item): item is BandLevel => isValidBandLevel(item));
+  if (levels.length === 0) return null;
+
+  return [...new Set(levels)];
+}
+
+async function ensureBandLevelsColumn() {
+  // Nya UI:t kan välja flera bandnivåer, men vi behåller gamla fältet också.
+  await pool.query(`
+    ALTER TABLE gym_equipment
+    ADD COLUMN IF NOT EXISTS band_levels TEXT[]
+  `);
+}
+
 // Normaliserar label så samma utrustning kan matchas robust i databasen.
 function normalizeLabel(value: string) {
   return value.trim().toLowerCase();
@@ -62,6 +79,8 @@ function normalizeLabel(value: string) {
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureBandLevelsColumn();
+
     const body = await req.json();
 
     const {
@@ -71,6 +90,7 @@ export async function POST(req: NextRequest) {
       label,
       weights_kg,
       band_level,
+      band_levels,
       quantity,
       notes,
     } = body;
@@ -133,16 +153,20 @@ export async function POST(req: NextRequest) {
       : null;
 
     let parsedBandLevel: BandLevel | null = null;
+    let parsedBandLevels: BandLevel[] | null = null;
 
     if (equipment_type === "bands") {
-      if (!isValidBandLevel(band_level)) {
+      parsedBandLevels = normalizeBandLevels(band_levels);
+
+      if (!parsedBandLevels && !isValidBandLevel(band_level)) {
         return NextResponse.json(
-          { ok: false, error: "bands requires band_level" },
+          { ok: false, error: "bands requires at least one band level" },
           { status: 400 }
         );
       }
 
-      parsedBandLevel = band_level;
+      parsedBandLevels = parsedBandLevels ?? [band_level];
+      parsedBandLevel = parsedBandLevels[0] ?? null;
     }
 
     // För viktbaserad utrustning vill vi slå ihop samma utrustning till en post.
@@ -156,6 +180,7 @@ export async function POST(req: NextRequest) {
           label,
           weights_kg,
           band_level,
+          band_levels,
           quantity,
           notes,
           weight_unit
@@ -176,6 +201,7 @@ export async function POST(req: NextRequest) {
           label: string;
           weights_kg?: number[] | null;
           band_level?: BandLevel | null;
+          band_levels?: BandLevel[] | null;
           quantity?: number | null;
           notes?: string | null;
           weight_unit?: string | null;
@@ -205,8 +231,10 @@ export async function POST(req: NextRequest) {
             weights_kg = $1::numeric[],
             quantity = $2,
             notes = $3,
-            label = $4
-          WHERE id = $5
+            label = $4,
+            band_level = $5,
+            band_levels = $6
+          WHERE id = $7
           RETURNING
             id,
             gym_id,
@@ -214,6 +242,7 @@ export async function POST(req: NextRequest) {
             label,
             weights_kg,
             band_level,
+            band_levels,
             quantity,
             notes,
             weight_unit
@@ -223,6 +252,8 @@ export async function POST(req: NextRequest) {
             nextQuantity,
             nextNotes,
             trimmedLabel,
+            parsedBandLevel,
+            parsedBandLevels,
             existing.id,
           ]
         );
@@ -244,11 +275,12 @@ export async function POST(req: NextRequest) {
         label,
         weights_kg,
         band_level,
+        band_levels,
         weight_unit,
         quantity,
         notes
       )
-      VALUES ($1, $2, $3, $4::numeric[], $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4::numeric[], $5, $6, $7, $8, $9)
       RETURNING
         id,
         gym_id,
@@ -256,6 +288,7 @@ export async function POST(req: NextRequest) {
         label,
         weights_kg,
         band_level,
+        band_levels,
         quantity,
         notes,
         weight_unit
@@ -266,6 +299,7 @@ export async function POST(req: NextRequest) {
         trimmedLabel,
         normalizedWeights,
         parsedBandLevel,
+        parsedBandLevels,
         "kg",
         parsedQuantity,
         trimmedNotes,

@@ -63,6 +63,7 @@ export type HomeUserSettings = {
   experience_level?: "beginner" | "novice" | "intermediate" | "advanced" | null;
   training_goal?: HomeGoal | null;
   avoid_supersets?: boolean | null;
+  superset_preference?: "allowed" | "avoid_all" | "avoid_all_dumbbell" | null;
   primary_priority_muscle?: HomePriorityMuscle | null;
   secondary_priority_muscle?: HomePriorityMuscle | null;
 };
@@ -266,6 +267,12 @@ export function useHomeData({ router }: UseHomeDataParams) {
               avoid_supersets:
                 typeof nextSettings.avoid_supersets === "boolean"
                   ? nextSettings.avoid_supersets
+                  : null,
+              superset_preference:
+                nextSettings.superset_preference === "allowed" ||
+                nextSettings.superset_preference === "avoid_all" ||
+                nextSettings.superset_preference === "avoid_all_dumbbell"
+                  ? nextSettings.superset_preference
                   : null,
               primary_priority_muscle:
                 typeof nextSettings.primary_priority_muscle === "string"

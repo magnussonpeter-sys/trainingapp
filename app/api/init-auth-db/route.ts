@@ -19,6 +19,11 @@ export async function GET() {
     `);
 
     await pool.query(`
+      ALTER TABLE gyms
+      ADD COLUMN IF NOT EXISTS is_shared BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+
+    await pool.query(`
       ALTER TABLE workout_sessions
       ADD COLUMN IF NOT EXISTS user_id UUID
     `);

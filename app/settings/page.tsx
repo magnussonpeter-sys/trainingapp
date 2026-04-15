@@ -11,6 +11,7 @@ import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 type Sex = "male" | "female" | "other" | "na";
 type Experience = "beginner" | "novice" | "intermediate" | "advanced";
 type Goal = "strength" | "hypertrophy" | "health" | "body_composition";
+type SupersetPreference = "allowed" | "avoid_all_dumbbell" | "avoid_all";
 type PriorityMuscle =
   | "chest"
   | "back"
@@ -41,6 +42,7 @@ type UserSettingsResponse = {
     experience_level?: Experience | null;
     training_goal?: Goal | null;
     avoid_supersets?: boolean | null;
+    superset_preference?: SupersetPreference | null;
     primary_priority_muscle?: PriorityMuscle | null;
     secondary_priority_muscle?: PriorityMuscle | null;
   };
@@ -86,7 +88,8 @@ export default function SettingsPage() {
   const [height, setHeight] = useState("");
   const [experience, setExperience] = useState("");
   const [goal, setGoal] = useState("");
-  const [avoidSupersets, setAvoidSupersets] = useState(false);
+  const [supersetPreference, setSupersetPreference] =
+    useState<SupersetPreference>("allowed");
   const [priorityMuscles, setPriorityMuscles] = useState<PriorityMuscle[]>([]);
   const [draggedPriorityIndex, setDraggedPriorityIndex] = useState<number | null>(
     null,
@@ -173,7 +176,15 @@ export default function SettingsPage() {
           setHeight(s.height_cm?.toString() ?? "");
           setExperience(s.experience_level ?? "");
           setGoal(s.training_goal ?? "");
-          setAvoidSupersets(Boolean(s.avoid_supersets));
+          setSupersetPreference(
+            s.superset_preference === "allowed" ||
+              s.superset_preference === "avoid_all" ||
+              s.superset_preference === "avoid_all_dumbbell"
+              ? s.superset_preference
+              : Boolean(s.avoid_supersets)
+                ? "avoid_all"
+                : "allowed",
+          );
           setPriorityMuscles(
             [s.primary_priority_muscle, s.secondary_priority_muscle].filter(
               (value): value is PriorityMuscle => typeof value === "string",
@@ -273,7 +284,8 @@ export default function SettingsPage() {
           height_cm: height ? Number(height) : null,
           experience_level: experience || null,
           training_goal: goal || null,
-          avoid_supersets: avoidSupersets,
+          avoid_supersets: supersetPreference === "avoid_all",
+          superset_preference: supersetPreference,
           primary_priority_muscle: primaryPriorityMuscle,
           secondary_priority_muscle: secondaryPriorityMuscle,
         }),
@@ -287,7 +299,8 @@ export default function SettingsPage() {
 
       saveCachedHomeSettings(userId, {
         training_goal: (goal || null) as Goal | null,
-        avoid_supersets: avoidSupersets,
+        avoid_supersets: supersetPreference === "avoid_all",
+        superset_preference: supersetPreference,
         primary_priority_muscle: primaryPriorityMuscle,
         secondary_priority_muscle: secondaryPriorityMuscle,
       });
@@ -623,27 +636,54 @@ export default function SettingsPage() {
             <div>
               <h2 className="text-lg font-semibold text-slate-950">Passupplägg</h2>
               <p className="mt-1 text-sm text-slate-600">
-                Styr om AI:n gärna får använda supersets i korta pass.
+                Styr om AI:n får använda supersets fritt eller ska undvika vissa
+                kombinationer.
               </p>
             </div>
 
-            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4">
-              <input
-                type="checkbox"
-                checked={avoidSupersets}
-                onChange={(event) => setAvoidSupersets(event.target.checked)}
-                className="mt-1 h-4 w-4 rounded border-slate-300"
-              />
-              <div>
-                <p className="text-sm font-semibold text-slate-900">
-                  Undvik supersets
-                </p>
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  När detta är av markerat försöker AI:n annars gärna använda
-                  supersets i korta pass för att spara tid.
-                </p>
-              </div>
-            </label>
+            <div className="grid gap-3">
+              {[
+                {
+                  value: "allowed" as const,
+                  title: "Tillåt supersets",
+                  description:
+                    "AI:n får använda relevanta supersets i korta pass när det sparar tid.",
+                },
+                {
+                  value: "avoid_all_dumbbell" as const,
+                  title: "Undvik rena hantel-supersets",
+                  description:
+                    "Supersets där alla ingående övningar använder hantlar undviks, men andra kombinationer är fortfarande tillåtna.",
+                },
+                {
+                  value: "avoid_all" as const,
+                  title: "Undvik alla supersets",
+                  description:
+                    "AI:n bygger passet utan superset och använder straight sets i stället.",
+                },
+              ].map((option) => {
+                const selected = supersetPreference === option.value;
+
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setSupersetPreference(option.value)}
+                    className={cn(
+                      "rounded-[24px] border p-4 text-left transition",
+                      selected
+                        ? "border-lime-500 bg-lime-100 shadow-sm"
+                        : "border-slate-200 bg-white hover:bg-slate-50",
+                    )}
+                  >
+                    <div className="font-semibold text-slate-950">{option.title}</div>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {option.description}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </section>
 
