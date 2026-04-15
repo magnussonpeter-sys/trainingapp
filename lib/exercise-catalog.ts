@@ -112,6 +112,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryGoalTags: ["allmän hälsa", "uthållighet"],
   },
   {
+    id: "bodyweight_split_squat",
+    name: "Split squat med kroppsvikt",
+    requiredEquipment: ["bodyweight"],
+    description:
+      "Utförande: Stå i delad fotposition, sänk dig rakt ned med kontroll och pressa upp igen. Mål: Träna benstyrka, balans och kontroll per sida.",
+    defaultSets: 3,
+    defaultReps: 10,
+    defaultRest: 45,
+    movementPattern: "lunge",
+    primaryMuscles: ["quads", "glutes"],
+    secondaryMuscles: ["hamstrings", "core"],
+    variantGroup: "lunge",
+    riskLevel: "low",
+    primaryGoalTags: ["allmän hälsa", "styrka"],
+  },
+  {
     id: "reverse_lunge_bodyweight",
     name: "Bakåtutfall med kroppsvikt",
     requiredEquipment: ["bodyweight"],
@@ -126,6 +142,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     variantGroup: "lunge",
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "hypertrofi"],
+  },
+  {
+    id: "assisted_pistol_squat",
+    name: "Assisterad pistol squat",
+    requiredEquipment: ["bodyweight", "bench"],
+    description:
+      "Utförande: Sitt kontrollerat ned mot en bänk på ett ben och res dig upp med stöd vid behov. Mål: Träna enbensstyrka, kontroll och progression mot svårare kroppsviktsbenövningar.",
+    defaultSets: 3,
+    defaultReps: 6,
+    defaultRest: 60,
+    movementPattern: "squat",
+    primaryMuscles: ["quads", "glutes"],
+    secondaryMuscles: ["core", "adductors"],
+    variantGroup: "single_leg_squat",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka", "allmän hälsa"],
   },
   {
     id: "glute_bridge",
@@ -272,6 +304,38 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryGoalTags: ["allmän hälsa", "uthållighet"],
   },
   {
+    id: "hollow_hold",
+    name: "Hollow hold",
+    requiredEquipment: ["bodyweight"],
+    description:
+      "Utförande: Håll ländryggen lätt pressad mot golvet och lyft axlar samt ben i en spänd bågposition. Mål: Träna anti-extension och djup bålspänning.",
+    defaultSets: 3,
+    defaultDuration: 25,
+    defaultRest: 30,
+    movementPattern: "core",
+    primaryMuscles: ["core"],
+    secondaryMuscles: ["hip_flexors"],
+    variantGroup: "anti_extension",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka", "allmän hälsa"],
+  },
+  {
+    id: "plank_shoulder_tap",
+    name: "Planka med axelklapp",
+    requiredEquipment: ["bodyweight"],
+    description:
+      "Utförande: Stå i hög planka och klappa växelvis motsatt axel utan att rotera höften. Mål: Träna antirotation, axelstabilitet och bålstyrka.",
+    defaultSets: 3,
+    defaultReps: 12,
+    defaultRest: 30,
+    movementPattern: "core",
+    primaryMuscles: ["core", "obliques"],
+    secondaryMuscles: ["shoulders", "glutes"],
+    variantGroup: "anti_rotation",
+    riskLevel: "low",
+    primaryGoalTags: ["allmän hälsa", "styrka"],
+  },
+  {
     id: "inverted_row_bar",
     name: "Inverterad rodd i stång",
     requiredEquipment: ["bodyweight", "rack", "barbell"],
@@ -291,7 +355,6 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
   // =========================
   // RINGS
   // =========================
-  // Romerska ringar / gymnastic rings ger många starka press-, drag- och coreövningar.
   {
     id: "ring_row",
     name: "Ring rows",
@@ -389,6 +452,38 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryGoalTags: ["styrka", "allmän hälsa"],
   },
   {
+    id: "ring_pull_up",
+    name: "Pull-ups i ringar",
+    requiredEquipment: ["rings"],
+    description:
+      "Utförande: Dra kroppen upp tills händerna kommer nära bröstet och sänk kontrollerat ned igen. Mål: Träna lats, övre rygg och grepp med mer fri rörelse i skuldrorna.",
+    defaultSets: 3,
+    defaultReps: 6,
+    defaultRest: 90,
+    movementPattern: "vertical_pull",
+    primaryMuscles: ["lats", "upper_back", "biceps"],
+    secondaryMuscles: ["forearms", "core"],
+    variantGroup: "pull_up",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka"],
+  },
+  {
+    id: "ring_chin_up",
+    name: "Chin-ups i ringar",
+    requiredEquipment: ["rings"],
+    description:
+      "Utförande: Dra kroppen upp i ringarna med underhandsgrepp eller roterande grepp och sänk långsamt ned. Mål: Träna rygg och biceps med skuldervänlig rörelsebana.",
+    defaultSets: 3,
+    defaultReps: 6,
+    defaultRest: 90,
+    movementPattern: "vertical_pull",
+    primaryMuscles: ["biceps", "lats"],
+    secondaryMuscles: ["upper_back", "forearms", "core"],
+    variantGroup: "pull_up",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka"],
+  },
+  {
     id: "ring_fallout",
     name: "Ring fallout",
     requiredEquipment: ["rings"],
@@ -473,6 +568,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
   },
   {
+    id: "dumbbell_deadlift",
+    name: "Marklyft med hantlar",
+    requiredEquipment: ["dumbbells"],
+    description:
+      "Utförande: Lyft hantlarna från golvet med kraft från ben och höft och håll ryggen stabil genom hela rörelsen. Mål: Träna bakre kedjan och göra marklyft mer tillgängligt i hemmagym.",
+    defaultSets: 3,
+    defaultReps: 8,
+    defaultRest: 75,
+    movementPattern: "hinge",
+    primaryMuscles: ["glutes", "hamstrings", "lower_back"],
+    secondaryMuscles: ["traps", "forearms", "quads"],
+    variantGroup: "deadlift",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka", "allmän hälsa"],
+  },
+  {
     id: "dumbbell_bench_press",
     name: "Hantelpress på bänk",
     requiredEquipment: ["bench", "dumbbells"],
@@ -553,6 +664,38 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
   {
+    id: "dumbbell_reverse_lunge",
+    name: "Bakåtutfall med hantlar",
+    requiredEquipment: ["dumbbells"],
+    description:
+      "Utförande: Håll hantlar i händerna, kliv bakåt och sänk kontrollerat ned innan du pressar tillbaka till stående. Mål: Träna ben, säte och stabilitet med enkel belastning.",
+    defaultSets: 3,
+    defaultReps: 8,
+    defaultRest: 60,
+    movementPattern: "lunge",
+    primaryMuscles: ["quads", "glutes"],
+    secondaryMuscles: ["hamstrings", "core"],
+    variantGroup: "lunge",
+    riskLevel: "low",
+    primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
+  },
+  {
+    id: "dumbbell_walking_lunge",
+    name: "Gående utfall med hantlar",
+    requiredEquipment: ["dumbbells"],
+    description:
+      "Utförande: Gå framåt i kontrollerade utfall med hantlar i händerna och stabil överkropp. Mål: Träna ben, säte och balans under belastning.",
+    defaultSets: 3,
+    defaultReps: 10,
+    defaultRest: 60,
+    movementPattern: "lunge",
+    primaryMuscles: ["quads", "glutes"],
+    secondaryMuscles: ["hamstrings", "core"],
+    variantGroup: "lunge",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka", "hypertrofi"],
+  },
+  {
     id: "dumbbell_romanian_deadlift",
     name: "Rumänska marklyft med hantlar",
     requiredEquipment: ["dumbbells"],
@@ -567,6 +710,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     variantGroup: "romanian_deadlift",
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "hypertrofi"],
+  },
+  {
+    id: "dumbbell_hip_thrust",
+    name: "Hip thrust med hantel",
+    requiredEquipment: ["bench", "dumbbells"],
+    description:
+      "Utförande: Luta övre ryggen mot en bänk, placera en hantel över höfterna och pressa höften uppåt med kontroll. Mål: Träna säte och höftstyrka när skivstång inte finns tillgänglig.",
+    defaultSets: 3,
+    defaultReps: 10,
+    defaultRest: 60,
+    movementPattern: "hinge",
+    primaryMuscles: ["glutes"],
+    secondaryMuscles: ["hamstrings", "core"],
+    variantGroup: "hip_thrust",
+    riskLevel: "low",
+    primaryGoalTags: ["hypertrofi", "styrka", "allmän hälsa"],
   },
   {
     id: "dumbbell_overhead_press",
@@ -1233,19 +1392,50 @@ export const EXERCISE_PROGRESSION_TRACKS: ExerciseProgressionTrack[] = [
     id: "pull_up_progression",
     name: "Pull-up-steg",
     intent: "Skala vertikala drag från kontroll och excentrisk styrka till full pull-up.",
-    stepIds: ["scapular_pull_up", "negative_pull_up", "chin_up", "pull_up"],
+    stepIds: [
+      "scapular_pull_up",
+      "negative_pull_up",
+      "chin_up",
+      "pull_up",
+      "ring_chin_up",
+      "ring_pull_up",
+    ],
   },
   {
     id: "squat_progression",
     name: "Knäböjssteg",
     intent: "Gå från enklare benövningar till tyngre knäböjsvarianter när teknik och kapacitet växer.",
-    stepIds: ["bodyweight_squat", "goblet_squat", "box_squat", "barbell_back_squat"],
+    stepIds: [
+      "bodyweight_squat",
+      "assisted_pistol_squat",
+      "goblet_squat",
+      "box_squat",
+      "barbell_back_squat",
+    ],
   },
   {
     id: "hip_bridge_progression",
     name: "Höftlyfts-steg",
     intent: "Öka sätes- och höftstyrka genom svårare varianter i stället för att bara jaga fler reps.",
-    stepIds: ["glute_bridge", "single_leg_glute_bridge", "barbell_hip_thrust"],
+    stepIds: [
+      "glute_bridge",
+      "single_leg_glute_bridge",
+      "dumbbell_hip_thrust",
+      "barbell_hip_thrust",
+    ],
+  },
+  {
+    id: "lunge_progression",
+    name: "Utfallssteg",
+    intent: "Bygg upp enbensstyrka från kroppsviktskontroll till mer belastade utfallsvarianter.",
+    stepIds: [
+      "bodyweight_split_squat",
+      "reverse_lunge_bodyweight",
+      "dumbbell_reverse_lunge",
+      "dumbbell_walking_lunge",
+      "bulgarian_split_squat",
+      "barbell_walking_lunge",
+    ],
   },
   {
     id: "carry_progression",
@@ -1257,7 +1447,13 @@ export const EXERCISE_PROGRESSION_TRACKS: ExerciseProgressionTrack[] = [
     id: "rotation_progression",
     name: "Rotationssteg för bål",
     intent: "Bygg bålkontroll från anti-rotation till mer aktiv rotation under kontroll.",
-    stepIds: ["pallof_press", "cable_woodchopper", "russian_twist"],
+    stepIds: ["plank_shoulder_tap", "pallof_press", "cable_woodchopper", "russian_twist"],
+  },
+  {
+    id: "anti_extension_progression",
+    name: "Anti-extension-steg för bål",
+    intent: "Bygg djup bålstyrka från stabil grund till mer krävande anti-extension-varianter.",
+    stepIds: ["dead_bug", "hollow_hold", "ring_fallout"],
   },
 ];
 
@@ -1302,13 +1498,13 @@ const DIRECT_EQUIPMENT_SYNONYMS: Record<string, EquipmentId> = {
   cable_station: "cable_machine",
   cable_crossover: "cable_machine",
 
-ringar: "rings",
-romerska_ringar: "rings",
-"romerska ringar": "rings",
-rings: "rings",
-gymnastic_rings: "rings",
-"gymnastic rings": "rings",
-gymnastikringar: "rings",
+  ringar: "rings",
+  romerska_ringar: "rings",
+  "romerska ringar": "rings",
+  rings: "rings",
+  gymnastic_rings: "rings",
+  "gymnastic rings": "rings",
+  gymnastikringar: "rings",
 
   kroppsvikt: "bodyweight",
   kroppsviktsövningar: "bodyweight",
@@ -1423,7 +1619,7 @@ export function normalizeEquipmentList(input: string[]): EquipmentId[] {
     }
   }
 
-  // Kroppsvikt ska alltid vara möjligt som fallback och som medvetet "gym".
+  // Kroppsvikt ska alltid finnas som fallback.
   normalized.add("bodyweight");
 
   return Array.from(normalized);

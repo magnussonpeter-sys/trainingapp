@@ -64,7 +64,8 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
 
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const email =
+      typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body.password === "string" ? body.password : "";
     const name =
       typeof body.name === "string" && body.name.trim().length > 0
