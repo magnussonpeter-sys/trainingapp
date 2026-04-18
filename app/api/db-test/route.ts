@@ -125,32 +125,82 @@ export async function GET() {
     `);
 
     if (equipmentTypeColumnCheck.rows.length > 0) {
+      // Släpp först gamla constrainten så äldre värden kan migreras till nya typer.
+      await client.query(`
+        ALTER TABLE gym_equipment
+        DROP CONSTRAINT IF EXISTS gym_equipment_type_check;
+      `);
+
+      // Normalisera äldre equipment-typer innan vi sätter den nya constrainten.
+      // Det här gör routen bakåtkompatibel för befintliga databaser.
+      await client.query(`
+        UPDATE gym_equipment
+        SET equipment_type = CASE
+          WHEN LOWER(TRIM(equipment_type)) = 'cable' THEN 'cable_machine'
+          WHEN LOWER(TRIM(equipment_type)) = 'dumbbells' THEN 'dumbbell'
+          WHEN LOWER(TRIM(equipment_type)) = 'kettlebells' THEN 'kettlebell'
+          WHEN LOWER(TRIM(equipment_type)) = 'machines' THEN 'machine'
+          WHEN LOWER(TRIM(equipment_type)) = 'boxes' THEN 'box'
+          ELSE LOWER(TRIM(equipment_type))
+        END
+        WHERE equipment_type IS NOT NULL;
+      `);
+
+      // Sista fallback för okända äldre värden så migreringen inte fastnar.
+      await client.query(`
+        UPDATE gym_equipment
+        SET equipment_type = 'other'
+        WHERE equipment_type IS NOT NULL
+          AND equipment_type NOT IN (
+            'dumbbell',
+            'barbell',
+            'ez_bar',
+            'trap_bar',
+            'bench',
+            'rack',
+            'smith_machine',
+            'kettlebell',
+            'pullup_bar',
+            'dip_bars',
+            'cable_machine',
+            'machine',
+            'bands',
+            'rings',
+            'box',
+            'medicine_ball',
+            'bodyweight',
+            'other'
+          );
+      `);
+
       await client.query(`
         DO $$
         BEGIN
-          IF NOT EXISTS (
-            SELECT 1
-            FROM pg_constraint
-            WHERE conname = 'gym_equipment_type_check'
-          ) THEN
-            ALTER TABLE gym_equipment
-            ADD CONSTRAINT gym_equipment_type_check
-            CHECK (
-              equipment_type IN (
-                'dumbbell',
-                'barbell',
-                'bench',
-                'rack',
-                'kettlebell',
-                'machine',
-                'cable',
-                'bands',
-                'rings',
-                'bodyweight',
-                'other'
-              )
-            );
-          END IF;
+          -- Återskapa constrainten så äldre installationer får nya typer utan manuell SQL.
+          ALTER TABLE gym_equipment
+          ADD CONSTRAINT gym_equipment_type_check
+          CHECK (
+            equipment_type IN (
+              'dumbbell',
+              'barbell',
+              'ez_bar',
+              'trap_bar',
+              'bench',
+              'rack',
+              'smith_machine',
+              'kettlebell',
+              'pullup_bar',
+              'dip_bars',
+              'cable_machine',
+              'machine',
+              'bands',
+              'rings',
+              'box',
+              'medicine_ball',
+              'bodyweight',
+              'other'
+            )
+          );
         END
         $$;
       `);

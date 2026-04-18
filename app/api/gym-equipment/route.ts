@@ -1,42 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import {
+  type BandLevel,
+  type GymEquipmentType,
+  isValidBandLevel,
+  normalizeGymEquipmentType,
+  supportsGymEquipmentWeights,
+} from "@/lib/equipment";
 
-const ALLOWED_EQUIPMENT_TYPES = [
-  "dumbbell",
-  "barbell",
-  "bench",
-  "rack",
-  "kettlebell",
-  "machine",
-  "cable",
-  "bands",
-  "rings",
-  "bodyweight",
-  "other",
-] as const;
-
-const ALLOWED_BAND_LEVELS = ["light", "medium", "heavy"] as const;
-
-type EquipmentType = (typeof ALLOWED_EQUIPMENT_TYPES)[number];
-type BandLevel = (typeof ALLOWED_BAND_LEVELS)[number];
-
-function isValidEquipmentType(value: unknown): value is EquipmentType {
-  return (
-    typeof value === "string" &&
-    ALLOWED_EQUIPMENT_TYPES.includes(value as EquipmentType)
-  );
-}
-
-function isValidBandLevel(value: unknown): value is BandLevel {
-  return (
-    typeof value === "string" &&
-    ALLOWED_BAND_LEVELS.includes(value as BandLevel)
-  );
-}
-
-function isWeightBasedType(type: EquipmentType) {
-  return type === "dumbbell" || type === "kettlebell" || type === "barbell";
-}
+type EquipmentType = GymEquipmentType;
 
 function normalizeWeights(input: unknown): number[] | null {
   if (input == null) return null;
@@ -109,7 +81,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!isValidEquipmentType(equipment_type)) {
+    const normalizedEquipmentType = normalizeGymEquipmentType(equipment_type);
+
+    if (!normalizedEquipmentType) {
       return NextResponse.json(
         { ok: false, error: "Invalid equipment_type" },
         { status: 400 }
@@ -148,14 +122,14 @@ export async function POST(req: NextRequest) {
         ? Number(quantity)
         : null;
 
-    const normalizedWeights = isWeightBasedType(equipment_type)
+    const normalizedWeights = supportsGymEquipmentWeights(normalizedEquipmentType)
       ? normalizeWeights(weights_kg)
       : null;
 
     let parsedBandLevel: BandLevel | null = null;
     let parsedBandLevels: BandLevel[] | null = null;
 
-    if (equipment_type === "bands") {
+    if (normalizedEquipmentType === "bands") {
       parsedBandLevels = normalizeBandLevels(band_levels);
 
       if (!parsedBandLevels && !isValidBandLevel(band_level)) {
@@ -170,7 +144,7 @@ export async function POST(req: NextRequest) {
     }
 
     // För viktbaserad utrustning vill vi slå ihop samma utrustning till en post.
-    if (isWeightBasedType(equipment_type)) {
+    if (supportsGymEquipmentWeights(normalizedEquipmentType)) {
       const existingResult = await pool.query(
         `
         SELECT
@@ -190,7 +164,7 @@ export async function POST(req: NextRequest) {
           AND LOWER(TRIM(label)) = $3
         LIMIT 1
         `,
-        [gym_id, equipment_type, normalizeLabel(trimmedLabel)]
+        [gym_id, normalizedEquipmentType, normalizeLabel(trimmedLabel)]
       );
 
       if (existingResult.rows.length > 0) {
@@ -295,7 +269,7 @@ export async function POST(req: NextRequest) {
       `,
       [
         gym_id,
-        equipment_type,
+        normalizedEquipmentType,
         trimmedLabel,
         normalizedWeights,
         parsedBandLevel,

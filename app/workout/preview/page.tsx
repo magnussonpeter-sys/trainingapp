@@ -11,6 +11,7 @@ import StickyActionBar from "@/components/app-shell/sticky-action-bar";
 import ConfirmSheet from "@/components/shared/confirm-sheet";
 import { useWorkoutPreview } from "@/hooks/use-workout-preview";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
+import { saveActiveWorkout } from "@/lib/workout-storage";
 import type { Exercise } from "@/types/workout";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -137,6 +138,9 @@ function PreviewPageContent() {
       return;
     }
 
+    // Preview måste promotas till aktivt pass innan run öppnas,
+    // annars kan ett äldre aktivt pass vinna över det valda preview-passet.
+    saveActiveWorkout(userId, workout);
     router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);
   }
 

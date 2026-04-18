@@ -24,6 +24,7 @@ import {
   getWorkoutDraft,
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
+import { getActiveWorkout } from "@/lib/workout-storage";
 import { useActiveWorkout } from "@/hooks/use-active-workout";
 import type { Exercise, Workout } from "@/types/workout";
 
@@ -232,7 +233,10 @@ export default function RunPage() {
     }
 
     try {
-      const storedWorkout = getWorkoutDraft(resolvedUserId) as Workout | null;
+      // Ett explicit aktivt pass ska vinna över en äldre preview-draft.
+      const storedWorkout =
+        (getActiveWorkout(resolvedUserId) as Workout | null) ??
+        (getWorkoutDraft(resolvedUserId) as Workout | null);
       const normalizedWorkout = normalizePreviewWorkout(storedWorkout) as Workout | null;
 
       setWorkout(normalizedWorkout);

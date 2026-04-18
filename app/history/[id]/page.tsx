@@ -1,16 +1,18 @@
 "use client";
 
-// Detaljsida för ett tidigare genomfört pass.
-// Här kan användaren granska passet och köra samma upplägg igen.
-// Sprint 1:
-// - Workout använder nu blocks i stället för platt exercises-lista
-// - "Kör passet igen" bygger därför ett nytt aktivt pass med ett straight_sets-block
+// Detaljsidan följer samma lugna formspråk som historiklistan.
+// Fokus ligger på att förstå passet snabbt och kunna köra det igen.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import type { WorkoutLog } from "@/lib/workout-log-storage";
+import StickyActionBar from "@/components/app-shell/sticky-action-bar";
+import { getFavoriteWorkoutIds, toggleWorkoutFavorite } from "@/lib/history-favorites-storage";
+import { getWorkoutLogs, type WorkoutLog } from "@/lib/workout-log-storage";
 import { saveActiveWorkout } from "@/lib/workout-storage";
+import { uiButtonClasses } from "@/lib/ui/button-classes";
+import { uiCardClasses } from "@/lib/ui/card-classes";
+import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 import type { Exercise, Workout } from "@/types/workout";
 
 type AuthUser = {
@@ -19,6 +21,32 @@ type AuthUser = {
   username?: string | null;
   name?: string | null;
 };
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function mergeWorkoutLogs(apiLogs: WorkoutLog[], localLogs: WorkoutLog[]) {
+  const merged = [...apiLogs];
+  const seen = new Set(
+    apiLogs.map((log) => `${log.workoutName}:${log.completedAt}:${log.status}`),
+  );
+
+  for (const log of localLogs) {
+    const key = `${log.workoutName}:${log.completedAt}:${log.status}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(log);
+  }
+
+  return merged.sort((a, b) => {
+    return new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime();
+  });
+}
 
 function formatDateTime(value: string) {
   try {
@@ -58,6 +86,24 @@ function getTotalSets(workout: WorkoutLog) {
   return workout.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
 }
 
+function formatSetResult(set: WorkoutLog["exercises"][number]["sets"][number]) {
+  const parts: string[] = [];
+
+  if (set.actualReps !== null) {
+    parts.push(`${set.actualReps} reps`);
+  }
+
+  if (set.actualWeight !== null) {
+    parts.push(`${set.actualWeight} kg`);
+  }
+
+  if (set.actualDuration !== null) {
+    parts.push(`${set.actualDuration} sek`);
+  }
+
+  return parts.length > 0 ? parts.join(" • ") : "Ingen loggning";
+}
+
 function makeId() {
   return typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
@@ -71,7 +117,7 @@ function mapLogExerciseToWorkoutExercise(exercise: WorkoutLog["exercises"][numbe
     sets: exercise.plannedSets,
     reps: exercise.plannedReps ?? undefined,
     duration: exercise.plannedDuration ?? undefined,
-    // Tillfällig standardvila när vi bygger ett nytt pass från historiken.
+    // Behåll ett enkelt standardupplägg när ett historiskt pass körs igen.
     rest: 45,
     description: undefined,
   };
@@ -79,7 +125,6 @@ function mapLogExerciseToWorkoutExercise(exercise: WorkoutLog["exercises"][numbe
 
 function createWorkoutFromLog(log: WorkoutLog): Workout {
   return {
-    // Skapar nytt id så att detta blir ett nytt aktivt pass.
     id: makeId(),
     name: log.workoutName,
     duration: Math.max(1, Math.round(log.durationSeconds / 60)),
@@ -103,6 +148,7 @@ export default function HistoryWorkoutDetailPage() {
   const [workout, setWorkout] = useState<WorkoutLog | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isFavorite, setIsFavorite] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -112,7 +158,6 @@ export default function HistoryWorkoutDetailPage() {
         setErrorMessage(null);
         setIsLoading(true);
 
-        // Nytt auth-format: { user }
         const authRes = await fetch("/api/auth/me", {
           cache: "no-store",
           credentials: "include",
@@ -138,12 +183,14 @@ export default function HistoryWorkoutDetailPage() {
 
         const user = (authData as { user: AuthUser }).user;
         const userId = String(user.id);
+        const workoutId = Array.isArray(params.id) ? params.id[0] : params.id;
 
         if (!isMounted) return;
 
         setAuthUser(user);
         setAuthChecked(true);
 
+        const localLogs = getWorkoutLogs(userId);
         const logsRes = await fetch(
           `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=100`,
           {
@@ -152,18 +199,18 @@ export default function HistoryWorkoutDetailPage() {
           },
         );
 
-        const logsData = await logsRes.json();
+        const logsData = await logsRes.json().catch(() => null);
 
-        if (!logsRes.ok || !logsData?.ok || !Array.isArray(logsData.logs)) {
-          throw new Error(logsData?.error || "Kunde inte hämta träningshistorik");
-        }
-
-        const workoutId = Array.isArray(params.id) ? params.id[0] : params.id;
-
-        const foundWorkout =
-          (logsData.logs as WorkoutLog[]).find((log) => log.id === workoutId) ?? null;
+        const apiLogs =
+          logsRes.ok && logsData?.ok && Array.isArray(logsData.logs)
+            ? (logsData.logs as WorkoutLog[])
+            : [];
+        const mergedLogs = mergeWorkoutLogs(apiLogs, localLogs);
+        const foundWorkout = mergedLogs.find((log) => log.id === workoutId) ?? null;
 
         if (!isMounted) return;
+
+        setIsFavorite(getFavoriteWorkoutIds(userId).includes(String(workoutId)));
 
         if (!foundWorkout) {
           setErrorMessage("Kunde inte hitta det valda passet.");
@@ -172,9 +219,7 @@ export default function HistoryWorkoutDetailPage() {
         }
 
         setWorkout(foundWorkout);
-      } catch (error) {
-        console.error("Failed to load workout detail page", error);
-
+      } catch {
         if (!isMounted) return;
         setErrorMessage("Kunde inte ladda passdetaljer.");
       } finally {
@@ -192,161 +237,227 @@ export default function HistoryWorkoutDetailPage() {
     };
   }, [params.id, router]);
 
-  function repeatWorkout() {
+  const totalSets = useMemo(() => {
+    return workout ? getTotalSets(workout) : 0;
+  }, [workout]);
+
+  const totalVolume = useMemo(() => {
+    return workout ? getWorkoutVolume(workout) : 0;
+  }, [workout]);
+
+  const repeatWorkout = () => {
     if (!authUser || !workout) return;
 
     const userId = String(authUser.id);
-
-    // Bygger nytt aktivt pass från historiken.
-    const repeatedWorkout = createWorkoutFromLog(workout);
-    saveActiveWorkout(userId, repeatedWorkout);
+    saveActiveWorkout(userId, createWorkoutFromLog(workout));
     router.push("/workout/run");
-  }
+  };
+
+  const handleToggleFavorite = () => {
+    if (!authUser || !workout) {
+      return;
+    }
+
+    const nextValue = toggleWorkoutFavorite(String(authUser.id), workout.id);
+    setIsFavorite(nextValue);
+  };
 
   if (!authChecked || isLoading) {
-    return <div className="p-6">Laddar passdetaljer...</div>;
-  }
-
-  if (errorMessage || !workout) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
-        <section className="w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h1 className="text-xl font-semibold text-slate-900">Kunde inte visa passet</h1>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            {errorMessage ?? "Passet kunde inte laddas."}
-          </p>
-
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => router.push("/history")}
-              className="flex-1 rounded-2xl border px-4 py-3 font-semibold text-gray-900"
-            >
-              Till historik
-            </button>
-            <button
-              type="button"
-              onClick={() => router.push("/home")}
-              className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 font-semibold text-white"
-            >
-              Till startsidan
-            </button>
-          </div>
-        </section>
+      <main className={uiPageShellClasses.page}>
+        <div className={cn(uiPageShellClasses.content, "py-12")}>
+          <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+            <p className="text-sm text-slate-600">Laddar passdetaljer...</p>
+          </section>
+        </div>
       </main>
     );
   }
 
-  const totalSets = getTotalSets(workout);
-  const totalVolume = getWorkoutVolume(workout);
+  if (errorMessage || !workout) {
+    return (
+      <main className={uiPageShellClasses.page}>
+        <div className={cn(uiPageShellClasses.content, "py-12")}>
+          <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+              Historik
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+              Kunde inte visa passet
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              {errorMessage ?? "Passet kunde inte laddas."}
+            </p>
+
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => router.push("/history")}
+                className={cn(uiButtonClasses.secondary, "sm:flex-1")}
+              >
+                Till historik
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/home")}
+                className={cn(uiButtonClasses.primary, "sm:flex-1")}
+              >
+                Till startsidan
+              </button>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
-      <div className="space-y-6">
-        <button
-          type="button"
-          onClick={() => router.push("/history")}
-          className="text-sm font-medium text-blue-700 underline underline-offset-2"
-        >
-          Tillbaka till historik
-        </button>
+    <main className={uiPageShellClasses.page}>
+      <div className={cn(uiPageShellClasses.content, "pb-32")}>
+        <div className="space-y-5">
+          <button
+            type="button"
+            onClick={() => router.push("/history")}
+            className="text-sm font-medium text-slate-600 transition hover:text-slate-950"
+          >
+            ← Tillbaka till historik
+          </button>
 
-        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">
-            Passdetaljer
-          </p>
-          <h1 className="mt-2 text-2xl font-bold text-slate-950">{workout.workoutName}</h1>
-          <p className="mt-2 text-sm text-slate-600">{formatDateTime(workout.completedAt)}</p>
-
-          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Tid</p>
-              <p className="mt-1 text-base font-semibold text-slate-900">
-                {formatDuration(workout.durationSeconds)}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                Övningar
-              </p>
-              <p className="mt-1 text-base font-semibold text-slate-900">
-                {workout.exercises.length}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Set</p>
-              <p className="mt-1 text-base font-semibold text-slate-900">{totalSets}</p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Volym</p>
-              <p className="mt-1 text-base font-semibold text-slate-900">
-                {Math.round(totalVolume)} kg
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="space-y-4">
-          {workout.exercises.map((exercise) => (
-            <article
-              key={exercise.exerciseId}
-              className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-950">
-                    {exercise.exerciseName}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-600">{exercise.sets.length} set</p>
-                </div>
-
-                <div className="text-right text-sm text-slate-600">
-                  {exercise.extraReps !== null ? (
-                    <p>Extra reps: {exercise.extraReps === 6 ? "6+" : exercise.extraReps}</p>
-                  ) : null}
-                  {exercise.rating !== null ? <p>Betyg: {exercise.rating}/5</p> : null}
-                </div>
+          <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                  Historiskt pass
+                </p>
+                <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+                  {workout.workoutName}
+                </h1>
+                <p className="mt-2 text-sm text-slate-600">
+                  {formatDateTime(workout.completedAt)}
+                </p>
               </div>
 
-              <div className="mt-4 space-y-2">
-                {exercise.sets.map((set) => (
-                  <div
-                    key={`${exercise.exerciseId}-${set.setNumber}`}
-                    className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700"
-                  >
-                    Set {set.setNumber} {" • "}{" "}
-                    {set.actualReps !== null ? `${set.actualReps} reps` : "inga reps"}{" "}
-                    {" • "}{" "}
-                    {set.actualWeight !== null ? `${set.actualWeight} kg` : "ingen vikt"}
-                    {set.actualDuration !== null ? ` • ${set.actualDuration} sek` : ""}
+              <button
+                type="button"
+                onClick={handleToggleFavorite}
+                aria-label={isFavorite ? "Ta bort favorit" : "Markera som favorit"}
+                className={cn(
+                  "flex h-11 w-11 items-center justify-center rounded-2xl border text-lg transition",
+                  isFavorite
+                    ? "border-amber-300 bg-amber-50 text-amber-600"
+                    : "border-slate-200 bg-white text-slate-400 hover:bg-slate-50",
+                )}
+              >
+                {isFavorite ? "★" : "☆"}
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className={cn(uiCardClasses.soft, "bg-slate-50")}>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Tid
+                </p>
+                <p className="mt-1 text-base font-semibold text-slate-950">
+                  {formatDuration(workout.durationSeconds)}
+                </p>
+              </div>
+              <div className={cn(uiCardClasses.soft, "bg-slate-50")}>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Övningar
+                </p>
+                <p className="mt-1 text-base font-semibold text-slate-950">
+                  {workout.exercises.length}
+                </p>
+              </div>
+              <div className={cn(uiCardClasses.soft, "bg-slate-50")}>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Set
+                </p>
+                <p className="mt-1 text-base font-semibold text-slate-950">{totalSets}</p>
+              </div>
+              <div className={cn(uiCardClasses.soft, "bg-slate-50")}>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Volym
+                </p>
+                <p className="mt-1 text-base font-semibold text-slate-950">
+                  {Math.round(totalVolume)} kg
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Övningar
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-950">
+                  Det här gjorde du
+                </h2>
+              </div>
+              <p className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
+                {workout.status === "completed" ? "Genomfört" : "Avbrutet"}
+              </p>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {workout.exercises.map((exercise) => (
+                <article key={exercise.exerciseId} className={cn(uiCardClasses.soft, "bg-white")}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-base font-semibold text-slate-950">
+                        {exercise.exerciseName}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {exercise.sets.length} set
+                      </p>
+                    </div>
+
+                    <div className="text-right text-xs text-slate-500">
+                      {exercise.extraReps !== null ? (
+                        <p>Extra reps: {exercise.extraReps === 6 ? "6+" : exercise.extraReps}</p>
+                      ) : null}
+                      {exercise.rating !== null ? <p>Betyg: {exercise.rating}/5</p> : null}
+                    </div>
                   </div>
-                ))}
-              </div>
-            </article>
-          ))}
-        </section>
 
+                  <div className="mt-3 space-y-2">
+                    {exercise.sets.map((set) => (
+                      <div
+                        key={`${exercise.exerciseId}-${set.setNumber}`}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"
+                      >
+                        <span className="font-medium text-slate-900">Set {set.setNumber}</span>
+                        <span className="ml-2">{formatSetResult(set)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <StickyActionBar>
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
             type="button"
             onClick={() => router.push("/history")}
-            className="flex-1 rounded-2xl border px-4 py-3 text-base font-semibold text-gray-900"
+            className={cn(uiButtonClasses.secondary, "w-full sm:flex-1")}
           >
-            Tillbaka
+            Till historik
           </button>
-
           <button
             type="button"
             onClick={repeatWorkout}
-            className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-base font-semibold text-white"
+            className={cn(uiButtonClasses.primary, "w-full sm:flex-1")}
           >
-            Kör passet igen
+            Kör igen
           </button>
         </div>
-      </div>
+      </StickyActionBar>
     </main>
   );
 }

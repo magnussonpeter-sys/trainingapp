@@ -651,9 +651,9 @@ export default function SettingsPage() {
                 },
                 {
                   value: "avoid_all_dumbbell" as const,
-                  title: "Undvik rena hantel-supersets",
+                  title: "Max en hantelövning per superset",
                   description:
-                    "Supersets där alla ingående övningar använder hantlar undviks, men andra kombinationer är fortfarande tillåtna.",
+                    "Supersets får innehålla hantlar, men inte fler än en hantelövning i samma superset.",
                 },
                 {
                   value: "avoid_all" as const,

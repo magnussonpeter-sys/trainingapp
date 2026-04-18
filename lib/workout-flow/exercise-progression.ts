@@ -4,6 +4,10 @@ import {
   normalizeEquipmentList,
   type EquipmentId,
 } from "@/lib/exercise-catalog";
+import {
+  extractEquipmentIdsFromRecords,
+  normalizeEquipmentId,
+} from "@/lib/equipment";
 import { getSuggestedTimedDuration, getSuggestedWeight } from "@/lib/progression-engine";
 import { getExerciseProgression } from "@/lib/progression-store";
 import type { Exercise } from "@/types/workout";
@@ -93,36 +97,6 @@ function getNearbyAvailableWeights(
     .sort((a, b) => a - b);
 }
 
-function normalizeEquipmentType(value: string | null | undefined) {
-  const normalized = value?.trim().toLowerCase();
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized.includes("dumbbell") || normalized.includes("hantel")) {
-    return "dumbbell";
-  }
-
-  if (normalized.includes("barbell") || normalized.includes("skivstång")) {
-    return "barbell";
-  }
-
-  if (normalized.includes("kettlebell")) {
-    return "kettlebell";
-  }
-
-  if (normalized.includes("cable") || normalized.includes("kabel")) {
-    return "cable";
-  }
-
-  if (normalized.includes("machine") || normalized.includes("maskin")) {
-    return "machine";
-  }
-
-  return normalized;
-}
-
 function isDualDumbbellExercise(exercise: Exercise) {
   const exerciseId = exercise.id.toLowerCase();
   const exerciseName = exercise.name.toLowerCase();
@@ -159,45 +133,73 @@ function getLoadMetadata(exercise: Exercise) {
     return {
       weightSelectionMode: "total" as const,
       weightUnitLabel: "kg",
-      relevantEquipmentTypes: [] as string[],
+      relevantEquipmentIds: [] as EquipmentId[],
     };
   }
 
-  const relevantEquipmentTypes: string[] = [];
+  const relevantEquipmentIds: EquipmentId[] = [];
   const requiredEquipment = catalogExercise.requiredEquipment ?? [];
 
-  if (requiredEquipment.includes("dumbbells" as EquipmentId)) {
-    relevantEquipmentTypes.push("dumbbell");
+  if (requiredEquipment.includes("dumbbells")) {
+    relevantEquipmentIds.push("dumbbells");
   }
 
-  if (requiredEquipment.includes("barbell" as EquipmentId)) {
-    relevantEquipmentTypes.push("barbell");
+  if (requiredEquipment.includes("barbell")) {
+    relevantEquipmentIds.push("barbell");
   }
 
-  if (requiredEquipment.includes("kettlebell" as EquipmentId)) {
-    relevantEquipmentTypes.push("kettlebell");
+  if (requiredEquipment.includes("ez_bar")) {
+    relevantEquipmentIds.push("ez_bar");
   }
 
-  const usesDumbbells = relevantEquipmentTypes.includes("dumbbell");
+  if (requiredEquipment.includes("trap_bar")) {
+    relevantEquipmentIds.push("trap_bar");
+  }
+
+  if (requiredEquipment.includes("kettlebells")) {
+    relevantEquipmentIds.push("kettlebells");
+  }
+
+  if (requiredEquipment.includes("smith_machine")) {
+    relevantEquipmentIds.push("smith_machine");
+  }
+
+  if (requiredEquipment.includes("cable_machine")) {
+    relevantEquipmentIds.push("cable_machine");
+  }
+
+  if (requiredEquipment.includes("machines")) {
+    relevantEquipmentIds.push("machines");
+  }
+
+  if (requiredEquipment.includes("medicine_ball")) {
+    relevantEquipmentIds.push("medicine_ball");
+  }
+
+  const usesDumbbells = relevantEquipmentIds.includes("dumbbells");
 
   if (usesDumbbells && isDualDumbbellExercise(exercise)) {
     return {
-      relevantEquipmentTypes,
+      relevantEquipmentIds,
       weightSelectionMode: "per_hand" as const,
       weightUnitLabel: "kg per hantel",
     };
   }
 
-  if (usesDumbbells || relevantEquipmentTypes.includes("kettlebell")) {
+  if (
+    usesDumbbells ||
+    relevantEquipmentIds.includes("kettlebells") ||
+    relevantEquipmentIds.includes("medicine_ball")
+  ) {
     return {
-      relevantEquipmentTypes,
+      relevantEquipmentIds,
       weightSelectionMode: "single_implement" as const,
       weightUnitLabel: "kg",
     };
   }
 
   return {
-    relevantEquipmentTypes,
+    relevantEquipmentIds,
     weightSelectionMode: "total" as const,
     weightUnitLabel: "kg",
   };
@@ -209,7 +211,7 @@ function getAvailableWeightsForExercise(
 ) {
   const loadMetadata = getLoadMetadata(exercise);
 
-  if (gymEquipmentItems.length === 0 || loadMetadata.relevantEquipmentTypes.length === 0) {
+  if (gymEquipmentItems.length === 0 || loadMetadata.relevantEquipmentIds.length === 0) {
     return {
       ...loadMetadata,
       availableWeightsKg: [] as number[],
@@ -217,14 +219,19 @@ function getAvailableWeightsForExercise(
   }
 
   const collectedWeights = gymEquipmentItems.flatMap((item) => {
-    const equipmentTypes = [
-      normalizeEquipmentType(item.equipment_type),
-      normalizeEquipmentType(item.equipmentType),
-      normalizeEquipmentType(item.label),
-    ].filter((value): value is string => Boolean(value));
+    const equipmentIds = extractEquipmentIdsFromRecords(
+      [
+        {
+          equipment_type: item.equipment_type,
+          equipmentType: item.equipmentType,
+          label: item.label,
+        },
+      ],
+      { includeBodyweightFallback: false },
+    );
 
-    const matches = equipmentTypes.some((equipmentType) =>
-      loadMetadata.relevantEquipmentTypes.includes(equipmentType),
+    const matches = equipmentIds.some((equipmentId) =>
+      loadMetadata.relevantEquipmentIds.includes(equipmentId),
     );
 
     if (!matches) {
@@ -483,9 +490,9 @@ export function applyExerciseProgression(params: {
   const loadMetadata = getAvailableWeightsForExercise(exercise, gymEquipmentItems);
   const progressionEquipment = normalizeEquipmentList(
     gymEquipmentItems.flatMap((item) =>
-      [item.equipment_type, item.equipmentType, item.label].filter(
-        (value): value is string => typeof value === "string" && value.trim().length > 0,
-      ),
+      [item.equipment_type, item.equipmentType, item.label]
+        .map((value) => normalizeEquipmentId(value))
+        .filter((value): value is EquipmentId => typeof value === "string" && value.length > 0),
     ),
   );
   const fallbackWeight = toFiniteNumberOrNull(exercise.suggestedWeight ?? null);
@@ -520,7 +527,7 @@ export function applyExerciseProgression(params: {
     };
   }
 
-  if (loadMetadata.relevantEquipmentTypes.length === 0) {
+  if (loadMetadata.relevantEquipmentIds.length === 0) {
     const bodyweightResult = applyBodyweightProgression({
       exercise,
       goal,

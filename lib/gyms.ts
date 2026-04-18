@@ -3,20 +3,14 @@
 // Delade typer och helpers för gymflödet.
 // Håller UI och API i sync när vi bryter upp flödet i mindre vyer.
 
-export type EquipmentType =
-  | "dumbbell"
-  | "barbell"
-  | "bench"
-  | "rack"
-  | "kettlebell"
-  | "machine"
-  | "cable"
-  | "bands"
-  | "rings"
-  | "bodyweight"
-  | "other";
+import type { BandLevel, GymEquipmentType } from "@/lib/equipment";
+import {
+  normalizeGymEquipmentType,
+  supportsGymEquipmentWeights,
+  supportsWholeKiloQuickWeights,
+} from "@/lib/equipment";
 
-export type BandLevel = "light" | "medium" | "heavy";
+export type EquipmentType = GymEquipmentType;
 
 export type AuthUser = {
   id: number;
@@ -63,13 +57,20 @@ export const EQUIPMENT_TYPE_OPTIONS: Array<{
 }> = [
   { value: "dumbbell", label: "Hantlar" },
   { value: "barbell", label: "Skivstång" },
+  { value: "ez_bar", label: "EZ-stång" },
+  { value: "trap_bar", label: "Trap bar" },
   { value: "bench", label: "Bänk" },
   { value: "rack", label: "Rack / ställning" },
+  { value: "smith_machine", label: "Smithmaskin" },
   { value: "kettlebell", label: "Kettlebells" },
+  { value: "pullup_bar", label: "Chinsstång" },
+  { value: "dip_bars", label: "Dip bars" },
+  { value: "cable_machine", label: "Kabelmaskin" },
   { value: "machine", label: "Maskin" },
-  { value: "cable", label: "Kabelmaskin" },
   { value: "bands", label: "Gummiband" },
   { value: "rings", label: "Romerska ringar" },
+  { value: "box", label: "Box / plyobox" },
+  { value: "medicine_ball", label: "Medicinboll" },
   { value: "bodyweight", label: "Kroppsvikt" },
   { value: "other", label: "Övrigt" },
 ];
@@ -77,13 +78,20 @@ export const EQUIPMENT_TYPE_OPTIONS: Array<{
 const DEFAULT_LABELS: Record<EquipmentType, string> = {
   dumbbell: "Hantlar",
   barbell: "Skivstång",
+  ez_bar: "EZ-stång",
+  trap_bar: "Trap bar",
   bench: "Bänk",
   rack: "Rack",
+  smith_machine: "Smithmaskin",
   kettlebell: "Kettlebells",
+  pullup_bar: "Chinsstång",
+  dip_bars: "Dip bars",
+  cable_machine: "Kabelmaskin",
   machine: "Maskin",
-  cable: "Kabelmaskin",
   bands: "Gummiband",
   rings: "Romerska ringar",
+  box: "Box / plyobox",
+  medicine_ball: "Medicinboll",
   bodyweight: "Kroppsvikt",
   other: "Namn på utrustning",
 };
@@ -103,8 +111,10 @@ export function createDefaultEquipmentDraft(
 }
 
 export function createDraftFromEquipment(item: GymEquipment): EquipmentDraft {
+  const normalizedType = normalizeGymEquipmentType(item.equipment_type) ?? "other";
+
   return {
-    equipmentType: item.equipment_type,
+    equipmentType: normalizedType,
     label: item.label,
     quantity: item.quantity ? String(item.quantity) : "",
     notes: item.notes ?? "",
@@ -120,26 +130,23 @@ export function createDraftFromEquipment(item: GymEquipment): EquipmentDraft {
 }
 
 export function isWeightBasedType(type: EquipmentType) {
-  return type === "dumbbell" || type === "barbell" || type === "kettlebell";
+  return supportsGymEquipmentWeights(type);
 }
 
 export function usesWholeKiloQuickWeights(type: EquipmentType) {
-  return type === "barbell" || type === "kettlebell";
+  return supportsWholeKiloQuickWeights(type);
 }
 
 export function allowsFreeformWeightEntry(type: EquipmentType) {
-  return (
-    type === "dumbbell" ||
-    type === "barbell" ||
-    type === "kettlebell" ||
-    type === "machine" ||
-    type === "cable"
-  );
+  return supportsGymEquipmentWeights(type);
 }
 
 export function getEquipmentTypeLabel(type: EquipmentType) {
+  const normalizedType = normalizeGymEquipmentType(type) ?? type;
+
   return (
-    EQUIPMENT_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type
+    EQUIPMENT_TYPE_OPTIONS.find((option) => option.value === normalizedType)?.label ??
+    normalizedType
   );
 }
 

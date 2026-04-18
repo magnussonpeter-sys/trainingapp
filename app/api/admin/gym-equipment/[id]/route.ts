@@ -1,26 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { pool } from "@/lib/db";
+import {
+  type BandLevel,
+  type GymEquipmentType,
+  isValidBandLevel,
+  normalizeGymEquipmentType,
+  supportsGymEquipmentWeights,
+} from "@/lib/equipment";
 import { requireAdmin } from "@/lib/server-auth";
-
-const ALLOWED_EQUIPMENT_TYPES = [
-  "dumbbell",
-  "barbell",
-  "bench",
-  "rack",
-  "kettlebell",
-  "machine",
-  "cable",
-  "bands",
-  "rings",
-  "bodyweight",
-  "other",
-] as const;
-
-const ALLOWED_BAND_LEVELS = ["light", "medium", "heavy"] as const;
-
-type EquipmentType = (typeof ALLOWED_EQUIPMENT_TYPES)[number];
-type BandLevel = (typeof ALLOWED_BAND_LEVELS)[number];
 
 function adminErrorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown error";
@@ -40,23 +28,7 @@ function adminErrorResponse(error: unknown) {
   return NextResponse.json({ error: "Serverfel" }, { status: 500 });
 }
 
-function isValidEquipmentType(value: unknown): value is EquipmentType {
-  return (
-    typeof value === "string" &&
-    ALLOWED_EQUIPMENT_TYPES.includes(value as EquipmentType)
-  );
-}
-
-function isValidBandLevel(value: unknown): value is BandLevel {
-  return (
-    typeof value === "string" &&
-    ALLOWED_BAND_LEVELS.includes(value as BandLevel)
-  );
-}
-
-function isWeightBasedType(type: EquipmentType) {
-  return type === "dumbbell" || type === "kettlebell" || type === "barbell";
-}
+type EquipmentType = GymEquipmentType;
 
 function normalizeWeights(input: unknown): number[] | null {
   if (input == null || !Array.isArray(input)) return null;
@@ -107,7 +79,9 @@ export async function PATCH(
           ? Number(body.quantity)
           : null;
 
-    if (!id || !isValidEquipmentType(equipmentType) || !label) {
+    const normalizedEquipmentType = normalizeGymEquipmentType(equipmentType);
+
+    if (!id || !normalizedEquipmentType || !label) {
       return NextResponse.json(
         { error: "Typ och namn krävs" },
         { status: 400 },
@@ -119,13 +93,13 @@ export async function PATCH(
       return NextResponse.json({ error: "Utrustningen hittades inte" }, { status: 404 });
     }
 
-    const normalizedWeights = isWeightBasedType(equipmentType)
+    const normalizedWeights = supportsGymEquipmentWeights(normalizedEquipmentType)
       ? normalizeWeights(body.weights_kg)
       : null;
 
     let bandLevel: BandLevel | null = null;
     let bandLevels: BandLevel[] | null = null;
-    if (equipmentType === "bands") {
+    if (normalizedEquipmentType === "bands") {
       bandLevels = normalizeBandLevels(body.band_levels);
       if (!bandLevels && !isValidBandLevel(body.band_level)) {
         return NextResponse.json(
@@ -160,7 +134,7 @@ export async function PATCH(
         quantity,
         notes
       `,
-      [id, equipmentType, label, normalizedWeights, bandLevel, bandLevels, quantity, notes],
+      [id, normalizedEquipmentType, label, normalizedWeights, bandLevel, bandLevels, quantity, notes],
     );
 
     return NextResponse.json({ equipment: result.rows[0] });
@@ -197,4 +171,3 @@ export async function DELETE(
     return adminErrorResponse(error);
   }
 }
-

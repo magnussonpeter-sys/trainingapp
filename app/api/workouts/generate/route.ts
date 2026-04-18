@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
 import { pool } from "@/lib/db";
+import { normalizeEquipmentIdList } from "@/lib/equipment";
 import {
   getAvailableExercises,
   getAvailableProgressionTracks,
@@ -50,26 +51,14 @@ function safeParseJSON(text: string) {
 // Säkerställer att equipment-listan blir ren och unik.
 function normalizeEquipmentList(input: unknown): string[] {
   if (!Array.isArray(input)) {
-    return [];
+    return ["bodyweight"];
   }
 
-  const values = new Set<string>();
-
-  for (const item of input) {
-    if (typeof item !== "string") {
-      continue;
-    }
-
-    const normalized = item.trim().toLowerCase();
-
-    if (!normalized) {
-      continue;
-    }
-
-    values.add(normalized);
-  }
-
-  return Array.from(values);
+  // Normalisera mot samma utrustningsmodell som resten av appen.
+  return normalizeEquipmentIdList(
+    input.filter((item): item is string => typeof item === "string"),
+    { includeBodyweightFallback: true },
+  );
 }
 
 type UserSettingsSummary = {
@@ -495,9 +484,9 @@ Viktiga regler:
 - Använd aldrig circuit just nu
 - Tolkningsregel: superset-preferens ALLOWED betyder att användaren inte har förbjudit supersets
 - Tolkningsregel: superset-preferens AVOID betyder att användaren uttryckligen vill undvika supersets
-- Tolkningsregel: superset-preferens AVOID_ALL_DUMBBELL_SUPERSETS betyder att du ska undvika superset där alla ingående övningar använder hantlar, men andra supersets är tillåtna
+- Tolkningsregel: superset-preferens AVOID_ALL_DUMBBELL_SUPERSETS betyder att du får använda hantlar i superset, men högst en hantelövning per superset
 - Om superset-preferens är AVOID ska du inte använda superset alls
-- Om superset-preferens är AVOID_ALL_DUMBBELL_SUPERSETS ska du inte skapa superset där samtliga övningar använder hantlar
+- Om superset-preferens är AVOID_ALL_DUMBBELL_SUPERSETS ska du inte skapa superset med två eller fler hantelövningar
 - För pass på 20 minuter eller kortare ska superset i normalfallet bestå av exakt 2 övningar, inte 3
 - För sådana mycket korta pass ska du undvika 3-övnings-superset eftersom de blir svårare att hålla tidseffektiva och robusta
 - För pass på 30 minuter eller kortare ska du som standard bygga passet runt ett eller flera superset-block när rimliga och säkra parningar finns

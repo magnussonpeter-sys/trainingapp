@@ -363,9 +363,9 @@ function getSupersetSuitability(params: {
 
   if (
     params.supersetPreference === "avoid_all_dumbbell" &&
-    catalogExercises.every((exercise) =>
+    catalogExercises.filter((exercise) =>
       exercise.requiredEquipment.includes("dumbbells"),
-    )
+    ).length > 1
   ) {
     return { allowed: false, score: Number.NEGATIVE_INFINITY };
   }

@@ -5,6 +5,10 @@ import {
   getAvailableExercises,
   type ExerciseCatalogItem,
 } from "@/lib/exercise-catalog";
+import {
+  EQUIPMENT_IDS,
+  extractEquipmentIdsFromRecords,
+} from "@/lib/equipment";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 import {
   applyExerciseProgression,
@@ -56,17 +60,6 @@ type PreviewSummary = {
   estimatedMinutes: number;
 };
 
-const KNOWN_EQUIPMENT_TYPES = [
-  "bodyweight",
-  "bench",
-  "dumbbells",
-  "barbell",
-  "rack",
-  "pullup_bar",
-  "cable_machine",
-  "rings",
-] as const;
-
 function clampNumber(value: number, min: number, max?: number) {
   if (Number.isNaN(value)) {
     return min;
@@ -95,65 +88,6 @@ function normalizeGymName(value: string) {
   return value.trim().toLowerCase();
 }
 
-// Normaliserar olika textvarianter till katalogens equipment-id:n.
-function normalizeEquipmentName(value: string): string | null {
-  const normalized = value.trim().toLowerCase();
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (
-    normalized === "bodyweight" ||
-    normalized === "body_weight" ||
-    normalized.includes("kroppsvikt") ||
-    normalized.includes("utan gym")
-  ) {
-    return "bodyweight";
-  }
-
-  if (
-    normalized.includes("dumbbell") ||
-    normalized.includes("dumbbells") ||
-    normalized.includes("hantel") ||
-    normalized.includes("hantlar")
-  ) {
-    return "dumbbells";
-  }
-
-  if (normalized.includes("barbell") || normalized.includes("skivstång")) {
-    return "barbell";
-  }
-
-  if (normalized.includes("bench") || normalized.includes("bänk")) {
-    return "bench";
-  }
-
-  if (normalized.includes("rack") || normalized.includes("ställning")) {
-    return "rack";
-  }
-
-  if (
-    normalized.includes("pullup") ||
-    normalized.includes("pull-up") ||
-    normalized.includes("chinup") ||
-    normalized.includes("chins") ||
-    normalized.includes("räcke")
-  ) {
-    return "pullup_bar";
-  }
-
-  if (normalized.includes("cable") || normalized.includes("kabel")) {
-    return "cable_machine";
-  }
-
-  if (normalized.includes("ring") || normalized.includes("romerska")) {
-    return "rings";
-  }
-
-  return null;
-}
-
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values));
 }
@@ -164,39 +98,10 @@ function extractEquipmentArray(candidate: unknown): string[] {
     return [];
   }
 
-  const normalizedValues: string[] = [];
-
-  for (const item of candidate) {
-    if (typeof item === "string") {
-      const normalized = normalizeEquipmentName(item);
-      if (normalized) {
-        normalizedValues.push(normalized);
-      }
-      continue;
-    }
-
-    if (item && typeof item === "object") {
-      const record = item as Record<string, unknown>;
-      const possibleValues = [
-        record.equipment_type,
-        record.type,
-        record.label,
-        record.name,
-      ];
-
-      for (const possibleValue of possibleValues) {
-        if (typeof possibleValue === "string") {
-          const normalized = normalizeEquipmentName(possibleValue);
-          if (normalized) {
-            normalizedValues.push(normalized);
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  return uniqueStrings(normalizedValues);
+  return extractEquipmentIdsFromRecords(
+    candidate as Array<Record<string, unknown> | string>,
+    { includeBodyweightFallback: false },
+  );
 }
 
 // Läser equipment som råkar finnas inbäddat i workout-objektet.
@@ -400,7 +305,7 @@ function deriveEffectiveEquipmentContext(
         matchedGymName: matchedGym?.name ?? null,
         matchedGymEquipment,
         workoutEmbeddedEquipment,
-        effectiveEquipment: [...KNOWN_EQUIPMENT_TYPES],
+        effectiveEquipment: [...EQUIPMENT_IDS],
       };
     }
 
@@ -429,7 +334,7 @@ function deriveEffectiveEquipmentContext(
       matchedGymName: matchedGym?.name ?? null,
       matchedGymEquipment,
       workoutEmbeddedEquipment,
-      effectiveEquipment: [...KNOWN_EQUIPMENT_TYPES],
+      effectiveEquipment: [...EQUIPMENT_IDS],
     };
   }
 

@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useHomeData } from "@/hooks/use-home-data";
+import { getDailyHomeWisdom } from "@/lib/get-daily-home-wisdom";
 import {
   buildWeeklyWorkoutStructure,
   detectWorkoutFocus,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/weekly-workout-structure";
 import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
 import { generateWorkout } from "@/lib/workout-generator";
+import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
@@ -92,96 +94,9 @@ function getDisplayName(user: AuthUser | null) {
 
 // Normaliserar equipment till stabila interna id:n för AI-flödet.
 function normalizeEquipmentStrings(input: GymEquipmentItem[] | undefined) {
-  if (!Array.isArray(input) || input.length === 0) {
-    return ["bodyweight"];
-  }
-
-  const values = new Set<string>();
-
-  const addNormalizedValue = (rawValue: string | null | undefined) => {
-    if (typeof rawValue !== "string" || !rawValue.trim()) {
-      return;
-    }
-
-    const normalized = rawValue.trim().toLowerCase();
-
-    if (
-      normalized === "bodyweight" ||
-      normalized === "body_weight" ||
-      normalized.includes("kroppsvikt") ||
-      normalized.includes("utan gym")
-    ) {
-      values.add("bodyweight");
-      return;
-    }
-
-    if (
-      normalized === "dumbbell" ||
-      normalized === "dumbbells" ||
-      normalized.includes("hantel")
-    ) {
-      values.add("dumbbells");
-      return;
-    }
-
-    if (normalized === "barbell" || normalized.includes("skivstång")) {
-      values.add("barbell");
-      return;
-    }
-
-    if (normalized === "bench" || normalized.includes("bänk")) {
-      values.add("bench");
-      return;
-    }
-
-    if (normalized === "rack" || normalized.includes("ställning")) {
-      values.add("rack");
-      return;
-    }
-
-    if (
-      normalized === "rings" ||
-      normalized.includes("romerska ringar") ||
-      normalized.includes("ringar")
-    ) {
-      values.add("rings");
-      return;
-    }
-
-    if (
-      normalized === "pullup_bar" ||
-      normalized === "pull-up bar" ||
-      normalized.includes("pullup") ||
-      normalized.includes("pull-up") ||
-      normalized.includes("chins") ||
-      normalized.includes("räcke")
-    ) {
-      values.add("pullup_bar");
-      return;
-    }
-
-    if (
-      normalized === "cable_machine" ||
-      normalized.includes("cable") ||
-      normalized.includes("kabel")
-    ) {
-      values.add("cable_machine");
-    }
-  };
-
-  for (const item of input) {
-    addNormalizedValue(item.equipment_type);
-    addNormalizedValue(item.equipmentType);
-    addNormalizedValue(item.label);
-    addNormalizedValue(item.name);
-    addNormalizedValue(item.type);
-  }
-
-  if (values.size === 0) {
-    values.add("bodyweight");
-  }
-
-  return Array.from(values);
+  return extractEquipmentIdsFromRecords(input ?? [], {
+    includeBodyweightFallback: true,
+  });
 }
 
 function clampDuration(value: number) {
@@ -359,6 +274,7 @@ function getProgressLabel(progressStatus: string) {
 
 function HomeHeroCard(props: {
   name: string;
+  wisdomText: string;
   coachMessage: string;
   onLogout: () => void;
   isLoggingOut: boolean;
@@ -375,9 +291,14 @@ function HomeHeroCard(props: {
             <h1 className="mt-2 text-[clamp(2rem,7vw,2.8rem)] font-semibold tracking-tight text-slate-950">
               {props.name}
             </h1>
-            <p className="mt-3 text-base leading-7 text-slate-700">
-              Nästa bästa steg är att starta ett pass som passar läget idag.
-            </p>
+            <div className="mt-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
+                Dagens visdom
+              </p>
+              <p className="mt-2 text-base italic leading-7 text-slate-700">
+                {props.wisdomText}
+              </p>
+            </div>
           </div>
 
           <button
@@ -905,6 +826,7 @@ export default function HomePage() {
       durationMinutes,
     });
   }, [durationMinutes, weeklyStructure.completedLast7Days, weeklyStructure.nextFocus, workoutLogs]);
+  const dailyWisdom = useMemo(() => getDailyHomeWisdom(), []);
 
   const workoutStreak = useMemo(() => getWorkoutStreak(workoutLogs), [workoutLogs]);
   const recommendedDuration = useMemo(
@@ -1132,6 +1054,7 @@ export default function HomePage() {
       <div className={cn(uiPageShellClasses.content, "space-y-5 pb-8")}>
         <HomeHeroCard
           name={getDisplayName(authUser)}
+          wisdomText={dailyWisdom.text}
           coachMessage={coachMessage}
           onLogout={handleLogout}
           isLoggingOut={isLoggingOut}

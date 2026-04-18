@@ -1,12 +1,10 @@
-export type EquipmentId =
-  | "bench"
-  | "dumbbells"
-  | "barbell"
-  | "rack"
-  | "pullup_bar"
-  | "cable_machine"
-  | "rings"
-  | "bodyweight";
+import {
+  detectEquipmentIdsFromText,
+  normalizeEquipmentIdList,
+  type EquipmentId,
+} from "@/lib/equipment";
+
+export type { EquipmentId } from "@/lib/equipment";
 
 export type MovementPattern =
   | "horizontal_push"
@@ -1457,60 +1455,6 @@ export const EXERCISE_PROGRESSION_TRACKS: ExerciseProgressionTrack[] = [
   },
 ];
 
-const DIRECT_EQUIPMENT_SYNONYMS: Record<string, EquipmentId> = {
-  bänk: "bench",
-  träningsbänk: "bench",
-  justerbar_bänk: "bench",
-  bench: "bench",
-  flat_bench: "bench",
-  incline_bench: "bench",
-
-  hantel: "dumbbells",
-  hantlar: "dumbbells",
-  dumbbell: "dumbbells",
-  dumbbells: "dumbbells",
-  hantelset: "dumbbells",
-
-  skivstång: "barbell",
-  skivstang: "barbell",
-  barbell: "barbell",
-  olympic_barbell: "barbell",
-  olympisk_skivstång: "barbell",
-
-  rack: "rack",
-  ställning: "rack",
-  stallning: "rack",
-  squat_rack: "rack",
-  power_rack: "rack",
-  squat_stand: "rack",
-
-  chinsstång: "pullup_bar",
-  chinsstang: "pullup_bar",
-  pullupstång: "pullup_bar",
-  pullupstang: "pullup_bar",
-  pullup_bar: "pullup_bar",
-  chinup_bar: "pullup_bar",
-
-  kabel: "cable_machine",
-  kabelmaskin: "cable_machine",
-  cable: "cable_machine",
-  cable_machine: "cable_machine",
-  cable_station: "cable_machine",
-  cable_crossover: "cable_machine",
-
-  ringar: "rings",
-  romerska_ringar: "rings",
-  "romerska ringar": "rings",
-  rings: "rings",
-  gymnastic_rings: "rings",
-  "gymnastic rings": "rings",
-  gymnastikringar: "rings",
-
-  kroppsvikt: "bodyweight",
-  kroppsviktsövningar: "bodyweight",
-  bodyweight: "bodyweight",
-};
-
 function normalizeText(value: string) {
   return value
     .trim()
@@ -1523,106 +1467,17 @@ function normalizeText(value: string) {
 }
 
 function detectEquipmentFromText(value: string): EquipmentId[] {
-  const normalized = normalizeText(value);
-  const detected = new Set<EquipmentId>();
-
-  if (!normalized) {
-    return [];
-  }
-
-  const direct = DIRECT_EQUIPMENT_SYNONYMS[normalized];
-  if (direct) {
-    detected.add(direct);
-  }
-
-  if (
-    normalized.includes("hantel") ||
-    normalized.includes("dumbbell") ||
-    normalized.includes("hex dumbbell")
-  ) {
-    detected.add("dumbbells");
-  }
-
-  if (
-    normalized.includes("bank") ||
-    normalized.includes("bench") ||
-    normalized.includes("flat bench") ||
-    normalized.includes("incline bench")
-  ) {
-    detected.add("bench");
-  }
-
-  if (
-    normalized.includes("skivstang") ||
-    normalized.includes("barbell") ||
-    normalized.includes("olympic bar")
-  ) {
-    detected.add("barbell");
-  }
-
-  if (
-    normalized.includes("rack") ||
-    normalized.includes("stallning") ||
-    normalized.includes("squat stand") ||
-    normalized.includes("power rack")
-  ) {
-    detected.add("rack");
-  }
-
-  if (
-    normalized.includes("chin") ||
-    normalized.includes("pull up") ||
-    normalized.includes("pullup") ||
-    normalized.includes("pull-up")
-  ) {
-    detected.add("pullup_bar");
-  }
-
-  if (
-    normalized.includes("kabel") ||
-    normalized.includes("cable") ||
-    normalized.includes("cross over") ||
-    normalized.includes("crossover")
-  ) {
-    detected.add("cable_machine");
-  }
-
-  if (
-    normalized.includes("ringar") ||
-    normalized.includes("romerska ringar") ||
-    normalized.includes("gymnastic rings") ||
-    normalized.includes("gymnastikringar") ||
-    normalized.includes("rings")
-  ) {
-    detected.add("rings");
-  }
-
-  if (
-    normalized.includes("kroppsvikt") ||
-    normalized.includes("bodyweight") ||
-    normalized.includes("utan utrustning")
-  ) {
-    detected.add("bodyweight");
-  }
-
-  return Array.from(detected);
+  return detectEquipmentIdsFromText(normalizeText(value));
 }
 
 export function normalizeEquipmentList(input: string[]): EquipmentId[] {
-  const normalized = new Set<EquipmentId>();
-
-  for (const rawItem of input) {
-    if (typeof rawItem !== "string") continue;
-
-    for (const detected of detectEquipmentFromText(rawItem)) {
-      normalized.add(detected);
-    }
-  }
-
-  // Kroppsvikt ska alltid finnas som fallback.
-  normalized.add("bodyweight");
-
-  return Array.from(normalized);
+  // Kroppsvikt finns kvar som fallback för äldre pass och enklare hemmamiljöer.
+  return normalizeEquipmentIdList(
+    input.flatMap((rawItem) =>
+      typeof rawItem === "string" ? detectEquipmentFromText(rawItem) : [],
+    ),
+    { includeBodyweightFallback: true },
+  );
 }
 
 export function getAvailableExercises(
