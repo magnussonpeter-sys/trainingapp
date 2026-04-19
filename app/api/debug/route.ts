@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import { requireAdmin } from "@/lib/server-auth";
 
 export async function GET() {
   try {
+    await requireAdmin();
+
     // Hämta alla tabeller
     const tables = await pool.query(`
       SELECT table_name
@@ -29,6 +32,16 @@ export async function GET() {
 
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled" || error.message === "Forbidden") {
+        return NextResponse.json({ error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }

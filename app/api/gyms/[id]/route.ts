@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import { requireAuthorizedUserId } from "@/lib/server-auth";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -28,18 +29,12 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 
     const { id } = await params;
     const gymId = String(id).trim();
-    const userId = req.nextUrl.searchParams.get("userId")?.trim() ?? "";
+    const requestedUserId = req.nextUrl.searchParams.get("userId")?.trim() ?? "";
+    const user = await requireAuthorizedUserId(requestedUserId);
 
     if (!gymId) {
       return NextResponse.json(
         { ok: false, error: "Ogiltigt gym-id" },
-        { status: 400 }
-      );
-    }
-
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "userId is required" },
         { status: 400 }
       );
     }
@@ -53,7 +48,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
         AND user_id = $2
       LIMIT 1
       `,
-      [gymId, userId]
+      [gymId, user.id]
     );
 
     if (gymResult.rows.length === 0) {
@@ -98,6 +93,23 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       gym,
     });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("GET gym failed:", error);
     return NextResponse.json(
       {
@@ -115,7 +127,8 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 
     const { id } = await params;
     const body = await req.json();
-    const userId = String(body.userId ?? "").trim();
+    const requestedUserId = String(body.userId ?? "").trim();
+    const user = await requireAuthorizedUserId(requestedUserId);
     const name = String(body.name ?? "").trim();
     const isShared = Boolean(body.is_shared);
     const description =
@@ -126,13 +139,6 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     if (!gymId) {
       return NextResponse.json(
         { ok: false, error: "Ogiltigt gym-id" },
-        { status: 400 }
-      );
-    }
-
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "userId is required" },
         { status: 400 }
       );
     }
@@ -154,7 +160,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
         AND user_id = $5
       RETURNING id, user_id, name, description, is_shared, created_at
       `,
-      [name, description, isShared, gymId, userId]
+      [name, description, isShared, gymId, user.id]
     );
 
     if (result.rows.length === 0) {
@@ -169,6 +175,23 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       gym: result.rows[0],
     });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("PATCH gym failed:", error);
     return NextResponse.json(
       {
@@ -184,20 +207,14 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
-    const userId = String(body.userId ?? "").trim();
+    const requestedUserId = String(body.userId ?? "").trim();
+    const user = await requireAuthorizedUserId(requestedUserId);
 
     const gymId = String(id).trim();
 
     if (!gymId) {
       return NextResponse.json(
         { ok: false, error: "Ogiltigt gym-id" },
-        { status: 400 }
-      );
-    }
-
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "userId is required" },
         { status: 400 }
       );
     }
@@ -209,7 +226,7 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
         AND user_id = $2
       RETURNING id
       `,
-      [gymId, userId]
+      [gymId, user.id]
     );
 
     if (result.rows.length === 0) {
@@ -221,6 +238,23 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("DELETE gym failed:", error);
     return NextResponse.json(
       {

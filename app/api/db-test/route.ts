@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import { requireAdmin } from "@/lib/server-auth";
 
 export async function GET() {
   const client = await pool.connect();
 
   try {
+    // Maintenance-routes ska bara vara tillgängliga för admin.
+    await requireAdmin();
     await client.query("BEGIN");
 
     // 1. Hitta och ta bort foreign key på gyms.user_id om den finns
@@ -281,6 +284,16 @@ export async function GET() {
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("DB test failed:", error);
+
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled" || error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
 
     return NextResponse.json(
       {

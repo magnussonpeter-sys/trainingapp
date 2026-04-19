@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import { requireAdmin } from "@/lib/server-auth";
 
 export async function GET() {
   try {
+    // Init-routes ska bara kunna köras av admin.
+    await requireAdmin();
     await pool.query(`
       CREATE TABLE IF NOT EXISTS app_users (
         id UUID PRIMARY KEY,
@@ -76,6 +79,17 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Init auth DB failed:", error);
+
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled" || error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     return NextResponse.json(
       {
         ok: false,

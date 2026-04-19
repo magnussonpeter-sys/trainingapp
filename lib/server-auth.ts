@@ -87,3 +87,17 @@ export async function requireAdmin(): Promise<CurrentUser> {
 
   return user;
 }
+
+// Säkerställer att klienten inte kan byta userId och läsa/skriva någon annans data.
+export async function requireAuthorizedUserId(
+  requestedUserId?: string | null,
+): Promise<CurrentUser> {
+  const user = await requireUser();
+  const normalizedRequestedUserId = requestedUserId?.trim();
+
+  if (normalizedRequestedUserId && normalizedRequestedUserId !== user.id) {
+    throw new Error("Forbidden");
+  }
+
+  return user;
+}

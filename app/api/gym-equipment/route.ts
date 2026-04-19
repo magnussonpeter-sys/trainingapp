@@ -7,6 +7,7 @@ import {
   normalizeGymEquipmentType,
   supportsGymEquipmentWeights,
 } from "@/lib/equipment";
+import { requireAuthorizedUserId } from "@/lib/server-auth";
 
 type EquipmentType = GymEquipmentType;
 
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
 
     const {
-      userId,
+      userId: requestedUserId,
       gym_id,
       equipment_type,
       label,
@@ -67,12 +68,9 @@ export async function POST(req: NextRequest) {
       notes,
     } = body;
 
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "userId required" },
-        { status: 400 }
-      );
-    }
+    const user = await requireAuthorizedUserId(
+      typeof requestedUserId === "string" ? requestedUserId : null,
+    );
 
     if (!gym_id || !equipment_type) {
       return NextResponse.json(
@@ -92,7 +90,7 @@ export async function POST(req: NextRequest) {
 
     const gymCheck = await pool.query(
       `SELECT id FROM gyms WHERE id = $1 AND user_id = $2`,
-      [gym_id, userId]
+      [gym_id, user.id]
     );
 
     if (gymCheck.rows.length === 0) {
@@ -286,6 +284,23 @@ export async function POST(req: NextRequest) {
       merged: false,
     });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("POST equipment failed:", error);
 
     return NextResponse.json(

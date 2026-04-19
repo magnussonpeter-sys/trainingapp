@@ -7,6 +7,7 @@ import {
   normalizeGymEquipmentType,
   supportsGymEquipmentWeights,
 } from "@/lib/equipment";
+import { requireAuthorizedUserId } from "@/lib/server-auth";
 type EquipmentType = GymEquipmentType;
 
 function normalizeWeights(input: unknown): number[] | null {
@@ -52,7 +53,8 @@ export async function PATCH(
 
     const { id } = await context.params;
     const body = await req.json();
-    const userId = String(body?.userId ?? "").trim();
+    const requestedUserId = String(body?.userId ?? "").trim();
+    const user = await requireAuthorizedUserId(requestedUserId);
     const equipmentType = body?.equipment_type;
     const label = typeof body?.label === "string" ? body.label.trim() : "";
     const notes =
@@ -63,13 +65,6 @@ export async function PATCH(
         : Number.isFinite(Number(body.quantity)) && Number(body.quantity) > 0
           ? Number(body.quantity)
           : null;
-
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "userId required" },
-        { status: 400 }
-      );
-    }
 
     const normalizedEquipmentType = normalizeGymEquipmentType(equipmentType);
 
@@ -94,7 +89,7 @@ export async function PATCH(
       JOIN gyms g ON ge.gym_id = g.id
       WHERE ge.id = $1 AND g.user_id = $2
       `,
-      [id, userId]
+      [id, user.id]
     );
 
     if (check.rows.length === 0) {
@@ -161,6 +156,23 @@ export async function PATCH(
 
     return NextResponse.json({ ok: true, equipment: result.rows[0] });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("PATCH equipment failed:", error);
 
     return NextResponse.json(
@@ -181,14 +193,9 @@ export async function DELETE(
     const { id } = await context.params;
 
     const body = await req.json().catch(() => ({}));
-    const userId = body?.userId;
-
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "userId required" },
-        { status: 400 }
-      );
-    }
+    const requestedUserId =
+      typeof body?.userId === "string" ? body.userId : null;
+    const user = await requireAuthorizedUserId(requestedUserId);
 
     // Säkerställ att utrustningen tillhör användaren
     const check = await pool.query(
@@ -198,7 +205,7 @@ export async function DELETE(
       JOIN gyms g ON ge.gym_id = g.id
       WHERE ge.id = $1 AND g.user_id = $2
       `,
-      [id, userId]
+      [id, user.id]
     );
 
     if (check.rows.length === 0) {
@@ -215,6 +222,23 @@ export async function DELETE(
 
     return NextResponse.json({ ok: true });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("DELETE equipment failed:", error);
 
     return NextResponse.json(

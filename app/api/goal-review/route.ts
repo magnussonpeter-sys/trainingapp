@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
 import type { GoalAnalysis, GoalType } from "@/lib/goal-analysis";
+import { requireUser } from "@/lib/server-auth";
 
 type GoalReviewRequest = {
   goal: GoalType;
@@ -105,6 +106,9 @@ function isGoalReviewRequest(value: unknown): value is GoalReviewRequest {
 
 export async function POST(request: Request) {
   try {
+    // Goal review använder AI-krediter och ska därför kräva inloggad användare.
+    await requireUser();
+
     const body = (await request.json().catch(() => null)) as unknown;
 
     if (!isGoalReviewRequest(body)) {
@@ -226,6 +230,28 @@ Regler:
     } satisfies GoalReviewResponse);
   } catch (error) {
     console.error("goal-review POST error:", error);
+
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Ej inloggad",
+          },
+          { status: 401 }
+        );
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Kontot är inaktiverat",
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     return NextResponse.json(
       {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import OpenAI from "openai";
 import { pool } from "@/lib/db";
+import { requireAuthorizedUserId } from "@/lib/server-auth";
 
 // Request från avslutssidan i /run.
 const requestSchema = z.object({
@@ -392,10 +393,11 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const parsed = requestSchema.parse(body);
+    const user = await requireAuthorizedUserId(parsed.userId);
 
     const [goal, recentWorkouts] = await Promise.all([
-      getTrainingGoal(parsed.userId),
-      getRecentWorkouts(parsed.userId),
+      getTrainingGoal(user.id),
+      getRecentWorkouts(user.id),
     ]);
 
     const fallback = getDeterministicFallback({
@@ -444,6 +446,38 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("workout-finish-analysis route error:", error);
+
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Ej inloggad",
+          },
+          { status: 401 },
+        );
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Kontot är inaktiverat",
+          },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Ingen behörighet",
+          },
+          { status: 403 },
+        );
+      }
+    }
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(

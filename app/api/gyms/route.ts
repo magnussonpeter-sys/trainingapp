@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import { requireAuthorizedUserId } from "@/lib/server-auth";
 
 async function ensureGymSharingColumn() {
   // Enkel delningsflagga nu gör att vi kan bygga UI utan att låsa framtida delningsflöden.
@@ -22,14 +23,8 @@ export async function GET(req: NextRequest) {
     await ensureGymSharingColumn();
     await ensureBandLevelsColumn();
 
-    const userId = req.nextUrl.searchParams.get("userId");
-
-    if (!userId || !userId.trim()) {
-      return NextResponse.json(
-        { ok: false, error: "userId is required" },
-        { status: 400 }
-      );
-    }
+    const requestedUserId = req.nextUrl.searchParams.get("userId");
+    const user = await requireAuthorizedUserId(requestedUserId);
 
     const result = await pool.query(
       `
@@ -63,7 +58,7 @@ export async function GET(req: NextRequest) {
       GROUP BY g.id
       ORDER BY g.created_at DESC
       `,
-      [userId.trim()]
+      [user.id]
     );
 
     return NextResponse.json({
@@ -71,6 +66,23 @@ export async function GET(req: NextRequest) {
       gyms: result.rows,
     });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("GET gyms failed:", error);
     return NextResponse.json(
       {
@@ -87,14 +99,10 @@ export async function POST(req: NextRequest) {
     await ensureGymSharingColumn();
 
     const body = await req.json();
-    const { userId, name, description, is_shared } = body;
-
-    if (!userId || !String(userId).trim()) {
-      return NextResponse.json(
-        { ok: false, error: "userId is required" },
-        { status: 400 }
-      );
-    }
+    const { userId: requestedUserId, name, description, is_shared } = body;
+    const user = await requireAuthorizedUserId(
+      typeof requestedUserId === "string" ? requestedUserId : null,
+    );
 
     if (!name || !String(name).trim()) {
       return NextResponse.json(
@@ -110,7 +118,7 @@ export async function POST(req: NextRequest) {
       RETURNING id, user_id, name, description, is_shared, created_at
       `,
       [
-        String(userId).trim(),
+        user.id,
         String(name).trim(),
         description ? String(description).trim() : null,
         Boolean(is_shared),
@@ -125,6 +133,23 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("POST gym failed:", error);
     return NextResponse.json(
       {

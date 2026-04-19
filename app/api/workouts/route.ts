@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import { requireAdmin } from "@/lib/server-auth";
 
 export async function GET() {
   try {
+    // Legacy-workouts ska inte vara publikt läsbara.
+    await requireAdmin();
+
     const result = await pool.query(
       "SELECT * FROM workouts ORDER BY performed_at DESC LIMIT 20"
     );
@@ -12,6 +16,16 @@ export async function GET() {
       workouts: result.rows,
     });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled" || error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("GET workouts failed:", error);
     return NextResponse.json(
       {
@@ -25,6 +39,9 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    // Legacy-workouts ska inte kunna skrivas av anonyma klienter.
+    await requireAdmin();
+
     const body = await req.json();
     const { exercise_name, reps, sets, difficulty, notes } = body;
 
@@ -40,6 +57,16 @@ export async function POST(req: NextRequest) {
       workout: result.rows[0],
     });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled" || error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     console.error("POST workout failed:", error);
     return NextResponse.json(
       {

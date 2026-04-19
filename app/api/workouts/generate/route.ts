@@ -15,6 +15,7 @@ import {
   validateGeneratedWorkout,
   type AiGeneratedWorkoutCandidate,
 } from "@/lib/workout-flow/validate-generated-workout";
+import { getCurrentUser } from "@/lib/server-auth";
 import type {
   ConfidenceScore,
   MuscleBudgetEntry,
@@ -539,10 +540,24 @@ export async function POST(req: Request) {
       typeof body.goal === "string" && body.goal.trim()
         ? body.goal.trim()
         : "allmän styrka";
-    const userId =
+    const requestedUserId =
       typeof body.userId === "string" && body.userId.trim()
         ? body.userId.trim()
         : null;
+    const currentUser = await getCurrentUser();
+
+    // Om klienten skickar userId måste det alltid matcha aktuell session.
+    if (requestedUserId && currentUser && requestedUserId !== currentUser.id) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Ingen behörighet",
+        },
+        { status: 403 },
+      );
+    }
+
+    const userId = currentUser?.id ?? requestedUserId;
 
     const durationMinutes =
       typeof body.durationMinutes === "number" &&

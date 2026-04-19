@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
+import { requireAuthorizedUserId } from "@/lib/server-auth";
 
 async function ensureUserSettingsColumns() {
   await pool.query(`
@@ -23,15 +24,12 @@ async function ensureUserSettingsColumns() {
 export async function GET(req: NextRequest) {
   try {
     await ensureUserSettingsColumns();
-    const userId = req.nextUrl.searchParams.get("userId");
-
-    if (!userId) {
-      return NextResponse.json({ ok: false, error: "userId required" }, { status: 400 });
-    }
+    const requestedUserId = req.nextUrl.searchParams.get("userId");
+    const user = await requireAuthorizedUserId(requestedUserId);
 
     const result = await pool.query(
       `SELECT * FROM user_settings WHERE user_id = $1`,
-      [userId]
+      [user.id]
     );
 
     return NextResponse.json({
@@ -39,6 +37,23 @@ export async function GET(req: NextRequest) {
       settings: result.rows[0] ?? null,
     });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     return NextResponse.json(
       { ok: false, error: "Failed to fetch settings" },
       { status: 500 }
@@ -51,7 +66,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
 
     const {
-      userId,
+      userId: requestedUserId,
       sex,
       age,
       weight_kg,
@@ -65,10 +80,9 @@ export async function POST(req: NextRequest) {
     } = body;
 
     await ensureUserSettingsColumns();
-
-    if (!userId) {
-      return NextResponse.json({ ok: false, error: "userId required" }, { status: 400 });
-    }
+    const user = await requireAuthorizedUserId(
+      typeof requestedUserId === "string" ? requestedUserId : null,
+    );
 
     // Keep the legacy boolean aligned so older clients still read the right behavior.
     const normalizedSupersetPreference =
@@ -102,7 +116,7 @@ export async function POST(req: NextRequest) {
       RETURNING *
       `,
       [
-        userId,
+        user.id,
         sex,
         age,
         weight_kg,
@@ -118,6 +132,23 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, settings: result.rows[0] });
   } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
+
     return NextResponse.json(
       { ok: false, error: "Failed to save settings" },
       { status: 500 }

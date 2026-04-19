@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteWorkoutLogById } from "@/lib/workout-log-repository";
+import { requireAuthorizedUserId } from "@/lib/server-auth";
 
 type RouteContext = {
   params: Promise<{
@@ -10,14 +11,8 @@ type RouteContext = {
 export async function DELETE(request: Request, context: RouteContext) {
   try {
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "Missing userId" },
-        { status: 400 }
-      );
-    }
+    const requestedUserId = searchParams.get("userId");
+    const user = await requireAuthorizedUserId(requestedUserId);
 
     // Next 16 route params är async.
     const { id } = await context.params;
@@ -29,7 +24,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       );
     }
 
-    const result = await deleteWorkoutLogById(userId, id);
+    const result = await deleteWorkoutLogById(user.id, id);
 
     if (!result.deleted) {
       return NextResponse.json(
@@ -45,14 +40,27 @@ export async function DELETE(request: Request, context: RouteContext) {
   } catch (error) {
     console.error("DELETE /api/workout-logs/[id] error:", error);
 
-    const message =
-      error instanceof Error ? error.message : "Unknown delete error";
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json({ ok: false, error: "Ej inloggad" }, { status: 401 });
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json({ ok: false, error: "Ingen behörighet" }, { status: 403 });
+      }
+    }
 
     return NextResponse.json(
       {
         ok: false,
         error: "Failed to delete workout log",
-        details: message,
       },
       { status: 500 }
     );

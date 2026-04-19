@@ -5,6 +5,7 @@ import {
   getWorkoutLogsByUser,
   insertWorkoutLog,
 } from "@/lib/workout-log-repository";
+import { requireAuthorizedUserId } from "@/lib/server-auth";
 
 // ===== Scheman =====
 
@@ -71,8 +72,12 @@ export async function POST(request: Request) {
     const body = await request.json();
 
     const parsed = createWorkoutLogSchema.parse(body);
+    const user = await requireAuthorizedUserId(parsed.userId);
 
-    const result = await insertWorkoutLog(parsed);
+    const result = await insertWorkoutLog({
+      ...parsed,
+      userId: user.id,
+    });
 
     return NextResponse.json(
       {
@@ -96,14 +101,33 @@ export async function POST(request: Request) {
       );
     }
 
-    const message =
-      error instanceof Error ? error.message : "Unknown database error";
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json(
+          { ok: false, error: "Ej inloggad" },
+          { status: 401 },
+        );
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json(
+          { ok: false, error: "Ingen behörighet" },
+          { status: 403 },
+        );
+      }
+    }
 
     return NextResponse.json(
       {
         ok: false,
         error: "Failed to save workout log",
-        details: message,
       },
       { status: 500 },
     );
@@ -115,15 +139,9 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
+    const requestedUserId = searchParams.get("userId");
     const limitParam = searchParams.get("limit");
-
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "Missing userId" },
-        { status: 400 },
-      );
-    }
+    const user = await requireAuthorizedUserId(requestedUserId);
 
     const limit = limitParam ? Number(limitParam) : 20;
 
@@ -134,7 +152,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const logs = await getWorkoutLogsByUser(userId, limit);
+    const logs = await getWorkoutLogsByUser(user.id, limit);
 
     return NextResponse.json({
       ok: true,
@@ -143,14 +161,33 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error("GET /api/workout-logs error:", error);
 
-    const message =
-      error instanceof Error ? error.message : "Unknown fetch error";
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json(
+          { ok: false, error: "Ej inloggad" },
+          { status: 401 },
+        );
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json(
+          { ok: false, error: "Ingen behörighet" },
+          { status: 403 },
+        );
+      }
+    }
 
     return NextResponse.json(
       {
         ok: false,
         error: "Failed to fetch workout logs",
-        details: message,
       },
       { status: 500 },
     );
@@ -162,16 +199,10 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
+    const requestedUserId = searchParams.get("userId");
+    const user = await requireAuthorizedUserId(requestedUserId);
 
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "Missing userId" },
-        { status: 400 },
-      );
-    }
-
-    const result = await deleteAllWorkoutLogsByUser(userId);
+    const result = await deleteAllWorkoutLogsByUser(user.id);
 
     return NextResponse.json({
       ok: true,
@@ -180,14 +211,33 @@ export async function DELETE(request: Request) {
   } catch (error) {
     console.error("DELETE /api/workout-logs error:", error);
 
-    const message =
-      error instanceof Error ? error.message : "Unknown delete error";
+    if (error instanceof Error) {
+      if (error.message === "Unauthorized") {
+        return NextResponse.json(
+          { ok: false, error: "Ej inloggad" },
+          { status: 401 },
+        );
+      }
+
+      if (error.message === "Account disabled") {
+        return NextResponse.json(
+          { ok: false, error: "Kontot är inaktiverat" },
+          { status: 403 },
+        );
+      }
+
+      if (error.message === "Forbidden") {
+        return NextResponse.json(
+          { ok: false, error: "Ingen behörighet" },
+          { status: 403 },
+        );
+      }
+    }
 
     return NextResponse.json(
       {
         ok: false,
         error: "Failed to delete workout logs",
-        details: message,
       },
       { status: 500 },
     );
