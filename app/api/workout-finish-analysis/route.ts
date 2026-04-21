@@ -3,17 +3,40 @@ import { z } from "zod";
 import OpenAI from "openai";
 import { pool } from "@/lib/db";
 import { requireAuthorizedUserId } from "@/lib/server-auth";
+import type { WorkoutPerformanceSummary } from "@/lib/workout-performance-analysis";
 
 // Request från avslutssidan i /run.
+const performanceSummarySchema = z.object({
+  completedSetCount: z.number().int().min(0),
+  totalPlannedSets: z.number().int().min(0),
+  skippedSetCount: z.number().int().min(0),
+  comparableSetCount: z.number().int().min(0),
+  lowerThanPlannedSetCount: z.number().int().min(0),
+  matchedPlannedSetCount: z.number().int().min(0),
+  higherThanPlannedSetCount: z.number().int().min(0),
+  plannedVolume: z.number().min(0),
+  actualVolume: z.number().min(0),
+  volumeRatio: z.number().nullable(),
+  plannedReps: z.number().min(0),
+  actualReps: z.number().min(0),
+  repsRatio: z.number().nullable(),
+  plannedDuration: z.number().min(0),
+  actualDuration: z.number().min(0),
+  durationRatio: z.number().nullable(),
+  overallRatio: z.number().nullable(),
+});
+
 const requestSchema = z.object({
   userId: z.string().min(1),
   workoutName: z.string().min(1),
   totalCompletedSets: z.number().int().min(0),
+  totalPlannedSets: z.number().int().min(0).optional(),
   totalVolume: z.number().min(0),
   timedExercises: z.number().int().min(0),
   durationMinutes: z.number().int().min(0),
   weightedSetCount: z.number().int().min(0).optional(),
   bodyweightSetCount: z.number().int().min(0).optional(),
+  performanceSummary: performanceSummarySchema.optional(),
 });
 
 const responseSchema = z.object({
@@ -71,21 +94,49 @@ function average(values: number[]) {
 function getDeterministicFallback(params: {
   goal: string | null;
   totalCompletedSets: number;
+  totalPlannedSets?: number;
   totalVolume: number;
   durationMinutes: number;
   recentWorkouts: RecentWorkoutRow[];
   weightedSetCount?: number;
   bodyweightSetCount?: number;
+  performanceSummary?: WorkoutPerformanceSummary;
 }): FinishAnalysis {
   const {
     goal,
     totalCompletedSets,
+    totalPlannedSets,
     totalVolume,
     durationMinutes,
     recentWorkouts,
     weightedSetCount = 0,
     bodyweightSetCount = 0,
+    performanceSummary,
   } = params;
+
+  if (totalCompletedSets === 0 || performanceSummary?.completedSetCount === 0) {
+    const plannedSets = totalPlannedSets ?? performanceSummary?.totalPlannedSets ?? 0;
+
+    return {
+      title: "Inga arbetsset loggades idag",
+      achieved:
+        plannedSets > 0
+          ? `Passet startades, men ${plannedSets} planerade set hoppades över. Därför räknas ingen tydlig träningsstimulans in i analysen.`
+          : "Passet startades, men inga arbetsset loggades. Därför räknas ingen tydlig träningsstimulans in i analysen.",
+      historicalContext:
+        recentWorkouts.length > 0
+          ? "Din historik påverkas bäst av pass där faktiska set, reps, vikt eller tid registreras."
+          : "Det finns ännu begränsad historik, och detta pass ger ingen träningsreferens eftersom inget arbete loggades.",
+      nextStep:
+        "Nästa gång: gör starten mindre. Välj ett kortare pass eller genomför bara första övningen så appen får faktisk data att bygga vidare på.",
+      nextSessionTiming:
+        "Du kan träna igen när det passar, eftersom detta pass inte skapade någon större fysisk belastning.",
+      coachNote:
+        "Att öppna passet är ändå en vana. Men progressionen ska styras av det du faktiskt genomför, inte av det som var planerat.",
+      scienceMinute:
+        "Träningseffekt kräver utfört arbete. När set hoppas över finns ingen pålitlig signal för volym, intensitet eller progression, så analysen bör inte behandla passet som genomfört träningsarbete.",
+    };
+  }
 
   const recent7d = countWithinDays(recentWorkouts, 7);
   const recent14d = countWithinDays(recentWorkouts, 14);
@@ -189,6 +240,33 @@ function getDeterministicFallback(params: {
       "För hypertrofi byggs resultat främst av tillräcklig ansträngning och återkommande träningsvolym över veckan. Ett pass bidrar alltså mest när det passar in i en jämn kedja av liknande stimulans.";
   }
 
+  // Faktisk-vs-plan får sista ordet i fallbacken eftersom det speglar vad som faktiskt hände.
+  if (performanceSummary?.overallRatio != null) {
+    if (performanceSummary.overallRatio < 0.75) {
+      title = "Tydligt lägre än planerat";
+      achieved =
+        "Du genomförde arbetsset, men den faktiska prestationen låg klart under planen i reps, vikt eller tid.";
+      nextStep =
+        "Sänk nästa pass något eller välj färre övningar så att du kan fullfölja arbetsseten med bättre kvalitet.";
+      coachNote =
+        "Det är bättre att appen fångar en ärlig lättare dag än att analysen utgår från ett pass som bara var planerat.";
+    } else if (performanceSummary.overallRatio < 0.9) {
+      title = "Något lättare än planerat";
+      achieved =
+        "Passet gav viss träningssignal, men den faktiska prestationen låg under den planerade nivån.";
+      nextStep =
+        "Behåll eller justera ned belastningen nästa gång och sikta på att matcha planerade reps eller tid först.";
+    } else if (performanceSummary.overallRatio > 1.15) {
+      title = "Över planen idag";
+      achieved =
+        "Du låg över den planerade nivån i delar av passet, vilket kan vara en stark signal om återhämtningen känns bra.";
+      nextStep =
+        "Öka försiktigt i en huvudövning nästa gång, men låt teknik och återhämtning styra storleken på steget.";
+      nextSessionTiming =
+        "Vänta gärna 24–48 timmar med liknande belastning om passet kändes tydligt tyngre än vanligt.";
+    }
+  }
+
   return {
     title,
     achieved,
@@ -271,6 +349,7 @@ function buildPrompt(params: {
   workoutName: string;
   weightedSetCount?: number;
   bodyweightSetCount?: number;
+  performanceSummary?: WorkoutPerformanceSummary;
 }) {
   const {
     goal,
@@ -296,6 +375,10 @@ Viktiga regler:
 - title får inte vara en generisk rubrik som "Kort analys av passet", "Sammanfattning", "Bra jobbat" eller liknande.
 - title ska säga något konkret om belastning, träningssignal, kontinuitet eller nästa steg.
 - Om total volym är 0 men passet innehåller kroppsviktsset får du inte tolka det som att träningsstimulansen automatiskt var låg.
+- Basera bedömningen på faktisk prestation, inte på vad passet var planerat att innehålla.
+- Om completedSetCount är 0 ska du tydligt säga att ingen mätbar träningsstimulans loggades.
+- Om overallRatio är under 0.9 ska du beskriva passet som lättare/lägre än planerat.
+- Om overallRatio är över 1.15 ska du beskriva passet som över plan och nämna återhämtning försiktigt.
 - Fokusera bara på träningseffekt, progression, återhämtning och plan framåt.
 - Nämn inte vätska, kost eller sömn.
 - Bygg resonemanget på stark praktisk evidens för styrketräning:
@@ -330,6 +413,8 @@ Data:
 - Passlängd: ${durationMinutes} minuter
 - Antal set med extern vikt: ${params.weightedSetCount ?? 0}
 - Antal kroppsviktsset utan extern vikt: ${params.bodyweightSetCount ?? 0}
+- Faktisk prestation jämfört med plan:
+${JSON.stringify(params.performanceSummary ?? null, null, 2)}
 - Antal pass senaste 7 dagar: ${recent7d}
 - Antal pass senaste 14 dagar: ${recent14d}
 - Senaste pass:
@@ -347,6 +432,7 @@ async function getAiAnalysis(params: {
   workoutName: string;
   weightedSetCount?: number;
   bodyweightSetCount?: number;
+  performanceSummary?: WorkoutPerformanceSummary;
 }) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
 
@@ -403,35 +489,43 @@ export async function POST(request: Request) {
     const fallback = getDeterministicFallback({
       goal,
       totalCompletedSets: parsed.totalCompletedSets,
+      totalPlannedSets: parsed.totalPlannedSets,
       totalVolume: parsed.totalVolume,
       durationMinutes: parsed.durationMinutes,
       recentWorkouts,
       weightedSetCount: parsed.weightedSetCount ?? 0,
       bodyweightSetCount: parsed.bodyweightSetCount ?? 0,
+      performanceSummary: parsed.performanceSummary,
     });
 
     let analysis: FinishAnalysis = fallback;
     let source: "ai" | "fallback" = "fallback";
+    const shouldSkipAi =
+      parsed.totalCompletedSets === 0 || parsed.performanceSummary?.completedSetCount === 0;
 
-    try {
-      const aiAnalysis = await getAiAnalysis({
-        goal,
-        recentWorkouts,
-        totalCompletedSets: parsed.totalCompletedSets,
-        totalVolume: parsed.totalVolume,
-        timedExercises: parsed.timedExercises,
-        durationMinutes: parsed.durationMinutes,
-        workoutName: parsed.workoutName,
-        weightedSetCount: parsed.weightedSetCount ?? 0,
-        bodyweightSetCount: parsed.bodyweightSetCount ?? 0,
-      });
+    // Hoppa över AI när inget arbete loggats så svaret inte råkar bli positivt.
+    if (!shouldSkipAi) {
+      try {
+        const aiAnalysis = await getAiAnalysis({
+          goal,
+          recentWorkouts,
+          totalCompletedSets: parsed.totalCompletedSets,
+          totalVolume: parsed.totalVolume,
+          timedExercises: parsed.timedExercises,
+          durationMinutes: parsed.durationMinutes,
+          workoutName: parsed.workoutName,
+          weightedSetCount: parsed.weightedSetCount ?? 0,
+          bodyweightSetCount: parsed.bodyweightSetCount ?? 0,
+          performanceSummary: parsed.performanceSummary,
+        });
 
-      if (aiAnalysis) {
-        analysis = aiAnalysis;
-        source = "ai";
+        if (aiAnalysis) {
+          analysis = aiAnalysis;
+          source = "ai";
+        }
+      } catch (error) {
+        console.error("workout-finish-analysis ai error:", error);
       }
-    } catch (error) {
-      console.error("workout-finish-analysis ai error:", error);
     }
 
     return NextResponse.json({

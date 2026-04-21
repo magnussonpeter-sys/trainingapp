@@ -569,6 +569,7 @@ export default function RunPage() {
             workoutName={workout.name}
             goal={workout.goal}
             totalCompletedSets={totalCompletedSets}
+            totalPlannedSets={totalPlannedSets}
             totalVolume={Math.round(totalVolume)}
             timedExercises={timedExercisesCount}
             durationMinutes={workout.duration}

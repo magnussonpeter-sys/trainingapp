@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import PreviewInlineEditor from "@/components/preview/preview-inline-editor";
 import PreviewSupersetFlow from "@/components/preview/preview-superset-flow";
+import { formatExerciseTarget } from "@/lib/exercise-execution";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import type { Exercise, WorkoutBlock } from "@/types/workout";
 
@@ -20,12 +21,7 @@ function isTimedExercise(exercise: Exercise) {
 }
 
 function formatStructure(exercise: Exercise) {
-  const volume =
-    typeof exercise.duration === "number" && exercise.duration > 0
-      ? `${exercise.duration}s`
-      : `${exercise.reps ?? "-"} reps`;
-
-  return `${volume} × ${exercise.sets}`;
+  return `${formatExerciseTarget(exercise)} × ${exercise.sets}`;
 }
 
 function getBlockSetCount(block: WorkoutBlock) {

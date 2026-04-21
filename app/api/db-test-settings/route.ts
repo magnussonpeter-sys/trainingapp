@@ -24,6 +24,16 @@ export async function GET() {
       );
     `);
 
+    // Nya settingsfält läggs till idempotent för befintliga databaser.
+    await client.query(`
+      ALTER TABLE user_settings
+      ADD COLUMN IF NOT EXISTS avoid_supersets BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS superset_preference TEXT,
+      ADD COLUMN IF NOT EXISTS primary_priority_muscle TEXT,
+      ADD COLUMN IF NOT EXISTS secondary_priority_muscle TEXT,
+      ADD COLUMN IF NOT EXISTS tertiary_priority_muscle TEXT;
+    `);
+
     // 2. Index (bra att ha även om PK finns)
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_user_settings_user_id

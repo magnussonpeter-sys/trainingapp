@@ -40,6 +40,8 @@
 
 html {
   background: linear-gradient(180deg, #f6fbf6 0%, #eef7ef 100%);
+  /* Liten global höjning för bättre läsbarhet utan att rita om varje vy. */
+  font-size: 17px;
 }
 
 body {

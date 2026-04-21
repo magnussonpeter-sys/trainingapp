@@ -45,6 +45,7 @@ type UserSettingsResponse = {
     superset_preference?: SupersetPreference | null;
     primary_priority_muscle?: PriorityMuscle | null;
     secondary_priority_muscle?: PriorityMuscle | null;
+    tertiary_priority_muscle?: PriorityMuscle | null;
   };
 };
 
@@ -111,9 +112,9 @@ export default function SettingsPage() {
       return `${getPriorityLabel(priorityMuscles[0])} får extra fokus i veckoplanen.`;
     }
 
-    return `${getPriorityLabel(priorityMuscles[0])} prioriteras först och ${getPriorityLabel(
-      priorityMuscles[1],
-    ).toLowerCase()} därefter.`;
+    return `${priorityMuscles
+      .map((muscle, index) => `${index + 1}. ${getPriorityLabel(muscle).toLowerCase()}`)
+      .join(", ")} styr extra fokus i veckoplanen.`;
   }, [priorityMuscles]);
 
   useEffect(() => {
@@ -186,7 +187,11 @@ export default function SettingsPage() {
                 : "allowed",
           );
           setPriorityMuscles(
-            [s.primary_priority_muscle, s.secondary_priority_muscle].filter(
+            [
+              s.primary_priority_muscle,
+              s.secondary_priority_muscle,
+              s.tertiary_priority_muscle,
+            ].filter(
               (value): value is PriorityMuscle => typeof value === "string",
             ),
           );
@@ -227,7 +232,7 @@ export default function SettingsPage() {
         return current.filter((item) => item !== muscle);
       }
 
-      if (current.length >= 2) {
+      if (current.length >= 3) {
         return current;
       }
 
@@ -269,6 +274,9 @@ export default function SettingsPage() {
       const secondaryPriorityMuscle = canUsePriorityMuscles
         ? priorityMuscles[1] ?? null
         : null;
+      const tertiaryPriorityMuscle = canUsePriorityMuscles
+        ? priorityMuscles[2] ?? null
+        : null;
 
       const res = await fetch("/api/user-settings", {
         method: "POST",
@@ -288,6 +296,7 @@ export default function SettingsPage() {
           superset_preference: supersetPreference,
           primary_priority_muscle: primaryPriorityMuscle,
           secondary_priority_muscle: secondaryPriorityMuscle,
+          tertiary_priority_muscle: tertiaryPriorityMuscle,
         }),
       });
 
@@ -303,6 +312,7 @@ export default function SettingsPage() {
         superset_preference: supersetPreference,
         primary_priority_muscle: primaryPriorityMuscle,
         secondary_priority_muscle: secondaryPriorityMuscle,
+        tertiary_priority_muscle: tertiaryPriorityMuscle,
       });
 
       setMessage("Inställningarna sparades.");
@@ -497,7 +507,7 @@ export default function SettingsPage() {
                 Muskelgruppsprio
               </h2>
               <p className="mt-1 text-sm text-slate-600">
-                Välj upp till två muskelgrupper som ska få extra fokus i
+                Välj upp till tre muskelgrupper som ska få extra fokus i
                 veckobudgeten. Ordningen styr vilken som är viktigast.
               </p>
             </div>
@@ -551,7 +561,11 @@ export default function SettingsPage() {
                               {getPriorityLabel(muscle)}
                             </p>
                             <p className="text-xs text-slate-500">
-                              {index === 0 ? "Högst prioriterad" : "Sekundär prioritet"}
+                              {index === 0
+                                ? "Högst prioriterad"
+                                : index === 1
+                                  ? "Sekundär prioritet"
+                                  : "Tredje prioritet"}
                             </p>
                           </div>
                         </div>
@@ -593,7 +607,7 @@ export default function SettingsPage() {
                 <div className="flex flex-wrap gap-2">
                   {PRIORITY_MUSCLE_OPTIONS.map((option) => {
                     const selected = priorityMuscles.includes(option.value);
-                    const disabled = !selected && priorityMuscles.length >= 2;
+                    const disabled = !selected && priorityMuscles.length >= 3;
 
                     return (
                       <button
@@ -624,7 +638,7 @@ export default function SettingsPage() {
                 <p className="mt-1 text-sm leading-6 text-slate-600">
                   Välj främst <span className="font-medium">Bygga muskler</span>{" "}
                   eller <span className="font-medium">Kroppssammansättning</span>{" "}
-                  om du vill styra 1–2 prioriterade muskelgrupper.
+                  om du vill styra 1–3 prioriterade muskelgrupper.
                 </p>
               </div>
             )}

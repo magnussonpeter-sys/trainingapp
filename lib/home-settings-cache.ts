@@ -29,6 +29,7 @@ type HomeSettingsCacheValue = {
   superset_preference?: CachedSupersetPreference | null;
   primary_priority_muscle?: CachedPriorityMuscle | null;
   secondary_priority_muscle?: CachedPriorityMuscle | null;
+  tertiary_priority_muscle?: CachedPriorityMuscle | null;
 };
 
 function isCachedHomeGoal(value: unknown): value is CachedHomeGoal {
@@ -87,6 +88,7 @@ export function getCachedHomeSettings(userId: string) {
       superset_preference?: unknown;
       primary_priority_muscle?: unknown;
       secondary_priority_muscle?: unknown;
+      tertiary_priority_muscle?: unknown;
     };
 
     return {
@@ -105,6 +107,9 @@ export function getCachedHomeSettings(userId: string) {
         : null,
       secondary_priority_muscle: isCachedPriorityMuscle(parsed.secondary_priority_muscle)
         ? parsed.secondary_priority_muscle
+        : null,
+      tertiary_priority_muscle: isCachedPriorityMuscle(parsed.tertiary_priority_muscle)
+        ? parsed.tertiary_priority_muscle
         : null,
     };
   } catch {

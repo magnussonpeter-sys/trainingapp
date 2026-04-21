@@ -66,6 +66,7 @@ export type HomeUserSettings = {
   superset_preference?: "allowed" | "avoid_all" | "avoid_all_dumbbell" | null;
   primary_priority_muscle?: HomePriorityMuscle | null;
   secondary_priority_muscle?: HomePriorityMuscle | null;
+  tertiary_priority_muscle?: HomePriorityMuscle | null;
 };
 
 function mergeWorkoutLogs(apiLogs: WorkoutLog[], localLogs: WorkoutLog[]) {
@@ -276,6 +277,10 @@ export function useHomeData({ router }: UseHomeDataParams) {
               secondary_priority_muscle:
                 typeof nextSettings.secondary_priority_muscle === "string"
                   ? (nextSettings.secondary_priority_muscle as HomePriorityMuscle)
+                  : null,
+              tertiary_priority_muscle:
+                typeof nextSettings.tertiary_priority_muscle === "string"
+                  ? (nextSettings.tertiary_priority_muscle as HomePriorityMuscle)
                   : null,
             });
           }

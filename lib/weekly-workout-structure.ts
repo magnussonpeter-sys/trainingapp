@@ -21,6 +21,7 @@ type WeeklyPlanningSettings = {
   training_goal?: WeeklyPlanningGoal | null;
   primary_priority_muscle?: MuscleBudgetGroup | null;
   secondary_priority_muscle?: MuscleBudgetGroup | null;
+  tertiary_priority_muscle?: MuscleBudgetGroup | null;
 };
 
 export type WeeklyPlanDay = {
@@ -225,6 +226,7 @@ function getTrainingDayIndexes(slotCount: number) {
 function getFocusMuscleGroups(
   entries: MuscleBudgetEntry[],
   focus: WorkoutFocus | null,
+  options?: { limit?: number },
 ) {
   if (!focus) {
     return [];
@@ -240,7 +242,8 @@ function getFocusMuscleGroups(
       const priorityRank = { high: 0, medium: 1, low: 2 };
       return priorityRank[left.priority] - priorityRank[right.priority];
     })
-    .slice(0, 3)
+    // Dagens fokus kan vara kompakt, men veckofördjupning behöver kunna visa alla grupper.
+    .slice(0, options?.limit ?? Number.POSITIVE_INFINITY)
     .map((entry) => entry.group);
 }
 
@@ -303,6 +306,7 @@ export function buildWeeklyWorkoutStructure(params: {
     priorityMuscles: [
       params.settings?.primary_priority_muscle ?? null,
       params.settings?.secondary_priority_muscle ?? null,
+      params.settings?.tertiary_priority_muscle ?? null,
     ].filter((value): value is MuscleBudgetGroup => typeof value === "string"),
   }).entries;
   const currentWeekFocuses = recentCompletedLogs.map((log) => detectWorkoutFocus(log));
@@ -320,10 +324,13 @@ export function buildWeeklyWorkoutStructure(params: {
   const nextFocus =
     focusScores.sort((left, right) => right.score - left.score)[0]?.focus ??
     patternPreferredFocus;
-  const nextFocusMuscleGroups = getFocusMuscleGroups(muscleBudget, nextFocus);
+  const nextFocusMuscleGroups = getFocusMuscleGroups(muscleBudget, nextFocus, {
+    limit: 3,
+  });
   const configuredPriorityMuscles = [
     params.settings?.primary_priority_muscle ?? null,
     params.settings?.secondary_priority_muscle ?? null,
+    params.settings?.tertiary_priority_muscle ?? null,
   ].filter((value): value is MuscleBudgetGroup => typeof value === "string");
   const trainingDayIndexes = getTrainingDayIndexes(passCount);
   const upcomingDays = Array.from({ length: 7 }, (_, index) => {
@@ -367,7 +374,7 @@ export function buildWeeklyWorkoutStructure(params: {
   const priorityMuscles = muscleBudget
     .filter((entry) => entry.priority === "high" && entry.remainingSets > 0)
     .sort((left, right) => right.remainingSets - left.remainingSets)
-    .slice(0, 2)
+    .slice(0, 3)
     .map((entry) => entry.group);
 
   const summaryText =

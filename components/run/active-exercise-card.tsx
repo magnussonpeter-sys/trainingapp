@@ -5,6 +5,11 @@ import { useEffect, useState } from "react";
 import EffortFeedbackRow from "@/components/run/effort-feedback-row";
 import TimerPanel from "@/components/run/timer-panel";
 import WeightChipRow from "@/components/run/weight-chip-row";
+import {
+  formatExerciseTarget,
+  getSideSwitchSeconds,
+  getTimedExerciseTotalSeconds,
+} from "@/lib/exercise-execution";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import type { ExtraRepsOption } from "@/lib/workout-log-storage";
 import type { TimedEffortOption } from "@/types/exercise-feedback";
@@ -58,20 +63,49 @@ function formatCurrentWeightLabel(params: {
   return `${value} ${params.weightUnitLabel}`;
 }
 
+function formatExerciseLoad(exercise: Exercise, fallbackUnitLabel: string) {
+  if (exercise.suggestedWeight === null || exercise.suggestedWeight === undefined || exercise.suggestedWeight === "") {
+    return null;
+  }
+
+  return `${exercise.suggestedWeight} ${exercise.weightUnitLabel ?? fallbackUnitLabel}`;
+}
+
+function getExerciseLetter(index: number) {
+  return String.fromCharCode(65 + index);
+}
+
+function getSupersetProgressPercent(params: {
+  exerciseCount: number;
+  currentExercisePosition: number;
+  currentRound: number;
+  currentRoundTotal: number;
+}) {
+  const totalSteps = Math.max(1, params.exerciseCount * params.currentRoundTotal);
+  // Display progress includes the active step so the bar feels alive during the set.
+  const activeStep =
+    (params.currentRound - 1) * params.exerciseCount +
+    Math.max(1, params.currentExercisePosition);
+
+  return Math.min(100, Math.round((activeStep / totalSteps) * 100));
+}
+
 type ActiveExerciseCardProps = {
   exercise: Exercise | null;
   blockType: "straight_sets" | "superset" | "circuit";
+  blockLabel?: string;
   currentSet: number;
   currentSetTotal: number;
   currentRound: number;
   currentRoundTotal: number;
+  currentBlockExercises: Exercise[];
+  currentBlockExercisePosition: number;
   timedExercise: boolean;
   timerState: "idle" | "running" | "ready_to_save";
   elapsedSeconds: number;
   reps: string;
   onRepsChange: (value: string) => void;
   weight: string;
-  onWeightChange: (value: string) => void;
   onWeightChipSelect: (value: string) => void;
   suggestedWeightValue: string;
   weightUnitLabel: string;
@@ -93,17 +127,19 @@ type ActiveExerciseCardProps = {
 export default function ActiveExerciseCard({
   exercise,
   blockType,
+  blockLabel,
   currentSet,
   currentSetTotal,
   currentRound,
   currentRoundTotal,
+  currentBlockExercises,
+  currentBlockExercisePosition,
   timedExercise,
   timerState,
   elapsedSeconds,
   reps,
   onRepsChange,
   weight,
-  onWeightChange,
   onWeightChipSelect,
   suggestedWeightValue,
   weightUnitLabel,
@@ -126,9 +162,14 @@ export default function ActiveExerciseCard({
   const [showWeightEditor, setShowWeightEditor] = useState(false);
 
   useEffect(() => {
-    setShowDescription(false);
-    setShowWeightPicker(false);
-    setShowWeightEditor(false);
+    // Reset secondary panels after React has committed the new active step.
+    const resetPanelTimer = window.setTimeout(() => {
+      setShowDescription(false);
+      setShowWeightPicker(false);
+      setShowWeightEditor(false);
+    }, 0);
+
+    return () => window.clearTimeout(resetPanelTimer);
   }, [exercise?.id, currentSet, currentRound, showExerciseFeedback]);
 
   if (!exercise) {
@@ -146,13 +187,30 @@ export default function ActiveExerciseCard({
     suggestedWeightValue,
     weightUnitLabel,
   });
+  const activeMetricLabel = `${formatExerciseTarget(exercise)}${
+    currentWeightLabel ? ` · ${currentWeightLabel}` : ""
+  }`;
+  const isSuperset = blockType === "superset";
+  const supersetProgressPercent = getSupersetProgressPercent({
+    exerciseCount: currentBlockExercises.length,
+    currentExercisePosition: currentBlockExercisePosition,
+    currentRound,
+    currentRoundTotal,
+  });
   const eyebrowLabel =
-    blockType === "superset"
-      ? `Superset varv ${currentRound}/${currentRoundTotal}`
+    isSuperset
+      ? `${blockLabel ?? "SUPERSET"} (${currentRoundTotal} varv)`
       : "Aktiv övning";
 
   return (
-    <section className="rounded-[32px] border border-slate-200/80 bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]">
+    <section
+      className={cn(
+        "rounded-[32px] bg-white px-4 py-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]",
+        isSuperset
+          ? "border-2 border-emerald-200/90"
+          : "border border-slate-200/80",
+      )}
+    >
       {showExerciseFeedback ? (
         <div className="space-y-4">
           <div>
@@ -186,32 +244,53 @@ export default function ActiveExerciseCard({
           )}
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3.5">
           <div className="min-w-0">
-            <p
-              className={cn(
-                "text-[11px] font-medium uppercase tracking-[0.18em]",
-                blockType === "superset"
-                  ? "text-emerald-700 italic"
-                  : "text-slate-400",
-              )}
-            >
-              {eyebrowLabel}
-            </p>
+            <div className="flex items-center justify-between gap-3">
+              <p
+                className={cn(
+                  "text-[11px] font-semibold uppercase tracking-[0.22em]",
+                  isSuperset
+                    ? "text-emerald-700"
+                    : "text-slate-400",
+                )}
+              >
+                {eyebrowLabel}
+              </p>
+
+              {isSuperset ? (
+                <p className="text-base font-semibold tracking-tight text-slate-950">
+                  Varv {currentRound} / {currentRoundTotal}
+                </p>
+              ) : null}
+            </div>
+
+            {isSuperset ? (
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-emerald-100">
+                <div
+                  className="h-full rounded-full bg-emerald-600 transition-[width] duration-300"
+                  style={{ width: `${supersetProgressPercent}%` }}
+                />
+              </div>
+            ) : null}
 
             <button
               type="button"
               onClick={() => setShowDescription((previous) => !previous)}
-              className="mt-2 w-full text-left"
+              className="mt-4 w-full text-left"
             >
-              <h2 className="truncate text-[clamp(1.75rem,7vw,2.4rem)] font-semibold leading-tight tracking-tight text-slate-950">
+              <h2 className="truncate text-[clamp(2rem,8vw,2.85rem)] font-semibold leading-[1.02] tracking-tight text-slate-950">
                 {exercise.name}
               </h2>
             </button>
 
-            <p className="mt-2 text-base text-slate-500">
-              {formatStructure(exercise, blockType)}
-              {currentWeightLabel ? ` · ${currentWeightLabel}` : ""}
+            <p className="mt-2 text-[1.35rem] font-medium leading-tight tracking-tight text-slate-800">
+              {activeMetricLabel}
+            </p>
+            <p className="mt-1 text-sm font-medium text-slate-500">
+              {isSuperset
+                ? `Övning ${currentBlockExercisePosition} av ${currentBlockExercises.length}`
+                : `Set ${currentSet} av ${currentSetTotal} · ${formatStructure(exercise, blockType)}`}
             </p>
           </div>
 
@@ -224,13 +303,14 @@ export default function ActiveExerciseCard({
           {timedExercise ? (
             <TimerPanel
               elapsedSeconds={elapsedSeconds}
-              targetDurationSeconds={exercise.duration ?? undefined}
+              targetDurationSeconds={getTimedExerciseTotalSeconds(exercise)}
+              perSideDurationSeconds={getSideSwitchSeconds(exercise) ?? undefined}
               timerState={timerState}
             />
           ) : null}
 
           {showRestTimer ? (
-            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
               Vila nu: <span className="font-semibold">{restRemainingSeconds}s</span>
             </div>
           ) : null}
@@ -291,9 +371,10 @@ export default function ActiveExerciseCard({
               onClick={onPrimaryAction}
               className={cn(
                 uiButtonClasses.primary,
-                "w-full justify-center rounded-[20px] py-4 text-base shadow-[0_10px_30px_rgba(74,222,128,0.28)]",
+                "flex w-full items-center justify-center gap-2 rounded-[22px] py-4 text-lg font-semibold shadow-[0_14px_34px_rgba(74,222,128,0.3)]",
               )}
             >
+              <span aria-hidden="true">✓</span>
               {primaryButtonLabel}
             </button>
 
@@ -320,6 +401,71 @@ export default function ActiveExerciseCard({
               ) : null}
             </div>
           </div>
+
+          {isSuperset ? (
+            <div className="border-t border-slate-200/80 pt-3">
+              <div className="space-y-2">
+                {currentBlockExercises.map((blockExercise, index) => {
+                  const letter = getExerciseLetter(index);
+                  const isActiveExercise =
+                    index + 1 === currentBlockExercisePosition &&
+                    blockExercise.id === exercise.id;
+                  const displayLoad = isActiveExercise
+                    ? currentWeightLabel
+                    : formatExerciseLoad(blockExercise, weightUnitLabel);
+
+                  return (
+                    <div
+                      key={`${blockExercise.id}:${index}`}
+                      className={cn(
+                        "grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 rounded-2xl border px-3 py-3 transition",
+                        isActiveExercise
+                          ? "border-emerald-300 bg-emerald-600 text-white shadow-[0_10px_26px_rgba(22,101,52,0.18)]"
+                          : "border-slate-200 bg-white text-slate-900",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold",
+                          isActiveExercise
+                            ? "bg-white/18 text-white"
+                            : "bg-slate-100 text-slate-500",
+                        )}
+                      >
+                        {letter}
+                      </span>
+                      <p className="truncate text-base font-semibold">
+                        {blockExercise.name}
+                      </p>
+                      <p
+                        className={cn(
+                          "whitespace-nowrap text-sm font-semibold",
+                          isActiveExercise ? "text-white" : "text-slate-700",
+                        )}
+                      >
+                        {formatExerciseTarget(blockExercise)}
+                      </p>
+                      {displayLoad ? (
+                        <p
+                          className={cn(
+                            "whitespace-nowrap text-sm font-semibold",
+                            isActiveExercise ? "text-white" : "text-slate-900",
+                          )}
+                        >
+                          {displayLoad}
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex items-center gap-3 text-xs font-medium text-slate-500">
+                <span className="h-px flex-1 bg-emerald-200" />
+                <span>Varv {currentRound} / {currentRoundTotal}</span>
+                <span className="h-px flex-1 bg-emerald-200" />
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
     </section>

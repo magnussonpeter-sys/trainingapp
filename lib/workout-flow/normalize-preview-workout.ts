@@ -111,6 +111,12 @@ function normalizeOptionalString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function normalizeSidedness(value: unknown): Exercise["sidedness"] {
+  return value === "per_side" || value === "alternating" || value === "none"
+    ? value
+    : undefined;
+}
+
 function normalizeOptionalScore(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -162,6 +168,7 @@ function normalizeExercise(exercise: any, index: number): Exercise {
         : 3,
     reps: normalizeOptionalNumber(exercise?.reps),
     duration: normalizeOptionalNumber(exercise?.duration),
+    sidedness: normalizeSidedness(exercise?.sidedness),
     rest:
       typeof exercise?.rest === "number" && Number.isFinite(exercise.rest)
         ? exercise.rest

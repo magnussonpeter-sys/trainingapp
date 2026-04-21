@@ -9,6 +9,7 @@ export type Exercise = {
   sets: number;
   reps?: number | null;
   duration?: number | null;
+  sidedness?: "none" | "per_side" | "alternating";
   rest: number;
   description?: string;
   isCustom?: boolean;

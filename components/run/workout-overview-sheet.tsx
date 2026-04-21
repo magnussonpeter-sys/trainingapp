@@ -3,6 +3,7 @@
 import { useRef } from "react";
 import type { TouchEvent } from "react";
 import type { Exercise } from "@/types/workout";
+import { formatExerciseTarget } from "@/lib/exercise-execution";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -15,6 +16,7 @@ type OverviewItem = {
   blockLabel?: string;
   blockKey: string;
   blockType: "straight_sets" | "superset" | "circuit";
+  exercisePosition: number;
   active?: boolean;
 };
 
@@ -26,11 +28,7 @@ type WorkoutOverviewSheetProps = {
 };
 
 function formatSummary(exercise: Exercise) {
-  if (typeof exercise.duration === "number" && exercise.duration > 0) {
-    return `${exercise.sets} × ${exercise.duration}s`;
-  }
-
-  return `${exercise.sets} × ${exercise.reps ?? "-"}`;
+  return `${exercise.sets} × ${formatExerciseTarget(exercise)}`;
 }
 
 export function buildOverviewItems(params: {
@@ -47,7 +45,7 @@ export function buildOverviewItems(params: {
   params.workoutBlocks.slice(params.currentBlockIndex).forEach((block, blockOffset) => {
     const absoluteBlockIndex = params.currentBlockIndex + blockOffset;
 
-    block.exercises.forEach((exercise) => {
+    block.exercises.forEach((exercise, exerciseIndex) => {
       items.push({
         key: `${absoluteBlockIndex}:${exercise.id}`,
         name: exercise.name,
@@ -55,6 +53,7 @@ export function buildOverviewItems(params: {
         blockKey: `${absoluteBlockIndex}:${block.type}`,
         blockType: block.type,
         blockLabel: block.type === "superset" ? block.title || "Superset" : undefined,
+        exercisePosition: exerciseIndex + 1,
         active: exercise.id === params.currentExerciseId,
       });
     });
@@ -130,31 +129,31 @@ export default function WorkoutOverviewSheet({
       </div>
 
       <div
-        className="touch-none flex items-center justify-between gap-3 px-5 pb-3 pt-1"
+        className="touch-none flex items-center justify-between gap-3 px-5 pb-2 pt-1"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        <h2 className="text-lg font-semibold tracking-tight text-slate-950">
+        <h2 className="text-base font-semibold tracking-tight text-slate-950">
           {title}
         </h2>
-        <span className="text-sm text-slate-500">{items.length} kvar</span>
+        <span className="text-xs font-medium text-slate-500">{items.length} kvar</span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-2">
-        <div className="space-y-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-1">
+        <div className="space-y-1.5">
           {itemGroups.map((group) => (
             <div
               key={group.key}
               className={cn(
                 "space-y-1",
                 group.type === "superset"
-                  ? "rounded-3xl border border-emerald-100 bg-emerald-50/65 px-2 py-2"
+                  ? "rounded-[24px] border border-emerald-100 bg-emerald-50/65 px-2 py-2"
                   : "",
               )}
             >
               {group.type === "superset" && group.label ? (
-                <p className="px-2 pt-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-700/80">
+                <p className="px-2 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700/80">
                   {group.label}
                 </p>
               ) : null}
@@ -163,7 +162,7 @@ export default function WorkoutOverviewSheet({
                 <div
                   key={item.key}
                   className={cn(
-                    "flex items-center justify-between gap-3 rounded-2xl px-3 py-3 transition",
+                    "flex items-center justify-between gap-3 rounded-2xl px-3 py-2.5 transition",
                     item.active
                       ? "bg-white text-slate-950 shadow-sm ring-1 ring-emerald-200"
                       : group.type === "superset"
@@ -171,13 +170,28 @@ export default function WorkoutOverviewSheet({
                         : "bg-transparent",
                   )}
                 >
-                  <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-3">
+                    {group.type === "superset" ? (
+                      <span
+                        className={cn(
+                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold",
+                          item.active
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-white/80 text-slate-500",
+                        )}
+                      >
+                        {String.fromCharCode(64 + item.exercisePosition)}
+                      </span>
+                    ) : null}
+
+                    <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-900">
                       {item.name}
                     </p>
-                    <p className="mt-1 truncate text-xs text-slate-500">
+                    <p className="mt-0.5 truncate text-xs text-slate-500">
                       {item.summary}
                     </p>
+                    </div>
                   </div>
 
                   <div className="shrink-0">

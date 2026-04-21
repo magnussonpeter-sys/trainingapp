@@ -19,6 +19,10 @@ async function ensureUserSettingsColumns() {
     ALTER TABLE user_settings
     ADD COLUMN IF NOT EXISTS secondary_priority_muscle TEXT
   `);
+  await pool.query(`
+    ALTER TABLE user_settings
+    ADD COLUMN IF NOT EXISTS tertiary_priority_muscle TEXT
+  `);
 }
 
 export async function GET(req: NextRequest) {
@@ -77,6 +81,7 @@ export async function POST(req: NextRequest) {
       superset_preference,
       primary_priority_muscle,
       secondary_priority_muscle,
+      tertiary_priority_muscle,
     } = body;
 
     await ensureUserSettingsColumns();
@@ -97,9 +102,9 @@ export async function POST(req: NextRequest) {
     const result = await pool.query(
       `
       INSERT INTO user_settings (
-        user_id, sex, age, weight_kg, height_cm, experience_level, training_goal, avoid_supersets, superset_preference, primary_priority_muscle, secondary_priority_muscle
+        user_id, sex, age, weight_kg, height_cm, experience_level, training_goal, avoid_supersets, superset_preference, primary_priority_muscle, secondary_priority_muscle, tertiary_priority_muscle
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       ON CONFLICT (user_id)
       DO UPDATE SET
         sex = EXCLUDED.sex,
@@ -112,6 +117,7 @@ export async function POST(req: NextRequest) {
         superset_preference = EXCLUDED.superset_preference,
         primary_priority_muscle = EXCLUDED.primary_priority_muscle,
         secondary_priority_muscle = EXCLUDED.secondary_priority_muscle,
+        tertiary_priority_muscle = EXCLUDED.tertiary_priority_muscle,
         updated_at = NOW()
       RETURNING *
       `,
@@ -127,6 +133,7 @@ export async function POST(req: NextRequest) {
         normalizedSupersetPreference,
         primary_priority_muscle ?? null,
         secondary_priority_muscle ?? null,
+        tertiary_priority_muscle ?? null,
       ]
     );
 

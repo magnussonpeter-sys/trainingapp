@@ -10,12 +10,12 @@ import WorkoutOverviewSheet, {
 } from "@/components/run/workout-overview-sheet";
 import WorkoutProgressBar from "@/components/run/workout-progress-bar";
 import ConfirmSheet from "@/components/shared/confirm-sheet";
+import {
+  getSideSwitchSeconds,
+  getTimedExerciseTotalSeconds,
+} from "@/lib/exercise-execution";
 
 import type { RunScreenProps } from "./run-screen-props";
-
-function cn(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
 
 function getProgressPercent(totalCompletedSets: number, totalPlannedSets: number) {
   if (totalPlannedSets <= 0) {
@@ -40,10 +40,14 @@ function getCurrentSetTotal(props: RunScreenProps) {
 function getPrimaryActionLabel(props: RunScreenProps, currentSetTotal: number) {
   // Keep the CTA self-explanatory so the active card can stay visually lighter.
   if (props.currentBlockType === "superset") {
-    return `${props.primaryButtonLabel} A${props.currentBlockExercisePosition} · ${props.currentRound}/${props.currentRoundTotal}`;
+    return `${props.primaryButtonLabel} ${props.currentRound}/${props.currentRoundTotal}`;
   }
 
   return `${props.primaryButtonLabel} ${props.currentSet}/${currentSetTotal}`;
+}
+
+function getBlockLetter(index: number) {
+  return String.fromCharCode(65 + Math.max(0, index));
 }
 
 function playCountdownBeep() {
@@ -78,6 +82,31 @@ function playCountdownBeep() {
   window.setTimeout(() => {
     void audioContext.close().catch(() => undefined);
   }, 250);
+}
+
+function speakSideSwitchCue() {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    return false;
+  }
+
+  const utterance = new SpeechSynthesisUtterance("Byt sida");
+  const voices = window.speechSynthesis.getVoices();
+  const swedishVoice =
+    voices.find((voice) => voice.lang.toLowerCase().startsWith("sv")) ?? null;
+
+  utterance.lang = "sv-SE";
+  utterance.rate = 0.95;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+
+  if (swedishVoice) {
+    utterance.voice = swedishVoice;
+  }
+
+  // Stoppa eventuell gammal cue så sidbytet hörs tydligt.
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+  return true;
 }
 
 export default function RunScreenStructured(props: RunScreenProps) {
@@ -123,6 +152,7 @@ export default function RunScreenStructured(props: RunScreenProps) {
   const [isOverviewExpanded, setIsOverviewExpanded] = useState(false);
   const restCountdownRef = useRef<string | null>(null);
   const exerciseCountdownRef = useRef<string | null>(null);
+  const sideSwitchCueRef = useRef<string | null>(null);
 
   const progressPercent = getProgressPercent(totalCompletedSets, totalPlannedSets);
   const currentSetTotal = getCurrentSetTotal(props);
@@ -173,7 +203,7 @@ export default function RunScreenStructured(props: RunScreenProps) {
   }, [props.restRemainingSeconds, props.showRestTimer]);
 
   useEffect(() => {
-    const targetDuration = props.currentExercise?.duration ?? 0;
+    const targetDuration = getTimedExerciseTotalSeconds(props.currentExercise);
     if (!props.timedExercise || props.timerState !== "running" || targetDuration <= 0) {
       exerciseCountdownRef.current = null;
       return;
@@ -194,6 +224,39 @@ export default function RunScreenStructured(props: RunScreenProps) {
     playCountdownBeep();
   }, [
     props.currentExercise?.duration,
+    props.currentExercise,
+    props.currentExercise?.id,
+    props.currentExercise?.name,
+    props.currentExercise?.sidedness,
+    props.elapsedSeconds,
+    props.timedExercise,
+    props.timerState,
+  ]);
+
+  useEffect(() => {
+    const sideSwitchSeconds = getSideSwitchSeconds(props.currentExercise);
+
+    if (
+      !props.timedExercise ||
+      props.timerState !== "running" ||
+      !sideSwitchSeconds ||
+      props.elapsedSeconds !== sideSwitchSeconds
+    ) {
+      sideSwitchCueRef.current = null;
+      return;
+    }
+
+    const beepKey = `side:${props.currentExercise?.id}:${sideSwitchSeconds}`;
+    if (sideSwitchCueRef.current === beepKey) {
+      return;
+    }
+
+    sideSwitchCueRef.current = beepKey;
+    if (!speakSideSwitchCue()) {
+      playCountdownBeep();
+    }
+  }, [
+    props.currentExercise,
     props.currentExercise?.id,
     props.elapsedSeconds,
     props.timedExercise,
@@ -243,17 +306,23 @@ export default function RunScreenStructured(props: RunScreenProps) {
               <ActiveExerciseCard
                 exercise={currentExercise}
                 blockType={currentBlockType}
+                blockLabel={
+                  currentBlockType === "superset"
+                    ? `SUPERSET ${getBlockLetter(props.currentBlockIndex)}`
+                    : props.currentBlockTitle
+                }
                 currentSet={currentSet}
                 currentSetTotal={currentSetTotal}
                 currentRound={currentRound}
                 currentRoundTotal={currentRoundTotal}
+                currentBlockExercises={currentBlockExercises}
+                currentBlockExercisePosition={currentBlockExercisePosition}
                 timedExercise={props.timedExercise}
                 timerState={props.timerState}
                 elapsedSeconds={props.elapsedSeconds}
                 reps={props.reps}
                 onRepsChange={props.setReps}
                 weight={props.weight}
-                onWeightChange={props.updateWeight}
                 onWeightChipSelect={props.chooseWeightChip}
                 suggestedWeightValue={props.suggestedWeightValue}
                 weightUnitLabel={props.weightUnitLabel}

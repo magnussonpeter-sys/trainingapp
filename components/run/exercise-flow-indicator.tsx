@@ -1,6 +1,7 @@
 "use client";
 
 import type { Exercise } from "@/types/workout";
+import { formatExerciseTarget } from "@/lib/exercise-execution";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -97,8 +98,8 @@ function buildSupersetNodes(
 ): FlowNode[] {
   const exerciseNodes = props.currentBlockExercises.map((exercise, index) => ({
     key: exercise.id,
-    label: exercise.name,
-    sublabel: `A${index + 1}`,
+    label: `${String.fromCharCode(65 + index)} ${exercise.name}`,
+    sublabel: formatExerciseTarget(exercise),
     active:
       !props.showRestTimer &&
       index + 1 === props.currentExerciseIndex &&
@@ -108,12 +109,12 @@ function buildSupersetNodes(
 
   const restNode: FlowNode = {
     key: "rest",
-    label: "Vila ↺",
+    label: "Vila",
     sublabel: props.showRestTimer
       ? `${props.restRemainingSeconds}s kvar`
       : props.currentExercise?.rest
         ? formatDuration(props.currentExercise.rest)
-        : "Efter varv",
+        : "Nästa varv ↺",
     active: props.showRestTimer,
     accent: "rest",
   };
@@ -134,13 +135,20 @@ export default function ExerciseFlowIndicator(
   }
 
   return (
-    <section className="rounded-[28px] border border-slate-200/70 bg-white/80 px-4 py-4 shadow-[0_10px_30px_rgba(15,23,42,0.05)] backdrop-blur">
-      <div className="flex items-center justify-between gap-3">
+    <section
+      className={cn(
+        "rounded-[26px] border px-3 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.05)] backdrop-blur",
+        props.blockType === "superset"
+          ? "border-emerald-100 bg-emerald-50/55"
+          : "border-slate-200/70 bg-white/80",
+      )}
+    >
+      <div className="flex items-center justify-between gap-3 px-1">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
             Flöde
           </p>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-0.5 text-sm font-medium text-slate-700">
             {props.blockType === "superset"
               ? `Varv ${props.currentRound} av ${props.currentRoundTotal}`
               : `Set ${props.currentSet} av ${props.currentSetTotal}`}
@@ -148,23 +156,23 @@ export default function ExerciseFlowIndicator(
         </div>
 
         {props.blockType === "superset" ? (
-          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-            Superset
+          <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700">
+            Loop ↺
           </span>
         ) : null}
       </div>
 
-      <div className="mt-4 overflow-x-auto">
-        <div className="flex min-w-max items-center gap-2 pb-1">
+      <div className="mt-3 overflow-x-auto">
+        <div className="flex min-w-max items-center gap-1.5 pb-1">
           {nodes.map((node, index) => (
-            <div key={node.key} className="flex items-center gap-2">
+            <div key={node.key} className="flex items-center gap-1.5">
               <div
                 className={cn(
-                  "min-w-[116px] rounded-[22px] border px-4 py-3 shadow-sm transition",
+                  "min-w-[104px] rounded-[20px] border px-3 py-2.5 shadow-sm transition",
                   node.active
-                    ? "border-emerald-300 bg-emerald-50 shadow-[0_8px_24px_rgba(74,222,128,0.22)]"
+                    ? "border-emerald-300 bg-white shadow-[0_8px_24px_rgba(74,222,128,0.18)]"
                     : node.accent === "rest"
-                      ? "border-slate-200 bg-slate-50"
+                      ? "border-slate-200 bg-white/70"
                       : "border-slate-200 bg-white",
                 )}
               >
@@ -179,12 +187,18 @@ export default function ExerciseFlowIndicator(
               </div>
 
               {index < nodes.length - 1 ? (
-                <span className="text-lg font-medium text-emerald-300">→</span>
+                <span className="text-base font-semibold text-emerald-400">→</span>
               ) : null}
             </div>
           ))}
         </div>
       </div>
+
+      {props.blockType === "superset" ? (
+        <p className="mt-1 px-1 text-xs font-medium text-emerald-800/70">
+          Efter sista övningen: vila och tillbaka till A.
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -7,6 +7,26 @@ import {
   type PendingSyncItem,
 } from "@/lib/workout-flow/pending-sync-store";
 
+function countPlannedWorkoutSets(item: PendingSyncItem) {
+  return item.workout.blocks.reduce((sum, block) => {
+    if (block.type === "superset" || block.type === "circuit") {
+      const rounds =
+        typeof block.rounds === "number" && Number.isFinite(block.rounds)
+          ? block.rounds
+          : 1;
+
+      return sum + block.exercises.length * Math.max(0, Math.round(rounds));
+    }
+
+    return (
+      sum +
+      block.exercises.reduce((exerciseSum, exercise) => {
+        return exerciseSum + Math.max(0, Math.round(exercise.sets));
+      }, 0)
+    );
+  }, 0);
+}
+
 // Resultat från en sync-körning.
 // Bra både för debug och framtida UI.
 export type PendingSyncRunResult = {
@@ -43,6 +63,7 @@ function buildWorkoutLogPayload(item: PendingSyncItem) {
     metadata: {
       offlineSync: true,
       clientSyncId: item.id, // Stabil dedupe-nyckel.
+      plannedSetCount: countPlannedWorkoutSets(item), // Gör framtida AI-planering faktisk-vs-plan-medveten.
       syncedAt: new Date().toISOString(),
     },
   };

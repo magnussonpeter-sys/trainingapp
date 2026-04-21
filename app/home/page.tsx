@@ -123,14 +123,33 @@ function getStoredHomeGymId(userId: string) {
   }
 }
 
+function storeHomeGymId(userId: string, gymId: string) {
+  try {
+    // Home-valet är den lätta källan för vilket gym användaren faktiskt vill använda nästa gång.
+    localStorage.setItem(`ai-workout-settings:${userId}`, JSON.stringify({ gymId }));
+  } catch {
+    // Gymval får aldrig stoppa startsidan om localStorage saknas.
+  }
+}
+
 function getLastUsedGymId(userId: string, gymOptions: Array<{ id: string | number }>) {
   // Prefer the latest saved workout draft since it reflects the most recent active choice.
-  const draft = getWorkoutDraft(userId) as { gym?: unknown } | null;
+  const draft = getWorkoutDraft(userId) as { gym?: unknown; gymLabel?: unknown } | null;
   const draftGymId =
     typeof draft?.gym === "string" && draft.gym.trim() ? draft.gym.trim() : null;
 
   if (draftGymId && gymOptions.some((gym) => String(gym.id) === draftGymId)) {
     return draftGymId;
+  }
+
+  if (
+    draft &&
+    draft.gym == null &&
+    typeof draft.gymLabel === "string" &&
+    draft.gymLabel.toLowerCase().includes("kroppsvikt") &&
+    gymOptions.some((gym) => String(gym.id) === "bodyweight")
+  ) {
+    return "bodyweight";
   }
 
   const storedGymId = getStoredHomeGymId(userId);
@@ -139,18 +158,6 @@ function getLastUsedGymId(userId: string, gymOptions: Array<{ id: string | numbe
   }
 
   return null;
-}
-
-function getRecommendedDuration(nextFocus: WorkoutFocus) {
-  if (nextFocus === "core") {
-    return 20;
-  }
-
-  if (nextFocus === "full_body") {
-    return 30;
-  }
-
-  return 30;
 }
 
 function getCoachMessage(params: {
@@ -185,39 +192,6 @@ function getCoachMessage(params: {
   }
 
   return `Du har tränat nyligen. Nästa bästa steg nu är ${formatWorkoutFocus(nextFocus).toLowerCase()}.`;
-}
-
-function getWorkoutStreak(logs: WorkoutLog[]) {
-  const completedDates = Array.from(
-    new Set(
-      logs
-        .filter((log) => log.status === "completed")
-        .map((log) => new Date(log.completedAt).toISOString().slice(0, 10)),
-    ),
-  ).sort((left, right) => (left > right ? -1 : 1));
-
-  if (completedDates.length === 0) {
-    return 0;
-  }
-
-  let streak = 1;
-  let previousDate = new Date(`${completedDates[0]}T00:00:00`);
-
-  for (let index = 1; index < completedDates.length; index += 1) {
-    const currentDate = new Date(`${completedDates[index]}T00:00:00`);
-    const diffDays = Math.round(
-      (previousDate.getTime() - currentDate.getTime()) / (24 * 60 * 60 * 1000),
-    );
-
-    if (diffDays !== 1) {
-      break;
-    }
-
-    streak += 1;
-    previousDate = currentDate;
-  }
-
-  return streak;
 }
 
 function getBudgetStatusTone(loadStatus: string) {
@@ -332,7 +306,6 @@ function TodayFocusCard(props: {
   focus: WorkoutFocus;
   muscleGroups: MuscleBudgetGroup[];
   summaryText: string;
-  recommendedDuration: number;
   gymLabel: string;
   onAction: () => void;
   isGenerating: boolean;
@@ -348,15 +321,6 @@ function TodayFocusCard(props: {
             {formatWorkoutFocus(props.focus)}
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">{props.summaryText}</p>
-        </div>
-
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-right">
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-emerald-700">
-            Rek. längd
-          </p>
-          <p className="mt-1 text-lg font-semibold text-slate-900">
-            {props.recommendedDuration} min
-          </p>
         </div>
       </div>
 
@@ -388,65 +352,6 @@ function TodayFocusCard(props: {
       >
         {props.isGenerating ? "Skapar..." : "Snabbstarta dagens pass"}
       </button>
-    </section>
-  );
-}
-
-function WeeklyMomentumCard(props: {
-  completedLast7Days: number;
-  passCount: number;
-  streak: number;
-  priorityMuscles: MuscleBudgetGroup[];
-}) {
-  const progressPercent =
-    props.passCount > 0
-      ? Math.min(100, Math.round((props.completedLast7Days / props.passCount) * 100))
-      : 0;
-
-  return (
-    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-            Veckans momentum
-          </p>
-          <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
-            {Math.min(props.completedLast7Days, props.passCount)} av {props.passCount} planerade pass
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Håll rytmen uppe med ett nytt pass när du har tid och energi.
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-right">
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
-            Streak
-          </p>
-          <p className="mt-1 text-lg font-semibold text-slate-900">
-            {props.streak > 0 ? `${props.streak} dagar` : "Starta idag"}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-lime-400"
-          style={{ width: `${Math.max(8, progressPercent)}%` }}
-        />
-      </div>
-
-      {props.priorityMuscles.length > 0 ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {props.priorityMuscles.slice(0, 2).map((group) => (
-            <span
-              key={group}
-              className="rounded-full border border-lime-300 bg-lime-100 px-3 py-1 text-xs font-medium text-slate-800"
-            >
-              Mer att hämta i {formatMuscleGroup(group).toLowerCase()}
-            </span>
-          ))}
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -828,12 +733,6 @@ export default function HomePage() {
   }, [durationMinutes, weeklyStructure.completedLast7Days, weeklyStructure.nextFocus, workoutLogs]);
   const dailyWisdom = useMemo(() => getDailyHomeWisdom(), []);
 
-  const workoutStreak = useMemo(() => getWorkoutStreak(workoutLogs), [workoutLogs]);
-  const recommendedDuration = useMemo(
-    () => getRecommendedDuration(weeklyStructure.nextFocus),
-    [weeklyStructure.nextFocus],
-  );
-
   useEffect(() => {
     hasAppliedInitialGymRef.current = false;
   }, [userId]);
@@ -859,6 +758,14 @@ export default function HomePage() {
       setSelectedGymId(String(gymOptions[0].id));
     }
   }, [gymOptions, selectedGymId, userId]);
+
+  function handleSelectedGymChange(nextGymId: string) {
+    setSelectedGymId(nextGymId);
+
+    if (userId) {
+      storeHomeGymId(userId, nextGymId);
+    }
+  }
 
   useEffect(() => {
     if (!userId) {
@@ -889,6 +796,7 @@ export default function HomePage() {
       const isBodyweightGym = String(selectedGym?.id) === "bodyweight";
       const gymId = isBodyweightGym ? null : String(selectedGym?.id ?? "");
       const gymLabel = isBodyweightGym ? "Kroppsvikt / utan gym" : selectedGym?.name ?? null;
+      storeHomeGymId(userId, String(selectedGym?.id ?? "bodyweight"));
       const lessOftenExerciseIds = getExercisePreferences(userId)
         .filter((entry) => entry.preference === "less_often")
         .map((entry) => entry.exerciseId);
@@ -955,11 +863,12 @@ export default function HomePage() {
       const isBodyweightGym = String(selectedGym?.id) === "bodyweight";
       const gymId = isBodyweightGym ? null : String(selectedGym?.id ?? "");
       const gymLabel = isBodyweightGym ? "Kroppsvikt / utan gym" : selectedGym?.name ?? null;
+      storeHomeGymId(userId, String(selectedGym?.id ?? "bodyweight"));
       const lessOftenExerciseIds = getExercisePreferences(userId)
         .filter((entry) => entry.preference === "less_often")
         .map((entry) => entry.exerciseId);
 
-      const quickDuration = recommendedDuration;
+      const quickDuration = durationMinutes;
 
       const { workout } = await generateWorkout({
         userId,
@@ -1065,23 +974,15 @@ export default function HomePage() {
           focus={weeklyStructure.nextFocus}
           muscleGroups={weeklyStructure.nextFocusMuscleGroups}
           summaryText={weeklyStructure.optimalPlanText}
-          recommendedDuration={recommendedDuration}
           gymLabel={selectedGym?.name ?? "Kroppsvikt / utan gym"}
           onAction={handleQuickStartTodayWorkout}
           isGenerating={isGenerating}
         />
 
-        <WeeklyMomentumCard
-          completedLast7Days={weeklyStructure.completedLast7Days}
-          passCount={weeklyStructure.passCount}
-          streak={workoutStreak}
-          priorityMuscles={weeklyStructure.priorityMuscles}
-        />
-
         <QuickStartCard
           gymOptions={gymOptions}
           selectedGymId={selectedGymId}
-          setSelectedGymId={setSelectedGymId}
+          setSelectedGymId={handleSelectedGymChange}
           selectedDurationPreset={selectedDurationPreset}
           setSelectedDurationPreset={setSelectedDurationPreset}
           customDurationInput={customDurationInput}

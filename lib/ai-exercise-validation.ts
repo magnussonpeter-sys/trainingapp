@@ -29,6 +29,7 @@ type NormalizedExercise = {
   sets: number;
   reps?: number;
   duration?: number;
+  sidedness?: "none" | "per_side" | "alternating";
   rest: number;
   suggestedWeight?: number | string | null;
   movementPattern: MovementPattern;
@@ -68,6 +69,7 @@ export type ValidateAiExercisesResult = {
     sets: number;
     reps?: number;
     duration?: number;
+    sidedness?: "none" | "per_side" | "alternating";
     rest: number;
     suggestedWeight?: number | string | null;
   }>;
@@ -375,6 +377,7 @@ function createNormalizedExercise(
           180
         )
       : undefined,
+    sidedness: catalogExercise.sidedness,
     rest: clampPositiveInt(
       aiExercise?.rest,
       catalogExercise.defaultRest,

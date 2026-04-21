@@ -9,6 +9,7 @@ import {
   getAvailableExercises,
   getAvailableProgressionTracks,
 } from "@/lib/exercise-catalog";
+import { buildWorkoutPerformanceSummary } from "@/lib/workout-performance-analysis";
 import { getWorkoutLogsByUser } from "@/lib/workout-log-repository";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 import {
@@ -20,6 +21,7 @@ import type {
   ConfidenceScore,
   MuscleBudgetEntry,
 } from "@/lib/planning/muscle-budget";
+import type { CompletedExercise, CompletedSet } from "@/lib/workout-log-storage";
 import type { WorkoutFocus } from "@/types/workout";
 
 // OpenAI-klient.
@@ -73,6 +75,7 @@ type UserSettingsSummary = {
   superset_preference?: "allowed" | "avoid_all" | "avoid_all_dumbbell" | null;
   primary_priority_muscle?: string | null;
   secondary_priority_muscle?: string | null;
+  tertiary_priority_muscle?: string | null;
 };
 
 type GymEquipmentPromptItem = {
@@ -117,6 +120,44 @@ type ProgressionTrackPromptItem = {
   stepNames: string[];
 };
 
+type RecentPerformancePromptItem = {
+  workoutName: string;
+  completedAt: string | null;
+  completedSetCount: number;
+  plannedSetCount: number;
+  skippedSetCount: number;
+  actualVsPlanPercent: number | null;
+  lowerThanPlannedSetCount: number;
+  higherThanPlannedSetCount: number;
+  status:
+    | "no_logged_work"
+    | "much_lower_than_plan"
+    | "lower_than_plan"
+    | "on_plan"
+    | "higher_than_plan"
+    | "unknown";
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getNumberOrNull(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getStringOrNull(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function hasCompletedSets(exercise: { sets?: unknown[] }) {
+  return Array.isArray(exercise.sets) && exercise.sets.length > 0;
+}
+
 function normalizeSupersetPreference(value: unknown): SupersetPreference | null {
   return value === "allowed" ||
     value === "avoid_all" ||
@@ -138,7 +179,8 @@ async function getUserSettingsSummary(userId: string) {
         avoid_supersets,
         superset_preference,
         primary_priority_muscle,
-        secondary_priority_muscle
+        secondary_priority_muscle,
+        tertiary_priority_muscle
       from user_settings
       where user_id = $1
       limit 1
@@ -160,6 +202,7 @@ function buildRecentWorkoutSummary(logs: unknown[]) {
         exerciseName?: string;
         extraReps?: number | null;
         timedEffort?: string | null;
+        sets?: unknown[];
       }>;
     };
 
@@ -171,13 +214,148 @@ function buildRecentWorkoutSummary(logs: unknown[]) {
           ? Math.max(1, Math.round(record.durationSeconds / 60))
           : null,
       topExercises: Array.isArray(record.exercises)
-        ? record.exercises.slice(0, 4).map((exercise) => ({
-            exerciseId: exercise.exerciseId ?? null,
-            exerciseName: exercise.exerciseName ?? null,
-            extraReps: exercise.extraReps ?? null,
-            timedEffort: exercise.timedEffort ?? null,
-          }))
+        ? record.exercises
+            .filter((exercise) => hasCompletedSets(exercise))
+            .slice(0, 4)
+            .map((exercise) => ({
+              exerciseId: exercise.exerciseId ?? null,
+              exerciseName: exercise.exerciseName ?? null,
+              extraReps: exercise.extraReps ?? null,
+              timedEffort: exercise.timedEffort ?? null,
+            }))
         : [],
+    };
+  });
+}
+
+function normalizeCompletedSet(rawSet: unknown): CompletedSet | null {
+  if (!isRecord(rawSet)) {
+    return null;
+  }
+
+  const setNumber = getNumberOrNull(rawSet.setNumber) ?? 1;
+
+  return {
+    setNumber,
+    plannedReps: getNumberOrNull(rawSet.plannedReps),
+    plannedDuration: getNumberOrNull(rawSet.plannedDuration),
+    plannedWeight: getNumberOrNull(rawSet.plannedWeight),
+    actualReps: getNumberOrNull(rawSet.actualReps),
+    actualDuration: getNumberOrNull(rawSet.actualDuration),
+    actualWeight: getNumberOrNull(rawSet.actualWeight),
+    repsLeft:
+      rawSet.repsLeft === 0 ||
+      rawSet.repsLeft === 2 ||
+      rawSet.repsLeft === 4 ||
+      rawSet.repsLeft === 6
+        ? rawSet.repsLeft
+        : null,
+    timedEffort:
+      rawSet.timedEffort === "light" ||
+      rawSet.timedEffort === "just_right" ||
+      rawSet.timedEffort === "tough"
+        ? rawSet.timedEffort
+        : null,
+    completedAt: getStringOrNull(rawSet.completedAt) ?? new Date(0).toISOString(),
+  };
+}
+
+function normalizeCompletedExercise(rawExercise: unknown): CompletedExercise | null {
+  if (!isRecord(rawExercise)) {
+    return null;
+  }
+
+  const sets = getArray(rawExercise.sets)
+    .map((set) => normalizeCompletedSet(set))
+    .filter((set): set is CompletedSet => set !== null);
+
+  if (sets.length === 0) {
+    return null;
+  }
+
+  return {
+    exerciseId: getStringOrNull(rawExercise.exerciseId) ?? "unknown",
+    exerciseName: getStringOrNull(rawExercise.exerciseName) ?? "Okänd övning",
+    plannedSets: Math.max(sets.length, getNumberOrNull(rawExercise.plannedSets) ?? 0),
+    plannedReps: getNumberOrNull(rawExercise.plannedReps),
+    plannedDuration: getNumberOrNull(rawExercise.plannedDuration),
+    isNewExercise: rawExercise.isNewExercise === true,
+    rating: getNumberOrNull(rawExercise.rating),
+    extraReps:
+      rawExercise.extraReps === 0 ||
+      rawExercise.extraReps === 2 ||
+      rawExercise.extraReps === 4 ||
+      rawExercise.extraReps === 6
+        ? rawExercise.extraReps
+        : null,
+    timedEffort:
+      rawExercise.timedEffort === "light" ||
+      rawExercise.timedEffort === "just_right" ||
+      rawExercise.timedEffort === "tough"
+        ? rawExercise.timedEffort
+        : null,
+    sets,
+  };
+}
+
+function getPlannedSetCountFromMetadata(log: Record<string, unknown>) {
+  const metadata = isRecord(log.metadata) ? log.metadata : null;
+  const plannedSetCount =
+    getNumberOrNull(metadata?.plannedSetCount) ??
+    getNumberOrNull(metadata?.totalPlannedSets);
+
+  return plannedSetCount != null ? Math.max(0, Math.round(plannedSetCount)) : null;
+}
+
+function getPerformanceStatusFromRatio(params: {
+  completedSetCount: number;
+  overallRatio: number | null;
+}) {
+  if (params.completedSetCount === 0) {
+    return "no_logged_work" as const;
+  }
+
+  if (params.overallRatio === null) {
+    return "unknown" as const;
+  }
+
+  if (params.overallRatio < 0.75) return "much_lower_than_plan" as const;
+  if (params.overallRatio < 0.9) return "lower_than_plan" as const;
+  if (params.overallRatio > 1.15) return "higher_than_plan" as const;
+  return "on_plan" as const;
+}
+
+function buildRecentPerformanceSummaries(logs: unknown[]): RecentPerformancePromptItem[] {
+  return logs.slice(0, 3).map((log) => {
+    const record = isRecord(log) ? log : {};
+    const completedExercises = getArray(record.exercises)
+      .map((exercise) => normalizeCompletedExercise(exercise))
+      .filter((exercise): exercise is CompletedExercise => exercise !== null);
+    const fallbackPlannedSets = completedExercises.reduce(
+      (sum, exercise) => sum + Math.max(exercise.plannedSets, exercise.sets.length),
+      0,
+    );
+    const totalPlannedSets =
+      getPlannedSetCountFromMetadata(record) ?? fallbackPlannedSets;
+    const summary = buildWorkoutPerformanceSummary({
+      completedExercises,
+      totalPlannedSets,
+    });
+
+    return {
+      workoutName: getStringOrNull(record.workoutName) ?? "Okänt pass",
+      completedAt: getStringOrNull(record.completedAt),
+      completedSetCount: summary.completedSetCount,
+      plannedSetCount: summary.totalPlannedSets,
+      skippedSetCount: summary.skippedSetCount,
+      actualVsPlanPercent:
+        summary.overallRatio !== null ? Math.round(summary.overallRatio * 100) : null,
+      lowerThanPlannedSetCount: summary.lowerThanPlannedSetCount,
+      higherThanPlannedSetCount: summary.higherThanPlannedSetCount,
+      status: getPerformanceStatusFromRatio({
+        completedSetCount: summary.completedSetCount,
+        overallRatio: summary.overallRatio,
+      }),
     };
   });
 }
@@ -191,6 +369,7 @@ function buildRecentExercisePreferences(logs: unknown[]) {
       exercises?: Array<{
         exerciseId?: string;
         exerciseName?: string;
+        sets?: unknown[];
       }>;
     };
 
@@ -199,6 +378,11 @@ function buildRecentExercisePreferences(logs: unknown[]) {
     }
 
     for (const exercise of record.exercises) {
+      // Övningar utan genomförda set ska inte styra variation/progression.
+      if (!hasCompletedSets(exercise)) {
+        continue;
+      }
+
       if (typeof exercise.exerciseId === "string" && exercise.exerciseId.trim()) {
         recentExerciseIds.add(exercise.exerciseId.trim());
       }
@@ -284,6 +468,7 @@ function buildGenerationPrompt(params: {
   nextFocus: WorkoutFocus | null;
   recentExerciseIds: string[];
   recentExerciseNames: string[];
+  recentPerformanceSummaries: RecentPerformancePromptItem[];
   recentWorkouts: unknown[];
   settings: UserSettingsSummary | null;
   splitStyle: string | null;
@@ -295,6 +480,10 @@ function buildGenerationPrompt(params: {
   const recentWorkoutText =
     params.recentWorkouts.length > 0
       ? JSON.stringify(params.recentWorkouts, null, 2)
+      : "[]";
+  const recentPerformanceText =
+    params.recentPerformanceSummaries.length > 0
+      ? JSON.stringify(params.recentPerformanceSummaries, null, 2)
       : "[]";
 
   const settingsText = params.settings
@@ -348,6 +537,7 @@ Kontext:
 - registrerade vikter/utrustningsdetaljer i gymmet: ${gymEquipmentDetailText}
 - användarinställningar: ${settingsText}
 - senaste passhistorik: ${recentWorkoutText}
+- faktisk prestation i senaste pass jämfört med plan: ${recentPerformanceText}
 - senaste övnings-id:n: ${recentExerciseIdsText}
 - senaste övningsnamn: ${recentExerciseNamesText}
 - rekommenderat fokus för nästa pass: ${nextFocusText}
@@ -509,6 +699,10 @@ Viktiga regler:
 - Sträva efter att dragvolymen matchar eller överstiger pressvolymen när passet innehåller båda
 - När likvärdiga alternativ finns ska du variera bort från övningar och variantgrupper som användes i de senaste 1-3 passen
 - Behåll bara samma övning som nyligen om den är tydligt bäst givet mål, utrustning eller progression
+- Planera utifrån faktisk prestation, inte bara vad tidigare pass var planerade att innehålla
+- Pass med status no_logged_work ska inte räknas som träningsstimulans eller som att övningarna faktiskt tränades
+- Om senaste prestation låg lower_than_plan eller much_lower_than_plan ska du vara mer konservativ med volym, komplexitet och suggestedWeight
+- Om senaste prestation låg higher_than_plan ska du bara öka försiktigt och ta hänsyn till återhämtning
 - Låt veckoplanen påverka passets huvudfokus. Om nästa fokus är upper_body, lower_body, core eller full_body ska passet tydligt kännas som detta utan att bli obalanserat
 - Prioritera muskelgrupper som fortfarande har återstående veckobudget, men håll passet realistiskt inom vald passlängd
 - Vid låg confidence score ska du vara mer konservativ med volym, komplexitet och övningssvårighet
@@ -605,11 +799,6 @@ export async function POST(req: Request) {
         )
       : [];
 
-    const equipmentText = equipment.length > 0 ? equipment.join(", ") : "bodyweight";
-    const hasEquipment =
-      equipment.length > 0 &&
-      !(equipment.length === 1 && equipment[0] === "bodyweight");
-
     const availableExercises = getAvailableExercises(equipment);
     const [settings, recentLogs] = userId
       ? await Promise.all([
@@ -618,6 +807,7 @@ export async function POST(req: Request) {
         ])
       : [null, []];
     const recentWorkouts = buildRecentWorkoutSummary(recentLogs);
+    const recentPerformanceSummaries = buildRecentPerformanceSummaries(recentLogs);
     const recentExercisePreferences = buildRecentExercisePreferences(recentLogs);
     const supersetPreference =
       requestedSupersetPreference ??
@@ -627,22 +817,6 @@ export async function POST(req: Request) {
         : "allowed");
     const avoidSupersets = supersetPreference === "avoid_all";
     const availableExercisePrompt = buildAvailableExercisePrompt(availableExercises);
-    const generationContext = {
-      userId,
-      settings,
-      recentWorkouts,
-      recentExercisePreferences,
-      availableExerciseCount: availableExercises.length,
-      gymEquipmentDetails,
-      confidenceScore,
-      nextFocus,
-      splitStyle,
-      weeklyBudget,
-      weeklyPlan,
-      lessOftenExerciseIds,
-      supersetPreference,
-      hasEquipment,
-    };
     const prompt = buildGenerationPrompt({
       availableExercisePrompt,
       durationMinutes,
@@ -655,6 +829,7 @@ export async function POST(req: Request) {
       nextFocus,
       recentExerciseIds: recentExercisePreferences.recentExerciseIds,
       recentExerciseNames: recentExercisePreferences.recentExerciseNames,
+      recentPerformanceSummaries,
       recentWorkouts,
       settings,
       splitStyle,

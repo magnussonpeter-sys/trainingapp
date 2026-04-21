@@ -7,6 +7,11 @@ import {
   setLessOftenPreference,
 } from "@/lib/exercise-preference-storage";
 import {
+  buildWorkoutPerformanceSummary,
+  getPerformanceStatus,
+  type WorkoutPerformanceSummary,
+} from "@/lib/workout-performance-analysis";
+import {
   getWorkoutLogs,
   type CompletedExercise,
   type WorkoutLog,
@@ -16,6 +21,7 @@ type RunFinishSummaryProps = {
   completedExercises: CompletedExercise[];
   goal?: string;
   totalCompletedSets: number;
+  totalPlannedSets: number;
   totalVolume: number;
   timedExercises: number;
   durationMinutes: number;
@@ -82,8 +88,19 @@ function getAverage(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function getCurrentIntensityScore(completedExercises: CompletedExercise[]) {
+function getCurrentIntensityScore(
+  completedExercises: CompletedExercise[],
+  performanceSummary?: WorkoutPerformanceSummary,
+) {
   const scores: number[] = [];
+  const completedSetCount = completedExercises.reduce(
+    (sum, exercise) => sum + exercise.sets.length,
+    0,
+  );
+
+  if (completedSetCount === 0) {
+    return 0;
+  }
 
   for (const exercise of completedExercises) {
     if (exercise.extraReps === 0) {
@@ -105,7 +122,20 @@ function getCurrentIntensityScore(completedExercises: CompletedExercise[]) {
     }
   }
 
-  return scores.length > 0 ? getAverage(scores) : 7.5;
+  if (scores.length > 0) {
+    return getAverage(scores);
+  }
+
+  // Om subjektiv RPE-feedback saknas använder vi faktisk-vs-plan som försiktig proxy.
+  const ratio = performanceSummary?.overallRatio ?? null;
+  if (ratio !== null) {
+    if (ratio < 0.75) return 5.5;
+    if (ratio < 0.9) return 6.5;
+    if (ratio > 1.15) return 8.5;
+    return 7.5;
+  }
+
+  return 7.5;
 }
 
 function getWorkoutVolume(log: WorkoutLog) {
@@ -262,8 +292,25 @@ function getFirstExerciseAdjustment(exercise: CompletedExercise | null) {
 function getFallbackMainInsight(params: {
   comparisonPercent: number;
   intensityScore: number;
+  performanceStatus: ReturnType<typeof getPerformanceStatus>;
   totalCompletedSets: number;
 }) {
+  if (params.performanceStatus === "none") {
+    return "Inga arbetsset loggades, så passet gav ingen mätbar träningsstimulans.";
+  }
+
+  if (params.performanceStatus === "much_lower") {
+    return "Passet blev tydligt lättare än planerat idag.";
+  }
+
+  if (params.performanceStatus === "lower") {
+    return "Du genomförde passet, men under den planerade belastningen.";
+  }
+
+  if (params.performanceStatus === "higher") {
+    return "Du låg över planen idag, så återhämtningen blir extra viktig.";
+  }
+
   if (params.comparisonPercent >= 105) {
     return "Bra träningssignal idag, bygg vidare med samma kontinuitet.";
   }
@@ -352,29 +399,42 @@ function MetricCard({ helper, label, value }: MetricCard) {
   );
 }
 
+function getLessPreferenceIds(userId: string) {
+  return getExercisePreferences(userId)
+    .filter((entry) => entry.preference === "less_often")
+    .map((entry) => entry.exerciseId);
+}
+
 export default function RunFinishSummary({
   completedExercises,
   durationMinutes,
   goal,
   timedExercises,
   totalCompletedSets,
+  totalPlannedSets,
   totalVolume,
   userId,
   workoutName,
 }: RunFinishSummaryProps) {
-  const [lessPreferenceIds, setLessPreferenceIds] = useState<string[]>([]);
+  const [lessPreferenceIds, setLessPreferenceIds] = useState<string[]>(() =>
+    getLessPreferenceIds(userId),
+  );
   const [analysis, setAnalysis] = useState<FinishAnalysis | null>(null);
   const [analysisState, setAnalysisState] = useState<"loading" | "ready" | "fallback">(
     "loading",
   );
-
-  useEffect(() => {
-    const currentLessPreferences = getExercisePreferences(userId)
-      .filter((entry) => entry.preference === "less_often")
-      .map((entry) => entry.exerciseId);
-
-    setLessPreferenceIds(currentLessPreferences);
-  }, [userId]);
+  const performanceSummary = useMemo(
+    () =>
+      buildWorkoutPerformanceSummary({
+        completedExercises,
+        totalPlannedSets,
+      }),
+    [completedExercises, totalPlannedSets],
+  );
+  const performanceStatus = useMemo(
+    () => getPerformanceStatus(performanceSummary),
+    [performanceSummary],
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -422,6 +482,9 @@ export default function RunFinishSummary({
             durationMinutes,
             weightedSetCount,
             bodyweightSetCount,
+            totalPlannedSets,
+            // Skickas som faktisk-vs-plan så analysen inte bedömer ett planerat pass.
+            performanceSummary,
           }),
         });
 
@@ -453,18 +516,21 @@ export default function RunFinishSummary({
       isMounted = false;
     };
   }, [
+    completedExercises,
     durationMinutes,
     timedExercises,
     totalCompletedSets,
+    totalPlannedSets,
     totalVolume,
     userId,
     workoutName,
+    performanceSummary,
   ]);
 
   const comparisonLogs = useMemo(() => getRecentCompletedLogs(userId), [userId]);
   const intensityScore = useMemo(
-    () => getCurrentIntensityScore(completedExercises),
-    [completedExercises],
+    () => getCurrentIntensityScore(completedExercises, performanceSummary),
+    [completedExercises, performanceSummary],
   );
   const averageRecentIntensity = useMemo(() => {
     return comparisonLogs.length > 0
@@ -510,24 +576,57 @@ export default function RunFinishSummary({
       return true;
     });
   }, [completedExercises]);
+  const isNoWorkLogged = performanceSummary.completedSetCount === 0;
+  const completionPercent =
+    totalPlannedSets > 0
+      ? Math.round((performanceSummary.completedSetCount / totalPlannedSets) * 100)
+      : 0;
+  const performancePercent =
+    performanceSummary.overallRatio !== null
+      ? Math.round(performanceSummary.overallRatio * 100)
+      : null;
 
-  const keyMetrics: MetricCard[] = [
-    {
-      label: "Ansträngning",
-      value: `RPE ${formatMetricNumber(intensityScore)}`,
-      helper: "Genomsnitt i passet",
-    },
-    {
-      label: "Arbetsset",
-      value: String(totalCompletedSets),
-      helper: "Genomförda set",
-    },
-    {
-      label: totalVolume > 0 ? "Volym" : "Tid",
-      value: totalVolume > 0 ? `${Math.round(totalVolume)} kg` : `${durationMinutes} min`,
-      helper: totalVolume > 0 ? "Total vikt lyft" : "Passets längd",
-    },
-  ];
+  const keyMetrics: MetricCard[] = isNoWorkLogged
+    ? [
+        {
+          label: "Arbetsset",
+          value: "0",
+          helper: `${totalPlannedSets} planerade set hoppades över`,
+        },
+        {
+          label: "Genomfört",
+          value: `${completionPercent}%`,
+          helper: "Av planerade arbetsset",
+        },
+        {
+          label: "Belastning",
+          value: "Ingen",
+          helper: "Inga reps, vikter eller tider loggades",
+        },
+      ]
+    : [
+        {
+          label: "Mot plan",
+          value: performancePercent !== null ? `${performancePercent}%` : "Loggat",
+          helper:
+            performancePercent !== null
+              ? "Faktisk prestation jämfört med plan"
+              : "Faktiska set registrerades",
+        },
+        {
+          label: "Arbetsset",
+          value: String(totalCompletedSets),
+          helper:
+            performanceSummary.skippedSetCount > 0
+              ? `${performanceSummary.skippedSetCount} planerade set hoppades över`
+              : "Alla loggade set räknas",
+        },
+        {
+          label: totalVolume > 0 ? "Volym" : "Tid",
+          value: totalVolume > 0 ? `${Math.round(totalVolume)} kg` : `${durationMinutes} min`,
+          helper: totalVolume > 0 ? "Faktisk vikt lyft" : "Passets längd",
+        },
+      ];
 
   const mainInsight =
     analysisState === "ready" && !isGenericMainInsight(analysis?.title)
@@ -535,36 +634,58 @@ export default function RunFinishSummary({
       : getFallbackMainInsight({
           comparisonPercent,
           intensityScore,
+          performanceStatus,
           totalCompletedSets,
         });
 
-  const nextStepItems: CoachingCard[] = [
-    {
-      accentClassName: "border-emerald-200 bg-emerald-50",
-      label: "Fortsätt",
-      title: "Det här fungerade",
-      body:
-        analysis?.achieved?.trim() ||
-        "Du fick in en tydlig träningssignal idag. Fortsätt bygga på regelbundenheten.",
-    },
-    {
-      accentClassName: "border-amber-200 bg-amber-50",
-      label: "Justera",
-      title: "Till nästa pass",
-      body:
-        analysis?.nextStep?.trim() ||
-        getFirstExerciseAdjustment(completedExercises[0] ?? null),
-    },
-    {
-      accentClassName: "border-sky-200 bg-sky-50",
-      label: "Tänk på",
-      title: "Timing och återhämtning",
-      body:
-        analysis?.nextSessionTiming?.trim() ||
-        analysis?.coachNote?.trim() ||
-        "Låt återhämtningen styra tempot till nästa liknande pass.",
-    },
-  ];
+  const nextStepItems: CoachingCard[] = isNoWorkLogged
+    ? [
+        {
+          accentClassName: "border-emerald-200 bg-emerald-50",
+          label: "Fortsätt",
+          title: "Du tog dig till passet",
+          body: "Det är fortfarande ett steg i rätt riktning, men inga arbetsset registrerades.",
+        },
+        {
+          accentClassName: "border-amber-200 bg-amber-50",
+          label: "Justera",
+          title: "Gör starten mindre",
+          body: "Välj ett kortare pass eller sikta på 1-2 övningar nästa gång så tröskeln blir låg.",
+        },
+        {
+          accentClassName: "border-sky-200 bg-sky-50",
+          label: "Tänk på",
+          title: "Analysen räknar faktiskt arbete",
+          body: "Överhoppade övningar påverkar inte progressionen som genomförd träningsstimulans.",
+        },
+      ]
+    : [
+        {
+          accentClassName: "border-emerald-200 bg-emerald-50",
+          label: "Fortsätt",
+          title: "Det här fungerade",
+          body:
+            analysis?.achieved?.trim() ||
+            "Du fick in en tydlig träningssignal idag. Fortsätt bygga på regelbundenheten.",
+        },
+        {
+          accentClassName: "border-amber-200 bg-amber-50",
+          label: "Justera",
+          title: "Till nästa pass",
+          body:
+            analysis?.nextStep?.trim() ||
+            getFirstExerciseAdjustment(completedExercises[0] ?? null),
+        },
+        {
+          accentClassName: "border-sky-200 bg-sky-50",
+          label: "Tänk på",
+          title: "Timing och återhämtning",
+          body:
+            analysis?.nextSessionTiming?.trim() ||
+            analysis?.coachNote?.trim() ||
+            "Låt återhämtningen styra tempot till nästa liknande pass.",
+        },
+      ];
 
   const comparisonSummaryText =
     benchmark.average > 0
@@ -658,39 +779,41 @@ export default function RunFinishSummary({
         </div>
       </section>
 
-      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-          Frivillig feedback
-        </p>
-        <h3 className="mt-2 text-xl font-semibold text-slate-950">
-          Vill du ändra något till nästa gång?
-        </h3>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          Helt valfritt. Tryck på en övning om du vill få mindre av den framöver.
-        </p>
+      {uniqueExercises.length > 0 ? (
+        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Frivillig feedback
+          </p>
+          <h3 className="mt-2 text-xl font-semibold text-slate-950">
+            Vill du ändra något till nästa gång?
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Helt valfritt. Tryck på en övning om du vill få mindre av den framöver.
+          </p>
 
-        <div className="mt-4 flex flex-wrap gap-3">
-          {uniqueExercises.map((exercise) => {
-            const selected = lessPreferenceIds.includes(exercise.exerciseId);
+          <div className="mt-4 flex flex-wrap gap-3">
+            {uniqueExercises.map((exercise) => {
+              const selected = lessPreferenceIds.includes(exercise.exerciseId);
 
-            return (
-              <button
-                key={exercise.exerciseId}
-                type="button"
-                onClick={() => toggleLessPreference(exercise)}
-                className={cn(
-                  "rounded-2xl border px-4 py-3 text-sm font-semibold transition",
-                  selected
-                    ? "border-rose-300 bg-rose-100 text-rose-900"
-                    : "border-slate-200 bg-white text-slate-700",
-                )}
-              >
-                {selected ? `Mindre av ${exercise.exerciseName}` : exercise.exerciseName}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+              return (
+                <button
+                  key={exercise.exerciseId}
+                  type="button"
+                  onClick={() => toggleLessPreference(exercise)}
+                  className={cn(
+                    "rounded-2xl border px-4 py-3 text-sm font-semibold transition",
+                    selected
+                      ? "border-rose-300 bg-rose-100 text-rose-900"
+                      : "border-slate-200 bg-white text-slate-700",
+                  )}
+                >
+                  {selected ? `Mindre av ${exercise.exerciseName}` : exercise.exerciseName}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <details className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
         <summary className="cursor-pointer list-none">

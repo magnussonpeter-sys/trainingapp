@@ -17,6 +17,7 @@ export const viewport: Viewport = {
 // knappklasserna så att appen inte faller tillbaka till rå HTML.
 const criticalFallbackStyles = `
 html,body{margin:0;min-height:100%;background:linear-gradient(180deg,#f6fbf6 0%,#eef7ef 100%);color:#0f172a;font-family:"Avenir Next","Segoe UI",Helvetica,Arial,sans-serif}
+html{font-size:17px}
 body{padding-bottom:env(safe-area-inset-bottom)}
 a{color:inherit;text-decoration:none}
 button,input,select,textarea{font:inherit;color:#0f172a}
