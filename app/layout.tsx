@@ -1,15 +1,31 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import PwaRegister from "@/components/pwa/pwa-register";
 
 export const metadata: Metadata = {
   title: "Träningsapp",
   description: "AI-stödd träningsapp för mobil",
+  applicationName: "Träningsapp",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Träningsapp",
+  },
+  icons: {
+    icon: [
+      { url: "/pwa-icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/pwa-icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/pwa-icon-192.png", sizes: "192x192", type: "image/png" }],
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#86efac",
 };
 
 // Kritisk mobil-fallback om genererad Tailwind-CSS inte laddas eller inte
@@ -130,6 +146,7 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-full bg-gray-50 text-gray-900">
+        <PwaRegister />
         <div className="min-h-screen flex flex-col">{children}</div>
       </body>
     </html>
