@@ -59,3 +59,8 @@ export function getExerciseProgression(
   const all = loadAll(userId);
   return all[exerciseId] ?? null;
 }
+
+export function getAllExerciseProgression(userId: string) {
+  // Debug/export behöver läsa hela progressionstillståndet utan att ändra det.
+  return loadAll(userId);
+}

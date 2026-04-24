@@ -28,6 +28,7 @@ import {
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
 import { getExercisePreferences } from "@/lib/exercise-preference-storage";
+import { saveAiDebugGeneratedWorkoutSnapshot } from "@/lib/analysis/ai-debug-generated-history";
 import type { WorkoutFocus } from "@/types/workout";
 import type { WorkoutLog } from "@/lib/workout-log-storage";
 
@@ -828,6 +829,39 @@ export default function HomePage() {
         supersetPreference: settings?.superset_preference ?? null,
       });
 
+      // Spara en liten lokal debughistorik så analys/export kan jämföra flera AI-pass över tid.
+      saveAiDebugGeneratedWorkoutSnapshot(userId, {
+        requestedDurationMinutes: durationMinutes,
+        goal,
+        selectedGym: gymLabel,
+        equipmentSeed: equipment,
+        workoutFocusTag: weeklyStructure.nextFocus,
+        request: {
+          goal,
+          durationMinutes,
+          equipment,
+          gym: gymId,
+          gymLabel,
+          confidenceScore: weeklyStructure.confidenceScore,
+          nextFocus: weeklyStructure.nextFocus,
+          splitStyle: weeklyStructure.splitStyle,
+          supersetPreference: settings?.superset_preference ?? null,
+        },
+        weeklyBudget: weeklyStructure.muscleBudget.map((entry) => ({
+          group: entry.group,
+          label: entry.label,
+          priority: entry.priority,
+          targetSets: entry.targetSets,
+          completedSets: entry.completedSets,
+          effectiveSets: entry.effectiveSets,
+          remainingSets: entry.remainingSets,
+          recent4WeekAvgSets: entry.recent4WeekAvgSets,
+        })),
+        weeklyPlan: weeklyStructure.upcomingDays,
+        normalizedWorkout: workout,
+        aiDebug: workout.aiDebug ?? null,
+      });
+
       // Spara draft innan preview öppnas så run/preview kan återta samma flöde.
       saveWorkoutDraft(userId, {
         ...workout,
@@ -895,6 +929,39 @@ export default function HomePage() {
         lessOftenExerciseIds,
         avoidSupersets: settings?.avoid_supersets ?? null,
         supersetPreference: settings?.superset_preference ?? null,
+      });
+
+      // Snabbstart ska också lämna spår i debughistoriken utan att ändra själva träningsflödet.
+      saveAiDebugGeneratedWorkoutSnapshot(userId, {
+        requestedDurationMinutes: quickDuration,
+        goal,
+        selectedGym: gymLabel,
+        equipmentSeed: equipment,
+        workoutFocusTag: weeklyStructure.nextFocus,
+        request: {
+          goal,
+          durationMinutes: quickDuration,
+          equipment,
+          gym: gymId,
+          gymLabel,
+          confidenceScore: weeklyStructure.confidenceScore,
+          nextFocus: weeklyStructure.nextFocus,
+          splitStyle: weeklyStructure.splitStyle,
+          supersetPreference: settings?.superset_preference ?? null,
+        },
+        weeklyBudget: weeklyStructure.muscleBudget.map((entry) => ({
+          group: entry.group,
+          label: entry.label,
+          priority: entry.priority,
+          targetSets: entry.targetSets,
+          completedSets: entry.completedSets,
+          effectiveSets: entry.effectiveSets,
+          remainingSets: entry.remainingSets,
+          recent4WeekAvgSets: entry.recent4WeekAvgSets,
+        })),
+        weeklyPlan: weeklyStructure.upcomingDays,
+        normalizedWorkout: workout,
+        aiDebug: workout.aiDebug ?? null,
       });
 
       // Save draft before entering /run so the active session restores correctly offline too.
