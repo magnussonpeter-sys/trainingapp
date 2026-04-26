@@ -21,6 +21,8 @@ type AppAuthUser = {
 // ENV-admin för bootstrap.
 const ENV_ADMIN_USERNAME = process.env.ADMIN_USERNAME?.trim().toLowerCase() ?? "";
 const ENV_ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH?.trim() ?? "";
+const AUTH_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const AUTH_SESSION_UPDATE_AGE_SECONDS = 60 * 60 * 24;
 
 // Bygger ett säkert visningsnamn som alltid finns.
 function buildDisplayName(params: {
@@ -67,6 +69,13 @@ function createAppAuthUser(params: {
 export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt",
+    // Explicit maxAge gör att PWA-läget också får en persistent cookie mellan appstarter.
+    maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
+    updateAge: AUTH_SESSION_UPDATE_AGE_SECONDS,
+  },
+  jwt: {
+    // Håll JWT-livslängden i sync med sessionen så användaren inte loggas ut i onödan.
+    maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
   },
   providers: [
     CredentialsProvider({

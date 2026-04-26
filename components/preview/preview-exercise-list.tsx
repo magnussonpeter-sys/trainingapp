@@ -145,6 +145,9 @@ export default function PreviewExerciseList({
             progressionNote={exercise.progressionNote}
             suggestedWeightLabel={exercise.suggestedWeightLabel}
             weightUnitLabel={exercise.weightUnitLabel}
+            ringSetupLabel={exercise.ringSetup?.label}
+            ringSetupInstruction={exercise.ringSetup?.instruction}
+            ringSetupHint={exercise.ringSetup?.progressionHint}
             sets={exercise.sets}
             reps={exercise.reps ?? undefined}
             duration={exercise.duration ?? undefined}

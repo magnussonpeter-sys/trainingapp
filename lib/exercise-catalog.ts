@@ -3,6 +3,7 @@ import {
   normalizeEquipmentIdList,
   type EquipmentId,
 } from "@/lib/equipment";
+import type { Exercise } from "@/types/workout";
 
 export type { EquipmentId } from "@/lib/equipment";
 
@@ -26,6 +27,7 @@ export type ExerciseCatalogItem = {
   defaultReps?: number;
   defaultDuration?: number;
   sidedness?: "none" | "per_side" | "alternating";
+  ringSetup?: Exercise["ringSetup"];
   defaultRest: number;
   movementPattern: MovementPattern;
   primaryMuscles: string[];
@@ -253,6 +255,8 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     defaultSets: 3,
     defaultReps: 10,
     defaultRest: 30,
+    // Dead bug utförs växelvis sida för sida och ska visas så i UI.
+    sidedness: "per_side",
     movementPattern: "core",
     primaryMuscles: ["core"],
     secondaryMuscles: ["hip_flexors"],
@@ -369,6 +373,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Luta kroppen bakåt med spänd bål och dra bröstet mot ringarna. Mål: Träna övre rygg, lats och biceps med hög skulderkontroll.",
     defaultSets: 3,
     defaultReps: 10,
+    ringSetup: {
+      height: "waist",
+      label: "midjehöjd",
+      instruction:
+        "Ställ ringarna ungefär i midjehöjd. Ju mer horisontell kroppen är desto tyngre blir övningen.",
+      progressionRole: "primary",
+      progressionHint:
+        "När du klarar övre delen av repintervallet med god teknik kan ringarna sänkas ett steg eller fötterna flyttas längre fram.",
+    },
     defaultRest: 60,
     movementPattern: "horizontal_pull",
     primaryMuscles: ["lats", "upper_back", "biceps"],
@@ -385,6 +398,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Placera fötterna på en bänk och dra kroppen upp mot ringarna med rak kropp. Mål: Öka belastningen i rygg, biceps och bål.",
     defaultSets: 3,
     defaultReps: 8,
+    ringSetup: {
+      height: "knee",
+      label: "knä–midjehöjd",
+      instruction:
+        "Lägre ringar gör kroppen mer horisontell. Med fötterna högt passar knä- till låg midjehöjd bäst för en tung variant.",
+      progressionRole: "primary",
+      progressionHint:
+        "Progression sker främst genom lägre ringar eller högre fotplacering, inte bara fler reps.",
+    },
     defaultRest: 75,
     movementPattern: "horizontal_pull",
     primaryMuscles: ["lats", "upper_back", "biceps"],
@@ -401,6 +423,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Håll kroppen stabil mellan ringarna, sänk kontrollerat ned och pressa upp igen. Mål: Träna bröst, triceps, axlar och bål med större stabilitetskrav.",
     defaultSets: 3,
     defaultReps: 10,
+    ringSetup: {
+      height: "low",
+      label: "lågt över golvet",
+      instruction:
+        "Placera ringarna lågt men så att bröstet kan sänkas kontrollerat mellan händerna.",
+      progressionRole: "secondary",
+      progressionHint:
+        "Högre ringar gör övningen lättare. Lägre ringar gör den tyngre och mer instabil.",
+    },
     defaultRest: 60,
     movementPattern: "horizontal_push",
     primaryMuscles: ["chest", "triceps", "front_delts"],
@@ -417,6 +448,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Placera fötterna på en bänk och utför armhävningar i ringar med stabil bål. Mål: Öka belastningen på bröst, axlar och triceps.",
     defaultSets: 3,
     defaultReps: 8,
+    ringSetup: {
+      height: "low",
+      label: "lågt över golvet",
+      instruction:
+        "Ringarna ska vara låga så att du får ett stabilt men djupt pressläge när fötterna vilar på bänk.",
+      progressionRole: "secondary",
+      progressionHint:
+        "Justera i första hand kroppsvinkel och fotplacering. Sänk ringarna först när tekniken känns stadig.",
+    },
     defaultRest: 75,
     movementPattern: "horizontal_push",
     primaryMuscles: ["chest", "front_delts", "triceps"],
@@ -433,6 +473,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Håll kroppen stabil över ringarna, sänk dig kontrollerat och pressa upp igen. Mål: Träna triceps, bröst och axlar med hög stabilitetsutmaning.",
     defaultSets: 3,
     defaultReps: 6,
+    ringSetup: {
+      height: "shoulder",
+      label: "bröst–axelhöjd",
+      instruction:
+        "Ringarna bör vara ungefär i bröst- till axelhöjd så att du kan starta i stabilt stöd med fötterna fria eller lätt assisterade.",
+      progressionRole: "fixed",
+      progressionHint:
+        "Här är höjden främst setup. Progression sker oftare via stabilitet, djup och belastning.",
+    },
     defaultRest: 90,
     movementPattern: "vertical_push",
     primaryMuscles: ["triceps", "chest", "front_delts"],
@@ -449,6 +498,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Håll dig uppe med raka armar och stabila ringar nära kroppen. Mål: Träna axelstabilitet, triceps och bål.",
     defaultSets: 3,
     defaultDuration: 20,
+    ringSetup: {
+      height: "shoulder",
+      label: "bröst–axelhöjd",
+      instruction:
+        "Ställ ringarna så att du kan komma upp i ett kontrollerat stöd. Börja gärna med fötterna lätt i golvet vid behov.",
+      progressionRole: "fixed",
+      progressionHint:
+        "Behåll ungefär samma höjd och bygg progression via stabilare stöd eller mindre hjälp från benen.",
+    },
     defaultRest: 45,
     movementPattern: "vertical_push",
     primaryMuscles: ["shoulders", "triceps", "core"],
@@ -465,6 +523,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Dra kroppen upp tills händerna kommer nära bröstet och sänk kontrollerat ned igen. Mål: Träna lats, övre rygg och grepp med mer fri rörelse i skuldrorna.",
     defaultSets: 3,
     defaultReps: 6,
+    ringSetup: {
+      height: "overhead",
+      label: "hängläge över huvudet",
+      instruction:
+        "Ringarna ska hänga så högt att du kan nå fullt häng med fria ben eller lätt böjda knän.",
+      progressionRole: "fixed",
+      progressionHint:
+        "Här är höjden främst en praktisk setup. Progression sker via fler reps, extra vikt eller striktare utförande.",
+    },
     defaultRest: 90,
     movementPattern: "vertical_pull",
     primaryMuscles: ["lats", "upper_back", "biceps"],
@@ -481,6 +548,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Dra kroppen upp i ringarna med underhandsgrepp eller roterande grepp och sänk långsamt ned. Mål: Träna rygg och biceps med skuldervänlig rörelsebana.",
     defaultSets: 3,
     defaultReps: 6,
+    ringSetup: {
+      height: "overhead",
+      label: "hängläge över huvudet",
+      instruction:
+        "Ringarna ska hänga så högt att du kan starta från fullt häng med fri rörelse i skuldrorna.",
+      progressionRole: "fixed",
+      progressionHint:
+        "Behåll höjden konstant och bygg progression via reps, tempo eller extra belastning.",
+    },
     defaultRest: 90,
     movementPattern: "vertical_pull",
     primaryMuscles: ["biceps", "lats"],
@@ -497,6 +573,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Stå eller knästående, låt kroppen falla framåt med raka armar och dra sedan tillbaka med stabil bål. Mål: Träna anti-extension, axlar och djup bålstyrka.",
     defaultSets: 3,
     defaultReps: 8,
+    ringSetup: {
+      height: "shoulder",
+      label: "axelhöjd",
+      instruction:
+        "Ställ ringarna ungefär i axelhöjd för stående eller knästående anti-extension-arbete med god kontroll.",
+      progressionRole: "secondary",
+      progressionHint:
+        "Progression sker främst via längre utfallsvinkel och bättre kontroll. Lägre ringar kan användas sekundärt.",
+    },
     defaultRest: 45,
     movementPattern: "core",
     primaryMuscles: ["core"],
@@ -513,6 +598,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Ha fötterna i ringarna i plankposition och dra knäna kontrollerat in mot bröstet. Mål: Träna bål, höftböjare och skulderstabilitet.",
     defaultSets: 3,
     defaultReps: 10,
+    ringSetup: {
+      height: "low",
+      label: "lågt över golvet",
+      instruction:
+        "Ringarna ska hänga lågt så att fötterna kan vila stabilt i dem när du står i plankposition.",
+      progressionRole: "fixed",
+      progressionHint:
+        "Behåll höjden ungefär densamma och bygg progression via tempo, kontroll och fler reps.",
+    },
     defaultRest: 30,
     movementPattern: "core",
     primaryMuscles: ["core", "hip_flexors"],
@@ -529,6 +623,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Ligg på rygg med hälarna i ringarna, lyft höften och dra hälarna in mot sätet. Mål: Träna hamstrings, säte och bål.",
     defaultSets: 3,
     defaultReps: 10,
+    ringSetup: {
+      height: "low",
+      label: "lågt över golvet",
+      instruction:
+        "Ringarna ska vara låga så att hälarna ligger i dem med benen utsträckta och höften kan hållas uppe.",
+      progressionRole: "fixed",
+      progressionHint:
+        "Här är höjden mest setup. Progression sker hellre via reps, tempo eller enbensvarianter.",
+    },
     defaultRest: 45,
     movementPattern: "hinge",
     primaryMuscles: ["hamstrings", "glutes"],
@@ -545,6 +648,15 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
       "Utförande: Luta dig bakåt och dra ringarna mot ansiktet med höga armbågar. Mål: Träna baksida axlar, övre rygg och skulderhälsa.",
     defaultSets: 3,
     defaultReps: 12,
+    ringSetup: {
+      height: "chest",
+      label: "brösthöjd",
+      instruction:
+        "Brösthöjd passar bra för att dra ringarna mot ansiktet med höga armbågar och god skulderkontroll.",
+      progressionRole: "primary",
+      progressionHint:
+        "Lägre ringar eller mer lutning gör övningen tyngre när tekniken känns stabil.",
+    },
     defaultRest: 45,
     movementPattern: "horizontal_pull",
     primaryMuscles: ["rear_delts", "upper_back"],

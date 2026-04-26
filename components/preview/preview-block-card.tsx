@@ -4,7 +4,10 @@ import { useState } from "react";
 
 import PreviewInlineEditor from "@/components/preview/preview-inline-editor";
 import PreviewSupersetFlow from "@/components/preview/preview-superset-flow";
-import { formatExerciseTarget } from "@/lib/exercise-execution";
+import {
+  formatExerciseTarget,
+  formatRingSetupLabel,
+} from "@/lib/exercise-execution";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import type { Exercise, WorkoutBlock } from "@/types/workout";
 
@@ -262,6 +265,11 @@ export default function PreviewBlockCard({
                         {exercise.rest ? ` · ${exercise.rest}s vila` : ""}
                         {exercise.suggestedWeightLabel ? ` · ${exercise.suggestedWeightLabel}` : ""}
                       </p>
+                      {exercise.ringSetup ? (
+                        <p className="mt-1 text-sm text-slate-500">
+                          {formatRingSetupLabel(exercise.ringSetup)}
+                        </p>
+                      ) : null}
                     </div>
 
                     <span className="shrink-0 text-slate-300">{isOpen ? "−" : "+"}</span>
@@ -271,6 +279,20 @@ export default function PreviewBlockCard({
                     <div className="mt-4 space-y-4 border-t border-slate-200 pt-4">
                       {exercise.description ? (
                         <p className="text-sm leading-6 text-slate-600">{exercise.description}</p>
+                      ) : null}
+
+                      {exercise.ringSetup ? (
+                        <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-3 text-sm text-emerald-900">
+                          <p className="font-medium">
+                            Setup: {exercise.ringSetup.label}
+                          </p>
+                          <p className="mt-1 leading-6">{exercise.ringSetup.instruction}</p>
+                          {exercise.ringSetup.progressionHint ? (
+                            <p className="mt-2 text-emerald-800">
+                              Tips: {exercise.ringSetup.progressionHint}
+                            </p>
+                          ) : null}
+                        </div>
                       ) : null}
 
                       {exercise.progressionNote ? (

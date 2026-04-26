@@ -5,8 +5,10 @@ import { useEffect, useState } from "react";
 import EffortFeedbackRow from "@/components/run/effort-feedback-row";
 import TimerPanel from "@/components/run/timer-panel";
 import WeightChipRow from "@/components/run/weight-chip-row";
+import { getExerciseById } from "@/lib/exercise-catalog";
 import {
   formatExerciseTarget,
+  formatRingSetupLabel,
   getSideSwitchSeconds,
   getTimedExerciseTotalSeconds,
 } from "@/lib/exercise-execution";
@@ -26,11 +28,28 @@ function shouldShowWeightInput(params: {
   weightChipOptions: string[];
 }) {
   const { exercise, weight, suggestedWeightValue, weightChipOptions } = params;
+  const catalogExercise = getExerciseById(exercise.id);
+  const requiredEquipment = catalogExercise?.requiredEquipment ?? [];
+  const hasWeightedEquipment = requiredEquipment.some((equipmentId) =>
+    [
+      "dumbbells",
+      "barbell",
+      "ez_bar",
+      "trap_bar",
+      "kettlebells",
+      "smith_machine",
+      "cable_machine",
+      "machines",
+      "medicine_ball",
+    ].includes(equipmentId),
+  );
 
   return Boolean(
     weight.trim() ||
       suggestedWeightValue.trim() ||
       weightChipOptions.length > 0 ||
+      hasWeightedEquipment ||
+      exercise.weightSelectionMode ||
       (exercise.availableWeightsKg?.length ?? 0) > 0 ||
       exercise.suggestedWeight !== null &&
         exercise.suggestedWeight !== undefined &&
@@ -116,6 +135,10 @@ type ActiveExerciseCardProps = {
   showRestTimer: boolean;
   restRemainingSeconds: number;
   showExerciseFeedback: boolean;
+  feedbackExercise: Exercise | null;
+  feedbackExerciseIndex: number;
+  feedbackExerciseTotal: number;
+  feedbackTimedExercise: boolean;
   selectedExtraReps: ExtraRepsOption | null;
   setSelectedExtraReps: (value: ExtraRepsOption | null) => void;
   selectedTimedEffort: TimedEffortOption | null;
@@ -150,6 +173,10 @@ export default function ActiveExerciseCard({
   showRestTimer,
   restRemainingSeconds,
   showExerciseFeedback,
+  feedbackExercise,
+  feedbackExerciseIndex,
+  feedbackExerciseTotal,
+  feedbackTimedExercise,
   selectedExtraReps,
   setSelectedExtraReps,
   selectedTimedEffort,
@@ -218,14 +245,16 @@ export default function ActiveExerciseCard({
               Feedback
             </p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
-              Hur kändes det?
+              {feedbackExercise?.name ?? "Hur kändes det?"}
             </h2>
             <p className="mt-2 text-sm text-slate-500">
-              Spara upplevelsen snabbt innan nästa steg.
+              {feedbackExerciseTotal > 1
+                ? `Övning ${feedbackExerciseIndex + 1} av ${feedbackExerciseTotal}. Hoppa över om du vill vidare direkt.`
+                : "Spara upplevelsen snabbt innan nästa steg."}
             </p>
           </div>
 
-          {timedExercise ? (
+          {feedbackTimedExercise ? (
             <EffortFeedbackRow
               mode="timed"
               value={selectedTimedEffort}
@@ -297,6 +326,20 @@ export default function ActiveExerciseCard({
           {showDescription ? (
             <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
               {exercise.description?.trim() || "Ingen beskrivning tillgänglig ännu."}
+            </div>
+          ) : null}
+
+          {exercise.ringSetup ? (
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+              <p className="font-semibold text-emerald-950">
+                Setup: {formatRingSetupLabel(exercise.ringSetup)}
+              </p>
+              <p className="mt-1 leading-6">{exercise.ringSetup.instruction}</p>
+              {exercise.ringSetup.progressionHint ? (
+                <p className="mt-2 leading-6 text-emerald-800">
+                  Tips: {exercise.ringSetup.progressionHint}
+                </p>
+              ) : null}
             </div>
           ) : null}
 

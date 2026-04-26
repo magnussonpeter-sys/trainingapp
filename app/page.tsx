@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { signIn } from "next-auth/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function LoginPage() {
   // Lokal state för formuläret
@@ -12,7 +12,44 @@ export default function LoginPage() {
   // UI-state för feedback och lösenordsvisning
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingPage, setLoadingPage] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function checkAuth() {
+      try {
+        // Skicka direkt vidare om en giltig session redan finns kvar i PWA/webbläsaren.
+        const response = await fetch("/api/auth/me", {
+          cache: "no-store",
+          credentials: "include",
+        });
+        const data = await response.json().catch(() => null);
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (response.ok && data?.user) {
+          window.location.replace("/home");
+          return;
+        }
+      } catch (authError) {
+        console.error("Initial auth check failed:", authError);
+      } finally {
+        if (isMounted) {
+          setLoadingPage(false);
+        }
+      }
+    }
+
+    void checkAuth();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -39,6 +76,18 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (loadingPage) {
+    return (
+      <main className="min-h-screen bg-[var(--app-page-bg)] px-4 py-10">
+        <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-5xl items-center justify-center">
+          <div className="w-full max-w-md rounded-[28px] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 text-sm text-[var(--app-text)] shadow-[0_20px_60px_rgba(15,23,42,0.14)]">
+            Kontrollerar inloggning...
+          </div>
+        </div>
+      </main>
+    );
   }
 
   return (

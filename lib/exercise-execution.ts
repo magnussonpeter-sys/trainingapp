@@ -13,6 +13,7 @@ const PER_SIDE_EXERCISE_IDS = new Set([
   "single_leg_glute_bridge",
   "step_up_bodyweight",
   "side_plank",
+  "dead_bug",
   "bird_dog",
   "one_arm_dumbbell_row",
   "bulgarian_split_squat",
@@ -82,4 +83,26 @@ export function formatExerciseTarget(exercise: ExerciseExecutionLike) {
   }
 
   return `${exercise.reps ?? "-"} reps${suffix}`;
+}
+
+export function formatRingHeightLabel(
+  ringSetup: Exercise["ringSetup"] | null | undefined,
+) {
+  if (!ringSetup) {
+    return null;
+  }
+
+  return ringSetup.label;
+}
+
+export function formatRingSetupLabel(
+  ringSetup: Exercise["ringSetup"] | null | undefined,
+) {
+  const ringHeightLabel = formatRingHeightLabel(ringSetup);
+
+  if (!ringHeightLabel) {
+    return null;
+  }
+
+  return `Ringhöjd: ${ringHeightLabel}`;
 }

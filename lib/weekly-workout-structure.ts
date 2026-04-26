@@ -1,7 +1,6 @@
 import {
   buildMuscleBudget,
   getConfidenceScore,
-  getFocusDeficitScore,
   type ConfidenceScore,
   type MuscleBudgetEntry,
   type MuscleBudgetGroup,
@@ -55,6 +54,16 @@ export type WeeklyWorkoutStructure = {
   upcomingSteps: WeeklyPlanStep[];
 };
 
+export type AdaptiveFocusScore = {
+  focus: WorkoutFocus;
+  score: number;
+  remainingScore: number;
+  priorityScore: number;
+  overloadPenalty: number;
+  patternBonus: number;
+  reason: string;
+};
+
 const UPPER_PATTERNS = new Set([
   "horizontal_push",
   "horizontal_pull",
@@ -72,6 +81,13 @@ const FOCUS_TO_BUDGET_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
   core: ["core", "glutes"],
 };
 
+const PRIORITY_MULTIPLIERS = [1.75, 1.5, 1.35] as const;
+const PRIORITY_BONUS_MUSCLES = new Set<MuscleBudgetGroup>([
+  "chest",
+  "triceps",
+  "biceps",
+]);
+
 function toIsoDate(value: Date) {
   return value.toISOString().slice(0, 10);
 }
@@ -84,6 +100,10 @@ function addDays(value: Date, days: number) {
 
 function getDayLabel(value: Date) {
   return value.toLocaleDateString("sv-SE", { weekday: "short" });
+}
+
+function roundToSingleDecimal(value: number) {
+  return Math.round(value * 10) / 10;
 }
 
 function getGoalPattern(goal?: WeeklyPlanningGoal | null): WorkoutFocus[] {
@@ -223,18 +243,241 @@ function getTrainingDayIndexes(slotCount: number) {
   return [0, 2, 4, 6];
 }
 
+function getPriorityRank(
+  configuredPriorityMuscles: MuscleBudgetGroup[],
+  group: MuscleBudgetGroup,
+) {
+  const index = configuredPriorityMuscles.indexOf(group);
+  return index >= 0 ? index : null;
+}
+
+function getLoadPenalty(entry: MuscleBudgetEntry) {
+  if (entry.loadStatus === "high_risk") {
+    return 3;
+  }
+
+  if (entry.loadStatus === "over") {
+    return 1.5;
+  }
+
+  return 0;
+}
+
+function getFocusEntries(
+  entries: MuscleBudgetEntry[],
+  focus: WorkoutFocus,
+) {
+  return entries.filter((entry) => FOCUS_TO_BUDGET_GROUPS[focus].includes(entry.group));
+}
+
+export function isFocusOverloaded(
+  entries: MuscleBudgetEntry[],
+  focus: WorkoutFocus,
+): boolean {
+  const focusEntries = getFocusEntries(entries, focus);
+
+  if (focusEntries.length === 0) {
+    return false;
+  }
+
+  const overloadedCount = focusEntries.filter(
+    (entry) => entry.loadStatus === "high_risk" || entry.loadStatus === "over",
+  ).length;
+
+  if (overloadedCount >= Math.ceil(focusEntries.length / 2)) {
+    return true;
+  }
+
+  if (focus === "lower_body") {
+    const quads = focusEntries.find((entry) => entry.group === "quads");
+    const glutes = focusEntries.find((entry) => entry.group === "glutes");
+
+    if (
+      quads &&
+      glutes &&
+      (quads.loadStatus === "high_risk" || quads.loadStatus === "over") &&
+      (glutes.loadStatus === "high_risk" || glutes.loadStatus === "over")
+    ) {
+      return true;
+    }
+  }
+
+  if (focus === "core") {
+    const core = focusEntries.find((entry) => entry.group === "core");
+
+    if (core && (core.loadStatus === "high_risk" || core.loadStatus === "over")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function getAdaptiveFocusScore(params: {
+  focus: WorkoutFocus;
+  entries: MuscleBudgetEntry[];
+  configuredPriorityMuscles: MuscleBudgetGroup[];
+  patternPreferredFocus: WorkoutFocus;
+}): AdaptiveFocusScore {
+  const focusEntries = getFocusEntries(params.entries, params.focus);
+
+  if (focusEntries.length === 0) {
+    return {
+      focus: params.focus,
+      score: params.focus === params.patternPreferredFocus ? 0.5 : 0,
+      remainingScore: 0,
+      priorityScore: 0,
+      overloadPenalty: 0,
+      patternBonus: params.focus === params.patternPreferredFocus ? 0.5 : 0,
+      reason: "Inga tydliga muskelgrupper hittades för fokuset.",
+    };
+  }
+
+  let remainingScore = 0;
+  let priorityScore = 0;
+  let overloadPenalty = 0;
+  let overloadedCount = 0;
+
+  for (const entry of focusEntries) {
+    remainingScore += entry.remainingSets;
+
+    const priorityRank = getPriorityRank(
+      params.configuredPriorityMuscles,
+      entry.group,
+    );
+
+    if (priorityRank !== null) {
+      const multiplier = PRIORITY_MULTIPLIERS[priorityRank] ?? 1;
+      priorityScore += entry.remainingSets * (multiplier - 1);
+
+      if (PRIORITY_BONUS_MUSCLES.has(entry.group) && entry.remainingSets > 0) {
+        priorityScore += entry.remainingSets * 0.5;
+      }
+    }
+
+    const penalty = getLoadPenalty(entry);
+    overloadPenalty += penalty;
+
+    if (penalty > 0) {
+      overloadedCount += 1;
+    }
+  }
+
+  // Om majoriteten av fokusets huvudmuskler redan är överbelastade ska fokuset falla tydligt.
+  if (overloadedCount >= Math.ceil(focusEntries.length / 2)) {
+    overloadPenalty += 4;
+  }
+
+  if (params.focus === "lower_body") {
+    const quads = focusEntries.find((entry) => entry.group === "quads");
+    const glutes = focusEntries.find((entry) => entry.group === "glutes");
+
+    if (
+      quads &&
+      glutes &&
+      (quads.loadStatus === "high_risk" || quads.loadStatus === "over") &&
+      (glutes.loadStatus === "high_risk" || glutes.loadStatus === "over")
+    ) {
+      overloadPenalty += 4;
+    }
+  }
+
+  if (params.focus === "core") {
+    const core = focusEntries.find((entry) => entry.group === "core");
+
+    if (core && (core.loadStatus === "high_risk" || core.loadStatus === "over")) {
+      overloadPenalty += 3;
+    }
+  }
+
+  const patternBonus = params.focus === params.patternPreferredFocus ? 0.5 : 0;
+  const score = roundToSingleDecimal(
+    remainingScore + priorityScore + patternBonus - overloadPenalty,
+  );
+  const topRemainingGroups = focusEntries
+    .filter((entry) => entry.remainingSets > 0)
+    .sort((left, right) => right.remainingSets - left.remainingSets)
+    .slice(0, 3)
+    .map((entry) => entry.label.toLowerCase());
+  const overloadedGroups = focusEntries
+    .filter((entry) => entry.loadStatus === "high_risk" || entry.loadStatus === "over")
+    .map((entry) => entry.label.toLowerCase());
+  const reasonParts = [
+    `remaining ${roundToSingleDecimal(remainingScore)}`,
+    `prio ${roundToSingleDecimal(priorityScore)}`,
+    `överlast -${roundToSingleDecimal(overloadPenalty)}`,
+    patternBonus > 0 ? "veckorytm +0.5" : null,
+    topRemainingGroups.length > 0
+      ? `behov i ${topRemainingGroups.join(", ")}`
+      : "inga starka kvarvarande behov",
+    overloadedGroups.length > 0
+      ? `överlast i ${overloadedGroups.join(", ")}`
+      : null,
+  ].filter(Boolean);
+
+  return {
+    focus: params.focus,
+    score,
+    remainingScore: roundToSingleDecimal(remainingScore),
+    priorityScore: roundToSingleDecimal(priorityScore),
+    overloadPenalty: roundToSingleDecimal(overloadPenalty),
+    patternBonus,
+    reason: reasonParts.join(" · "),
+  };
+}
+
 function getFocusMuscleGroups(
   entries: MuscleBudgetEntry[],
   focus: WorkoutFocus | null,
-  options?: { limit?: number },
+  options?: {
+    limit?: number;
+    configuredPriorityMuscles?: MuscleBudgetGroup[];
+    recommendedOnly?: boolean;
+  },
 ) {
   if (!focus) {
     return [];
   }
 
-  return [...entries]
-    .filter((entry) => FOCUS_TO_BUDGET_GROUPS[focus].includes(entry.group))
+  const configuredPriorityMuscles = options?.configuredPriorityMuscles ?? [];
+  const scopedEntries = [...entries].filter((entry) =>
+    FOCUS_TO_BUDGET_GROUPS[focus].includes(entry.group),
+  );
+  const recommendedEntries = scopedEntries.filter(
+    (entry) =>
+      entry.remainingSets > 0 &&
+      entry.loadStatus !== "high_risk" &&
+      entry.loadStatus !== "over",
+  );
+  const sourceEntries =
+    options?.recommendedOnly && recommendedEntries.length > 0
+      ? recommendedEntries
+      : scopedEntries;
+
+  return sourceEntries
     .sort((left, right) => {
+      const leftPriorityRank = getPriorityRank(
+        configuredPriorityMuscles,
+        left.group,
+      );
+      const rightPriorityRank = getPriorityRank(
+        configuredPriorityMuscles,
+        right.group,
+      );
+
+      if (leftPriorityRank !== rightPriorityRank) {
+        if (leftPriorityRank === null) return 1;
+        if (rightPriorityRank === null) return -1;
+        return leftPriorityRank - rightPriorityRank;
+      }
+
+      const leftLoadPenalty = getLoadPenalty(left);
+      const rightLoadPenalty = getLoadPenalty(right);
+
+      if (leftLoadPenalty !== rightLoadPenalty) {
+        return leftLoadPenalty - rightLoadPenalty;
+      }
+
       if (right.remainingSets !== left.remainingSets) {
         return right.remainingSets - left.remainingSets;
       }
@@ -242,7 +485,6 @@ function getFocusMuscleGroups(
       const priorityRank = { high: 0, medium: 1, low: 2 };
       return priorityRank[left.priority] - priorityRank[right.priority];
     })
-    // Dagens fokus kan vara kompakt, men veckofördjupning behöver kunna visa alla grupper.
     .slice(0, options?.limit ?? Number.POSITIVE_INFINITY)
     .map((entry) => entry.group);
 }
@@ -264,7 +506,9 @@ function getDistinctTrainingWeeks(logs: WorkoutLog[]) {
     const days = Math.floor(
       (completedAt.getTime() - firstDayOfYear.getTime()) / (24 * 60 * 60 * 1000),
     );
-    weekKeys.add(`${completedAt.getFullYear()}-${Math.ceil((days + firstDayOfYear.getDay() + 1) / 7)}`);
+    weekKeys.add(
+      `${completedAt.getFullYear()}-${Math.ceil((days + firstDayOfYear.getDay() + 1) / 7)}`,
+    );
   }
 
   return weekKeys.size;
@@ -282,6 +526,87 @@ function getSplitStyle(passCount: number) {
   return "upper_lower" as const;
 }
 
+function buildPriorityMuscles(
+  entries: MuscleBudgetEntry[],
+  configuredPriorityMuscles: MuscleBudgetGroup[],
+) {
+  const result: MuscleBudgetGroup[] = [];
+
+  const addIfMissing = (group: MuscleBudgetGroup) => {
+    if (!result.includes(group)) {
+      result.push(group);
+    }
+  };
+
+  configuredPriorityMuscles
+    .map((group) => entries.find((entry) => entry.group === group) ?? null)
+    .filter((entry): entry is MuscleBudgetEntry => entry !== null)
+    .filter(
+      (entry) =>
+        entry.remainingSets > 0 &&
+        entry.loadStatus !== "high_risk" &&
+        entry.loadStatus !== "over",
+    )
+    .forEach((entry) => addIfMissing(entry.group));
+
+  entries
+    .filter(
+      (entry) =>
+        entry.priority === "high" &&
+        entry.remainingSets > 0 &&
+        entry.loadStatus !== "high_risk",
+    )
+    .sort((left, right) => right.remainingSets - left.remainingSets)
+    .forEach((entry) => addIfMissing(entry.group));
+
+  entries
+    .filter(
+      (entry) =>
+        entry.priority === "medium" &&
+        entry.remainingSets > 0 &&
+        entry.loadStatus !== "high_risk",
+    )
+    .sort((left, right) => right.remainingSets - left.remainingSets)
+    .forEach((entry) => addIfMissing(entry.group));
+
+  entries
+    .filter(
+      (entry) =>
+        entry.remainingSets > 0 &&
+        entry.loadStatus !== "high_risk",
+    )
+    .sort((left, right) => right.remainingSets - left.remainingSets)
+    .forEach((entry) => addIfMissing(entry.group));
+
+  return result.slice(0, 4);
+}
+
+function buildFocusSummaryText(params: {
+  currentWeekFocuses: WorkoutFocus[];
+  nextFocus: WorkoutFocus;
+  nextFocusScore: AdaptiveFocusScore;
+  patternPreferredFocus: WorkoutFocus;
+}) {
+  const recentSummary =
+    params.currentWeekFocuses.length > 0
+      ? `Senaste 7 dagarna: ${params.currentWeekFocuses
+          .map((focus) => formatWorkoutFocus(focus))
+          .join(", ")}.`
+      : "Ingen genomförd veckocykel ännu.";
+
+  if (params.nextFocus !== params.patternPreferredFocus) {
+    return `${recentSummary} Veckorytmen pekade mot ${formatWorkoutFocus(
+      params.patternPreferredFocus,
+    ).toLowerCase()}, men fokus flyttades till ${formatWorkoutFocus(
+      params.nextFocus,
+    ).toLowerCase()} eftersom ${params.nextFocusScore.reason}.`;
+  }
+
+  return `${recentSummary} Nästa fokus blir ${formatWorkoutFocus(
+    params.nextFocus,
+  ).toLowerCase()} eftersom ${params.nextFocusScore.reason}.`;
+}
+
 export function buildWeeklyWorkoutStructure(params: {
   logs: WorkoutLog[];
   now?: Date;
@@ -297,41 +622,68 @@ export function buildWeeklyWorkoutStructure(params: {
     completedLast28Days: recent28DayCompletedLogs.length,
     distinctTrainingWeeks: getDistinctTrainingWeeks(recent28DayCompletedLogs),
   });
+  const configuredPriorityMuscles = [
+    params.settings?.primary_priority_muscle ?? null,
+    params.settings?.secondary_priority_muscle ?? null,
+    params.settings?.tertiary_priority_muscle ?? null,
+  ].filter((value): value is MuscleBudgetGroup => typeof value === "string");
   const muscleBudget = buildMuscleBudget({
     confidenceScore,
     experienceLevel: params.settings?.experience_level ?? null,
     goal,
     logs: params.logs,
     now,
-    priorityMuscles: [
-      params.settings?.primary_priority_muscle ?? null,
-      params.settings?.secondary_priority_muscle ?? null,
-      params.settings?.tertiary_priority_muscle ?? null,
-    ].filter((value): value is MuscleBudgetGroup => typeof value === "string"),
+    priorityMuscles: configuredPriorityMuscles,
   }).entries;
   const currentWeekFocuses = recentCompletedLogs.map((log) => detectWorkoutFocus(log));
   const passCount = getGoalPassCount(goal);
   const nextPatternIndex = recentCompletedLogs.length % pattern.length;
   const patternPreferredFocus = pattern[nextPatternIndex] ?? pattern[0] ?? "full_body";
-  const focusScores = (["upper_body", "lower_body", "core", "full_body"] as WorkoutFocus[]).map(
-    (focus) => ({
+  const adaptiveFocusScores = (
+    ["upper_body", "lower_body", "core", "full_body"] as WorkoutFocus[]
+  ).map((focus) =>
+    getAdaptiveFocusScore({
       focus,
-      score:
-        getFocusDeficitScore(muscleBudget, focus) +
-        (focus === patternPreferredFocus ? 2 : 0),
+      entries: muscleBudget,
+      configuredPriorityMuscles,
+      patternPreferredFocus,
     }),
   );
-  const nextFocus =
-    focusScores.sort((left, right) => right.score - left.score)[0]?.focus ??
-    patternPreferredFocus;
+  const nonOverloadedCandidates = adaptiveFocusScores.filter(
+    (entry) =>
+      !isFocusOverloaded(muscleBudget, entry.focus) &&
+      (entry.remainingScore > 0 || entry.priorityScore > 0),
+  );
+  const focusCandidates =
+    nonOverloadedCandidates.length > 0
+      ? nonOverloadedCandidates
+      : adaptiveFocusScores;
+  const sortedFocusCandidates = [...focusCandidates].sort((left, right) => {
+    if (right.score !== left.score) {
+      return right.score - left.score;
+    }
+
+    if (left.overloadPenalty !== right.overloadPenalty) {
+      return left.overloadPenalty - right.overloadPenalty;
+    }
+
+    if (right.priorityScore !== left.priorityScore) {
+      return right.priorityScore - left.priorityScore;
+    }
+
+    if (right.remainingScore !== left.remainingScore) {
+      return right.remainingScore - left.remainingScore;
+    }
+
+    return right.patternBonus - left.patternBonus;
+  });
+  const selectedFocusScore = sortedFocusCandidates[0] ?? null;
+  const nextFocus = selectedFocusScore?.focus ?? patternPreferredFocus;
   const nextFocusMuscleGroups = getFocusMuscleGroups(muscleBudget, nextFocus, {
     limit: 3,
+    configuredPriorityMuscles,
+    recommendedOnly: true,
   });
-  const configuredPriorityMuscles = [
-    params.settings?.primary_priority_muscle ?? null,
-    params.settings?.secondary_priority_muscle ?? null,
-    params.settings?.tertiary_priority_muscle ?? null,
-  ].filter((value): value is MuscleBudgetGroup => typeof value === "string");
   const trainingDayIndexes = getTrainingDayIndexes(passCount);
   const upcomingDays = Array.from({ length: 7 }, (_, index) => {
     const date = addDays(now, index);
@@ -359,7 +711,9 @@ export function buildWeeklyWorkoutStructure(params: {
         label: `Pass ${trainingStepCount}`,
         focus: day.focus,
         type: day.type,
-        muscleGroups: getFocusMuscleGroups(muscleBudget, day.focus),
+        muscleGroups: getFocusMuscleGroups(muscleBudget, day.focus, {
+          configuredPriorityMuscles,
+        }),
       } satisfies WeeklyPlanStep;
     }
 
@@ -371,20 +725,23 @@ export function buildWeeklyWorkoutStructure(params: {
       muscleGroups: [],
     } satisfies WeeklyPlanStep;
   });
-  const priorityMuscles = muscleBudget
-    .filter((entry) => entry.priority === "high" && entry.remainingSets > 0)
-    .sort((left, right) => right.remainingSets - left.remainingSets)
-    .slice(0, 3)
-    .map((entry) => entry.group);
-
-  const summaryText =
-    currentWeekFocuses.length > 0
-      ? `Senaste 7 dagarna: ${currentWeekFocuses
-          .map((focus) => formatWorkoutFocus(focus))
-          .join(", ")}. Nästa fokus blir ${formatWorkoutFocus(nextFocus).toLowerCase()} utifrån både veckorytm och återstående muskelbudget.`
-      : `Ingen genomförd veckocykel ännu. Nästa rekommenderade fokus är ${formatWorkoutFocus(
-          nextFocus,
-        ).toLowerCase()}.`;
+  const priorityMuscles = buildPriorityMuscles(
+    muscleBudget,
+    configuredPriorityMuscles,
+  );
+  const summaryText = buildFocusSummaryText({
+    currentWeekFocuses,
+    nextFocus,
+    nextFocusScore:
+      selectedFocusScore ??
+      getAdaptiveFocusScore({
+        focus: nextFocus,
+        entries: muscleBudget,
+        configuredPriorityMuscles,
+        patternPreferredFocus,
+      }),
+    patternPreferredFocus,
+  });
   const optimalPlanText =
     passCount <= 3
       ? `Optimalt just nu: sikta på ${passCount} pass i valfri rytm, med återhämtning mellan passen när du behöver det.`

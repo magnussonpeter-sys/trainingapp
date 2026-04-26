@@ -4,7 +4,9 @@ import { useState } from "react";
 import ManualWeightInput from "@/components/run/manual-weight-input";
 import TimerPanel from "@/components/run/timer-panel";
 import WeightChipRow from "@/components/run/weight-chip-row";
+import { formatRingSetupLabel } from "@/lib/exercise-execution";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
+import type { Exercise } from "@/types/workout";
 
 function formatTimerClock(totalSeconds: number) {
   const safeSeconds = Math.max(0, totalSeconds);
@@ -65,6 +67,7 @@ function DescriptionToggle({
 
 type CurrentExerciseCardProps = {
   description?: string;
+  ringSetup?: Exercise["ringSetup"];
   timedExercise: boolean;
   reps: string;
   onRepsChange: (value: string) => void;
@@ -88,6 +91,7 @@ type CurrentExerciseCardProps = {
 
 export default function CurrentExerciseCard({
   description,
+  ringSetup,
   timedExercise,
   reps,
   onRepsChange,
@@ -111,6 +115,25 @@ export default function CurrentExerciseCard({
   return (
     <>
       <DescriptionToggle description={description} />
+
+      {ringSetup ? (
+        <section className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-4">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-emerald-700">
+            Setup
+          </p>
+          <p className="mt-1 text-base font-semibold text-emerald-950">
+            {formatRingSetupLabel(ringSetup)}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-emerald-900">
+            {ringSetup.instruction}
+          </p>
+          {ringSetup.progressionHint ? (
+            <p className="mt-2 text-sm leading-6 text-emerald-800">
+              Tips: {ringSetup.progressionHint}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       {!timedExercise ? (
         <section className="space-y-4 rounded-[28px] border border-slate-200 bg-slate-50 p-4">

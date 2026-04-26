@@ -17,6 +17,9 @@ type PreviewExerciseCardProps = {
   progressionNote?: string;
   suggestedWeightLabel?: string;
   weightUnitLabel?: string;
+  ringSetupLabel?: string;
+  ringSetupInstruction?: string;
+  ringSetupHint?: string;
 
   sets: number;
   reps?: number;
@@ -58,6 +61,9 @@ export default function PreviewExerciseCard({
   progressionNote,
   suggestedWeightLabel,
   weightUnitLabel,
+  ringSetupLabel,
+  ringSetupInstruction,
+  ringSetupHint,
   sets,
   reps,
   duration,
@@ -93,6 +99,24 @@ export default function PreviewExerciseCard({
             <p className="mt-1 text-sm leading-5 text-slate-600">
               {description}
             </p>
+          ) : null}
+
+          {ringSetupLabel ? (
+            <div className="mt-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                Setup: {ringSetupLabel}
+              </p>
+              {ringSetupInstruction ? (
+                <p className="mt-1 text-sm leading-5 text-emerald-900">
+                  {ringSetupInstruction}
+                </p>
+              ) : null}
+              {ringSetupHint ? (
+                <p className="mt-1 text-xs text-emerald-800">
+                  Tips: {ringSetupHint}
+                </p>
+              ) : null}
+            </div>
           ) : null}
 
           {suggestedWeightLabel || progressionNote ? (

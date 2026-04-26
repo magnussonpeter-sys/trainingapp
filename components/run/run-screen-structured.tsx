@@ -50,9 +50,11 @@ function getBlockLetter(index: number) {
   return String.fromCharCode(65 + Math.max(0, index));
 }
 
-function playCountdownBeep() {
+let sharedWorkoutAudioContext: AudioContext | null = null;
+
+function getWorkoutAudioContext() {
   if (typeof window === "undefined") {
-    return;
+    return null;
   }
 
   const AudioContextConstructor =
@@ -61,10 +63,39 @@ function playCountdownBeep() {
     window.webkitAudioContext;
 
   if (!AudioContextConstructor) {
+    return null;
+  }
+
+  if (!sharedWorkoutAudioContext) {
+    sharedWorkoutAudioContext = new AudioContextConstructor();
+  }
+
+  return sharedWorkoutAudioContext;
+}
+
+async function unlockWorkoutAudio() {
+  const audioContext = getWorkoutAudioContext();
+  if (!audioContext) {
+    return false;
+  }
+
+  if (audioContext.state === "suspended") {
+    try {
+      await audioContext.resume();
+    } catch {
+      return false;
+    }
+  }
+
+  return audioContext.state === "running";
+}
+
+function playCountdownBeep() {
+  const audioContext = getWorkoutAudioContext();
+  if (!audioContext || audioContext.state !== "running") {
     return;
   }
 
-  const audioContext = new AudioContextConstructor();
   const oscillator = audioContext.createOscillator();
   const gain = audioContext.createGain();
 
@@ -78,10 +109,6 @@ function playCountdownBeep() {
   gain.connect(audioContext.destination);
   oscillator.start();
   oscillator.stop(audioContext.currentTime + 0.2);
-
-  window.setTimeout(() => {
-    void audioContext.close().catch(() => undefined);
-  }, 250);
 }
 
 function speakSideSwitchCue() {
@@ -125,11 +152,15 @@ export default function RunScreenStructured(props: RunScreenProps) {
     currentSet,
     totalCompletedSets,
     showExerciseFeedback,
+    feedbackExercise,
+    feedbackExerciseIndex,
+    feedbackExerciseQueue,
+    feedbackTimedExercise,
     selectedExtraReps,
     setSelectedExtraReps,
     selectedTimedEffort,
     setSelectedTimedEffort,
-    moveToNextExercise,
+    skipExerciseFeedback,
     submitExerciseFeedback,
     optionsOpen,
     setOptionsOpen,
@@ -184,6 +215,23 @@ export default function RunScreenStructured(props: RunScreenProps) {
       document.documentElement.style.overflow = previousHtmlOverflow;
       document.body.style.overscrollBehavior = previousBodyOverscroll;
       document.documentElement.style.overscrollBehavior = previousHtmlOverscroll;
+    };
+  }, []);
+
+  useEffect(() => {
+    // iPhone/Safari kräver ofta en användargest för att timerljud ska få spela senare.
+    const primeAudio = () => {
+      void unlockWorkoutAudio();
+    };
+
+    window.addEventListener("pointerdown", primeAudio, { passive: true });
+    window.addEventListener("touchstart", primeAudio, { passive: true });
+    window.addEventListener("keydown", primeAudio);
+
+    return () => {
+      window.removeEventListener("pointerdown", primeAudio);
+      window.removeEventListener("touchstart", primeAudio);
+      window.removeEventListener("keydown", primeAudio);
     };
   }, []);
 
@@ -333,11 +381,15 @@ export default function RunScreenStructured(props: RunScreenProps) {
                 showRestTimer={props.showRestTimer}
                 restRemainingSeconds={props.restRemainingSeconds}
                 showExerciseFeedback={showExerciseFeedback}
+                feedbackExercise={feedbackExercise}
+                feedbackExerciseIndex={feedbackExerciseIndex}
+                feedbackExerciseTotal={feedbackExerciseQueue.length}
+                feedbackTimedExercise={feedbackTimedExercise}
                 selectedExtraReps={selectedExtraReps}
                 setSelectedExtraReps={setSelectedExtraReps}
                 selectedTimedEffort={selectedTimedEffort}
                 setSelectedTimedEffort={setSelectedTimedEffort}
-                onSkipFeedback={moveToNextExercise}
+                onSkipFeedback={skipExerciseFeedback}
                 onSubmitFeedback={submitExerciseFeedback}
               />
 

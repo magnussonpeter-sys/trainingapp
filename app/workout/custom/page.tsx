@@ -27,6 +27,7 @@ import {
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
 import type { Gym } from "@/lib/gyms";
 import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
+import { getStoredHomeGymId, storeHomeGymId } from "@/hooks/use-home-preferences";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
@@ -163,6 +164,8 @@ function createExerciseFromCatalogItem(item: ExerciseCatalogItem): Exercise {
     sets: item.defaultSets,
     reps: item.defaultReps ?? undefined,
     duration: item.defaultDuration ?? undefined,
+    sidedness: item.sidedness,
+    ringSetup: item.ringSetup,
     rest: item.defaultRest,
     description: item.description,
     isCustom: false,
@@ -435,7 +438,7 @@ export default function CustomWorkoutPage() {
           setBlocks(builderDraft.blocks);
           setSelectedGymId(builderDraft.gymId || BODYWEIGHT_GYM_ID);
         } else {
-          setSelectedGymId(bodyweightGym.id);
+          setSelectedGymId(getStoredHomeGymId(userId) ?? bodyweightGym.id);
         }
       } catch (loadError) {
         console.error("Failed to load custom workout page", loadError);
@@ -507,6 +510,15 @@ export default function CustomWorkoutPage() {
 
     saveCustomWorkoutBuilderDraft(String(authUser.id), draft);
   }, [authChecked, authUser, blocks, selectedGymId, targetDurationMinutes, workoutName]);
+
+  useEffect(() => {
+    if (!authUser?.id) {
+      return;
+    }
+
+    // Dela senaste valda gym med startsidan så appen känns konsekvent mellan flöden.
+    storeHomeGymId(String(authUser.id), selectedGymId || BODYWEIGHT_GYM_ID);
+  }, [authUser?.id, selectedGymId]);
 
   function openBlockSheet() {
     setAddSheetOpen(true);
@@ -759,6 +771,9 @@ export default function CustomWorkoutPage() {
       savedWorkout.targetDurationMinutes ? String(savedWorkout.targetDurationMinutes) : "",
     );
     setSelectedGymId(savedWorkout.gymId || BODYWEIGHT_GYM_ID);
+    if (authUser?.id) {
+      storeHomeGymId(String(authUser.id), savedWorkout.gymId || BODYWEIGHT_GYM_ID);
+    }
     setBlocks(cloneBlocks(savedWorkout.blocks));
     setEditingSavedWorkoutId(savedWorkout.id);
     setExpandedBlockIndex(null);

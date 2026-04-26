@@ -56,11 +56,15 @@ export default function RunScreenLegacy(props: RunScreenProps) {
     totalCompletedSets,
     totalVolume,
     showExerciseFeedback,
+    feedbackExercise,
+    feedbackExerciseIndex,
+    feedbackExerciseQueue,
+    feedbackTimedExercise,
     selectedExtraReps,
     setSelectedExtraReps,
     selectedTimedEffort,
     setSelectedTimedEffort,
-    moveToNextExercise,
+    skipExerciseFeedback,
     submitExerciseFeedback,
     skipExercise,
     resetTimer,
@@ -172,6 +176,7 @@ export default function RunScreenLegacy(props: RunScreenProps) {
               {!showExerciseFeedback ? (
                 <CurrentExerciseCard
                   description={currentExercise.description}
+                  ringSetup={currentExercise.ringSetup}
                   timedExercise={timedExercise}
                   reps={reps}
                   onRepsChange={setReps}
@@ -194,22 +199,36 @@ export default function RunScreenLegacy(props: RunScreenProps) {
                     setRestTimerRunning(!restTimerRunning);
                   }}
                 />
-              ) : timedExercise ? (
-                <EffortFeedbackRow
-                  mode="timed"
-                  value={selectedTimedEffort}
-                  onChange={setSelectedTimedEffort}
-                  onSkip={moveToNextExercise}
-                  onContinue={submitExerciseFeedback}
-                />
               ) : (
-                <EffortFeedbackRow
-                  mode="reps"
-                  value={selectedExtraReps}
-                  onChange={setSelectedExtraReps}
-                  onSkip={moveToNextExercise}
-                  onContinue={submitExerciseFeedback}
-                />
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                      Feedback {feedbackExerciseQueue.length > 1
+                        ? `${feedbackExerciseIndex + 1}/${feedbackExerciseQueue.length}`
+                        : ""}
+                    </p>
+                    <h3 className="mt-1 text-lg font-semibold text-slate-900">
+                      {feedbackExercise?.name ?? currentExercise.name}
+                    </h3>
+                  </div>
+                  {feedbackTimedExercise ? (
+                    <EffortFeedbackRow
+                      mode="timed"
+                      value={selectedTimedEffort}
+                      onChange={setSelectedTimedEffort}
+                      onSkip={skipExerciseFeedback}
+                      onContinue={submitExerciseFeedback}
+                    />
+                  ) : (
+                    <EffortFeedbackRow
+                      mode="reps"
+                      value={selectedExtraReps}
+                      onChange={setSelectedExtraReps}
+                      onSkip={skipExerciseFeedback}
+                      onContinue={submitExerciseFeedback}
+                    />
+                  )}
+                </div>
               )}
 
               {!showExerciseFeedback ? (
@@ -273,7 +292,7 @@ export default function RunScreenLegacy(props: RunScreenProps) {
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
-              onClick={moveToNextExercise}
+              onClick={skipExerciseFeedback}
               className={cn(uiButtonClasses.secondary, "flex-1")}
             >
               Hoppa över feedback

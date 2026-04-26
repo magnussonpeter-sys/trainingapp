@@ -10,6 +10,13 @@ export type Exercise = {
   reps?: number | null;
   duration?: number | null;
   sidedness?: "none" | "per_side" | "alternating";
+  ringSetup?: {
+    height: "low" | "knee" | "waist" | "chest" | "shoulder" | "overhead";
+    label: string;
+    instruction: string;
+    progressionRole?: "primary" | "secondary" | "fixed";
+    progressionHint?: string;
+  };
   rest: number;
   description?: string;
   isCustom?: boolean;

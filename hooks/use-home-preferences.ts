@@ -26,6 +26,77 @@ type StoredHomePreferences = {
   gymId?: unknown;
 };
 
+export function getStoredHomePreferences(userId: string) {
+  if (!userId) {
+    return null;
+  }
+
+  try {
+    const raw = localStorage.getItem(getStorageKey(userId));
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as StoredHomePreferences;
+
+    return {
+      duration:
+        typeof parsed.duration === "number"
+          ? clampDuration(parsed.duration)
+          : null,
+      gymId:
+        typeof parsed.gymId === "string" && parsed.gymId.trim()
+          ? parsed.gymId.trim()
+          : null,
+    };
+  } catch (error) {
+    console.error("Kunde inte läsa sparade home-val:", error);
+    return null;
+  }
+}
+
+export function storeHomePreferences(params: {
+  userId: string;
+  duration?: number | null;
+  gymId?: string | null;
+}) {
+  if (!params.userId) {
+    return;
+  }
+
+  try {
+    const previous = getStoredHomePreferences(params.userId);
+
+    localStorage.setItem(
+      getStorageKey(params.userId),
+      JSON.stringify({
+        duration:
+          typeof params.duration === "number"
+            ? clampDuration(params.duration)
+            : previous?.duration ?? DEFAULT_DURATION,
+        gymId:
+          typeof params.gymId === "string" && params.gymId.trim()
+            ? params.gymId.trim()
+            : previous?.gymId ?? DEFAULT_GYM_ID,
+      }),
+    );
+  } catch (error) {
+    console.error("Kunde inte spara home-val:", error);
+  }
+}
+
+export function getStoredHomeGymId(userId: string) {
+  return getStoredHomePreferences(userId)?.gymId ?? null;
+}
+
+export function storeHomeGymId(userId: string, gymId: string) {
+  storeHomePreferences({
+    userId,
+    gymId,
+  });
+}
+
 type UseHomePreferencesParams = {
   userId?: string | null;
   defaultGymId?: string;
@@ -62,33 +133,21 @@ export function useHomePreferences({
     setHasLoadedPreferences(false);
 
     try {
-      const raw = localStorage.getItem(getStorageKey(userId));
+      const stored = getStoredHomePreferences(userId);
 
-      if (!raw) {
+      if (!stored) {
         setSelectedDuration(safeDefaultDuration);
         setDurationInput(String(safeDefaultDuration));
         setSelectedGymId(defaultGymId);
         return;
       }
 
-      const parsed = JSON.parse(raw) as StoredHomePreferences;
-
-      const nextDuration =
-        typeof parsed.duration === "number"
-          ? clampDuration(parsed.duration)
-          : safeDefaultDuration;
-
-      const nextGymId =
-        typeof parsed.gymId === "string" && parsed.gymId.trim()
-          ? parsed.gymId
-          : defaultGymId;
-
+      const nextDuration = stored.duration ?? safeDefaultDuration;
+      const nextGymId = stored.gymId ?? defaultGymId;
       setSelectedDuration(nextDuration);
       setDurationInput(String(nextDuration));
       setSelectedGymId(nextGymId);
-    } catch (error) {
-      console.error("Kunde inte läsa sparade home-val:", error);
-
+    } catch {
       setSelectedDuration(safeDefaultDuration);
       setDurationInput(String(safeDefaultDuration));
       setSelectedGymId(defaultGymId);
@@ -104,15 +163,13 @@ export function useHomePreferences({
     }
 
     try {
-      localStorage.setItem(
-        getStorageKey(userId),
-        JSON.stringify({
-          duration: selectedDuration,
-          gymId: selectedGymId,
-        }),
-      );
-    } catch (error) {
-      console.error("Kunde inte spara home-val:", error);
+      storeHomePreferences({
+        userId,
+        duration: selectedDuration,
+        gymId: selectedGymId,
+      });
+    } catch {
+      // Preferences är bara en bekvämlighet och får inte krascha sidan.
     }
   }, [hasLoadedPreferences, selectedDuration, selectedGymId, userId]);
 

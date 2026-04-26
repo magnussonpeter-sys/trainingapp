@@ -24,11 +24,11 @@ import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 import { getPendingSyncQueue } from "@/lib/workout-flow/pending-sync-store";
 import {
-  getWorkoutDraft,
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
 import { getExercisePreferences } from "@/lib/exercise-preference-storage";
 import { saveAiDebugGeneratedWorkoutSnapshot } from "@/lib/analysis/ai-debug-generated-history";
+import { getStoredHomeGymId, storeHomeGymId } from "@/hooks/use-home-preferences";
 import type { WorkoutFocus } from "@/types/workout";
 import type { WorkoutLog } from "@/lib/workout-log-storage";
 
@@ -108,51 +108,8 @@ function clampDuration(value: number) {
   return Math.min(Math.max(Math.round(value), 5), 180);
 }
 
-function getStoredHomeGymId(userId: string) {
-  try {
-    const raw = localStorage.getItem(`ai-workout-settings:${userId}`);
-    if (!raw) {
-      return null;
-    }
-
-    const parsed = JSON.parse(raw) as { gymId?: unknown };
-    return typeof parsed.gymId === "string" && parsed.gymId.trim()
-      ? parsed.gymId.trim()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeHomeGymId(userId: string, gymId: string) {
-  try {
-    // Home-valet är den lätta källan för vilket gym användaren faktiskt vill använda nästa gång.
-    localStorage.setItem(`ai-workout-settings:${userId}`, JSON.stringify({ gymId }));
-  } catch {
-    // Gymval får aldrig stoppa startsidan om localStorage saknas.
-  }
-}
-
 function getLastUsedGymId(userId: string, gymOptions: Array<{ id: string | number }>) {
-  // Prefer the latest saved workout draft since it reflects the most recent active choice.
-  const draft = getWorkoutDraft(userId) as { gym?: unknown; gymLabel?: unknown } | null;
-  const draftGymId =
-    typeof draft?.gym === "string" && draft.gym.trim() ? draft.gym.trim() : null;
-
-  if (draftGymId && gymOptions.some((gym) => String(gym.id) === draftGymId)) {
-    return draftGymId;
-  }
-
-  if (
-    draft &&
-    draft.gym == null &&
-    typeof draft.gymLabel === "string" &&
-    draft.gymLabel.toLowerCase().includes("kroppsvikt") &&
-    gymOptions.some((gym) => String(gym.id) === "bodyweight")
-  ) {
-    return "bodyweight";
-  }
-
+  // Explicit sparat gymval ska vara sann källa för startsidan.
   const storedGymId = getStoredHomeGymId(userId);
   if (storedGymId && gymOptions.some((gym) => String(gym.id) === storedGymId)) {
     return storedGymId;
@@ -739,6 +696,11 @@ export default function HomePage() {
   }, [userId]);
 
   useEffect(() => {
+    // Vänta tills gymhämtningen är klar, annars finns ofta bara bodyweight i listan.
+    if (isLoadingGyms) {
+      return;
+    }
+
     if (gymOptions.length === 0) {
       return;
     }
@@ -758,7 +720,7 @@ export default function HomePage() {
     if (!stillExists) {
       setSelectedGymId(String(gymOptions[0].id));
     }
-  }, [gymOptions, selectedGymId, userId]);
+  }, [gymOptions, isLoadingGyms, selectedGymId, userId]);
 
   function handleSelectedGymChange(nextGymId: string) {
     setSelectedGymId(nextGymId);

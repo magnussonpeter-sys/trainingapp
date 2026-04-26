@@ -36,6 +36,8 @@ export type ActiveWorkoutSessionDraft = {
   setLog: LoggedSetDraft;
   completedExercises: CompletedExercise[];
   showExerciseFeedback: boolean;
+  feedbackExerciseQueue: string[];
+  feedbackExerciseIndex: number;
   selectedExtraReps: ExtraRepsOption | null;
   selectedTimedEffort: TimedEffortOption | null;
   selectedRating: 1 | 2 | 3 | 4 | 5 | null;
@@ -159,6 +161,11 @@ function normalizeDraft(
     },
     completedExercises: asArray<CompletedExercise>(raw.completedExercises, []),
     showExerciseFeedback: asBoolean(raw.showExerciseFeedback, false),
+    // Feedback-kön gör att superset kan betygsättas en övning i taget även efter restore.
+    feedbackExerciseQueue: asArray<string>(raw.feedbackExerciseQueue, []).filter(
+      (value): value is string => typeof value === "string" && value.trim().length > 0,
+    ),
+    feedbackExerciseIndex: Math.max(0, asNumber(raw.feedbackExerciseIndex, 0)),
     selectedExtraReps:
       raw.selectedExtraReps === 0 ||
       raw.selectedExtraReps === 2 ||

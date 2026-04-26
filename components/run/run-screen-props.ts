@@ -47,12 +47,17 @@ export type RunScreenProps = {
   totalCompletedSets: number;
   totalVolume: number;
   showExerciseFeedback: boolean;
+  feedbackExercise: Exercise | null;
+  feedbackExerciseIndex: number;
+  feedbackExerciseQueue: string[];
+  feedbackTimedExercise: boolean;
   selectedExtraReps: ExtraRepsOption | null;
   setSelectedExtraReps: (value: ExtraRepsOption | null) => void;
   selectedTimedEffort: TimedEffortOption | null;
   setSelectedTimedEffort: (value: TimedEffortOption | null) => void;
   moveToNextExercise: () => void;
   submitExerciseFeedback: () => void;
+  skipExerciseFeedback: () => void;
   skipExercise: () => void;
   resetTimer: () => void;
   handlePrimaryAction: () => void;

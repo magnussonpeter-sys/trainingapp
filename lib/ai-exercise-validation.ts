@@ -30,6 +30,7 @@ type NormalizedExercise = {
   reps?: number;
   duration?: number;
   sidedness?: "none" | "per_side" | "alternating";
+  ringSetup?: ExerciseCatalogItem["ringSetup"];
   rest: number;
   suggestedWeight?: number | string | null;
   movementPattern: MovementPattern;
@@ -378,6 +379,7 @@ function createNormalizedExercise(
         )
       : undefined,
     sidedness: catalogExercise.sidedness,
+    ringSetup: catalogExercise.ringSetup,
     rest: clampPositiveInt(
       aiExercise?.rest,
       catalogExercise.defaultRest,

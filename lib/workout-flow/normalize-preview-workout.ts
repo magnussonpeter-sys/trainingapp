@@ -127,6 +127,46 @@ function normalizeOptionalPositiveNumber(value: unknown) {
     : null;
 }
 
+function normalizeRingSetup(
+  value: unknown,
+): Exercise["ringSetup"] | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const height =
+    record.height === "low" ||
+    record.height === "knee" ||
+    record.height === "waist" ||
+    record.height === "chest" ||
+    record.height === "shoulder" ||
+    record.height === "overhead"
+      ? record.height
+      : null;
+  const label = normalizeOptionalString(record.label);
+  const instruction = normalizeOptionalString(record.instruction);
+  const progressionRole =
+    record.progressionRole === "primary" ||
+    record.progressionRole === "secondary" ||
+    record.progressionRole === "fixed"
+      ? record.progressionRole
+      : undefined;
+  const progressionHint = normalizeOptionalString(record.progressionHint);
+
+  if (!height || !label || !instruction) {
+    return undefined;
+  }
+
+  return {
+    height,
+    label,
+    instruction,
+    progressionRole,
+    progressionHint,
+  };
+}
+
 function normalizeStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -169,6 +209,7 @@ function normalizeExercise(exercise: any, index: number): Exercise {
     reps: normalizeOptionalNumber(exercise?.reps),
     duration: normalizeOptionalNumber(exercise?.duration),
     sidedness: normalizeSidedness(exercise?.sidedness),
+    ringSetup: normalizeRingSetup(exercise?.ringSetup),
     rest:
       typeof exercise?.rest === "number" && Number.isFinite(exercise.rest)
         ? exercise.rest
