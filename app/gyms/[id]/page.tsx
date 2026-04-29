@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import EquipmentEditorSheet from "@/components/gyms/equipment-editor-sheet";
 import ConfirmSheet from "@/components/shared/confirm-sheet";
@@ -51,6 +51,8 @@ export default function GymDetailPage() {
   const [equipmentToDelete, setEquipmentToDelete] = useState<GymEquipment | null>(
     null,
   );
+  const canManageGym =
+    gym !== null && authUser !== null && String(gym.user_id) === String(authUser.id);
 
   const equipmentCount = gym?.equipment.length ?? 0;
   const initialDraft = useMemo(() => {
@@ -61,7 +63,7 @@ export default function GymDetailPage() {
     return createDraftFromEquipment(sheetState.equipment);
   }, [sheetState]);
 
-  async function fetchGym(userId: string) {
+  const fetchGym = useCallback(async (userId: string) => {
     try {
       setIsLoading(true);
       setError(null);
@@ -88,7 +90,7 @@ export default function GymDetailPage() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [gymId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -133,7 +135,7 @@ export default function GymDetailPage() {
     return () => {
       isMounted = false;
     };
-  }, [gymId, router]);
+  }, [fetchGym, gymId, router]);
 
   async function handleSaveEquipment(draft: EquipmentDraft) {
     if (!authUser?.id || !gymId) {
@@ -287,11 +289,19 @@ export default function GymDetailPage() {
                   {gym.description.trim()}
                 </p>
               ) : null}
+              {!canManageGym && gym?.is_shared ? (
+                <p className="max-w-2xl text-sm leading-6 text-slate-500">
+                  Detta delade gym kan användas i appen av alla användare, men bara
+                  redigeras av ägaren.
+                </p>
+              ) : null}
             </div>
 
-            <Link href={`/gyms/${gymId}/edit`} className={uiButtonClasses.secondary}>
-              Redigera gym
-            </Link>
+            {canManageGym ? (
+              <Link href={`/gyms/${gymId}/edit`} className={uiButtonClasses.secondary}>
+                Redigera gym
+              </Link>
+            ) : null}
           </div>
         </section>
 
@@ -312,13 +322,15 @@ export default function GymDetailPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setSheetState({ open: true, mode: "create", equipment: null })}
-              className={uiButtonClasses.primary}
-            >
-              + Lägg till utrustning
-            </button>
+            {canManageGym ? (
+              <button
+                type="button"
+                onClick={() => setSheetState({ open: true, mode: "create", equipment: null })}
+                className={uiButtonClasses.primary}
+              >
+                + Lägg till utrustning
+              </button>
+            ) : null}
           </div>
 
           <div className="mt-5 space-y-3">
@@ -348,15 +360,17 @@ export default function GymDetailPage() {
                       ) : null}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSheetState({ open: true, mode: "edit", equipment: item })
-                      }
-                      className={uiButtonClasses.secondary}
-                    >
-                      Redigera
-                    </button>
+                    {canManageGym ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSheetState({ open: true, mode: "edit", equipment: item })
+                        }
+                        className={uiButtonClasses.secondary}
+                      >
+                        Redigera
+                      </button>
+                    ) : null}
                   </div>
                 </article>
               ))
@@ -369,41 +383,45 @@ export default function GymDetailPage() {
         </section>
       </div>
 
-      <EquipmentEditorSheet
-        open={sheetState.open}
-        mode={sheetState.open ? sheetState.mode : "create"}
-        title={
-          sheetState.open && sheetState.mode === "edit"
-            ? sheetState.equipment.label
-            : "Ny utrustning"
-        }
-        initialDraft={initialDraft}
-        isSaving={isSavingEquipment}
-        isDeleting={isDeletingEquipment}
-        onClose={() => setSheetState({ open: false })}
-        onSave={handleSaveEquipment}
-        onDelete={
-          sheetState.open && sheetState.mode === "edit"
-            ? async () => {
-                setEquipmentToDelete(sheetState.equipment);
-              }
-            : undefined
-        }
-      />
+      {canManageGym ? (
+        <EquipmentEditorSheet
+          open={sheetState.open}
+          mode={sheetState.open ? sheetState.mode : "create"}
+          title={
+            sheetState.open && sheetState.mode === "edit"
+              ? sheetState.equipment.label
+              : "Ny utrustning"
+          }
+          initialDraft={initialDraft}
+          isSaving={isSavingEquipment}
+          isDeleting={isDeletingEquipment}
+          onClose={() => setSheetState({ open: false })}
+          onSave={handleSaveEquipment}
+          onDelete={
+            sheetState.open && sheetState.mode === "edit"
+              ? async () => {
+                  setEquipmentToDelete(sheetState.equipment);
+                }
+              : undefined
+          }
+        />
+      ) : null}
 
-      <ConfirmSheet
-        open={Boolean(equipmentToDelete)}
-        title="Ta bort utrustning?"
-        description={
-          equipmentToDelete
-            ? `${equipmentToDelete.label} tas bort från gymmet.`
-            : undefined
-        }
-        confirmLabel="Ta bort"
-        destructive
-        onConfirm={() => void confirmDeleteEquipment()}
-        onCancel={() => setEquipmentToDelete(null)}
-      />
+      {canManageGym ? (
+        <ConfirmSheet
+          open={Boolean(equipmentToDelete)}
+          title="Ta bort utrustning?"
+          description={
+            equipmentToDelete
+              ? `${equipmentToDelete.label} tas bort från gymmet.`
+              : undefined
+          }
+          confirmLabel="Ta bort"
+          destructive
+          onConfirm={() => void confirmDeleteEquipment()}
+          onCancel={() => setEquipmentToDelete(null)}
+        />
+      ) : null}
     </main>
   );
 }

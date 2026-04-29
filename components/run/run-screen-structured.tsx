@@ -371,6 +371,7 @@ export default function RunScreenStructured(props: RunScreenProps) {
                 reps={props.reps}
                 onRepsChange={props.setReps}
                 weight={props.weight}
+                onWeightChange={props.updateWeight}
                 onWeightChipSelect={props.chooseWeightChip}
                 suggestedWeightValue={props.suggestedWeightValue}
                 weightUnitLabel={props.weightUnitLabel}

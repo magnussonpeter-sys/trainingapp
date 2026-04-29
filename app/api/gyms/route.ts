@@ -1,4 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  ALL_EQUIPMENT_GYM_ID,
+  ALL_EQUIPMENT_GYM_NAME,
+  buildSyntheticAllEquipmentGym,
+  isAllEquipmentGymName,
+  mergeAllEquipmentGymEquipment,
+} from "@/lib/all-equipment-gym";
 import { pool } from "@/lib/db";
 import { requireAuthorizedUserId } from "@/lib/server-auth";
 
@@ -55,15 +62,38 @@ export async function GET(req: NextRequest) {
       FROM gyms g
       LEFT JOIN gym_equipment ge ON ge.gym_id = g.id
       WHERE g.user_id = $1
+         OR g.is_shared = TRUE
+         OR LOWER(TRIM(g.name)) = LOWER(TRIM($2))
       GROUP BY g.id
       ORDER BY g.created_at DESC
       `,
-      [user.id]
+      [user.id, ALL_EQUIPMENT_GYM_NAME]
     );
+
+    const gyms = result.rows.map((gym) => {
+      const isUniversalGym = isAllEquipmentGymName(gym.name);
+
+      return {
+        ...gym,
+        // "All utrustning" ska vara valbart av alla även om flaggan inte sattes korrekt när det skapades.
+        is_shared: isUniversalGym ? true : gym.is_shared,
+        equipment: isUniversalGym
+          ? mergeAllEquipmentGymEquipment(gym.id, gym.equipment)
+          : gym.equipment,
+      };
+    });
+
+    const hasUniversalGym = gyms.some(
+      (gym) => String(gym.id) === ALL_EQUIPMENT_GYM_ID || isAllEquipmentGymName(gym.name),
+    );
+
+    if (!hasUniversalGym) {
+      gyms.unshift(buildSyntheticAllEquipmentGym());
+    }
 
     return NextResponse.json({
       ok: true,
-      gyms: result.rows,
+      gyms,
     });
   } catch (error) {
     if (error instanceof Error) {

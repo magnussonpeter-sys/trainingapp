@@ -112,6 +112,18 @@ type WeeklyBudgetValidationItem = Pick<
   loadStatus?: MuscleBudgetEntry["loadStatus"];
 };
 
+type FocusMuscle =
+  | "chest"
+  | "back"
+  | "quads"
+  | "hamstrings"
+  | "glutes"
+  | "shoulders"
+  | "biceps"
+  | "triceps"
+  | "calves"
+  | "core";
+
 type SupersetPreference = "allowed" | "avoid_all" | "avoid_all_dumbbell";
 
 type ProgressionTrackPromptItem = {
@@ -164,6 +176,29 @@ function normalizeSupersetPreference(value: unknown): SupersetPreference | null 
     value === "avoid_all_dumbbell"
     ? value
     : null;
+}
+
+function normalizeFocusMuscles(input: unknown): FocusMuscle[] {
+  const allowed = new Set<FocusMuscle>([
+    "chest",
+    "back",
+    "quads",
+    "hamstrings",
+    "glutes",
+    "shoulders",
+    "biceps",
+    "triceps",
+    "calves",
+    "core",
+  ]);
+
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .filter((value): value is FocusMuscle => typeof value === "string" && allowed.has(value as FocusMuscle))
+    .slice(0, 5);
 }
 
 async function getUserSettingsSummary(userId: string) {
@@ -476,6 +511,7 @@ function buildGenerationPrompt(params: {
   weeklyBudget: WeeklyBudgetPromptItem[];
   weeklyPlan: WeeklyPlanPromptItem[];
   lessOftenExerciseIds?: string[];
+  focusMuscles?: FocusMuscle[];
 }) {
   const recentWorkoutText =
     params.recentWorkouts.length > 0
@@ -522,6 +558,10 @@ function buildGenerationPrompt(params: {
         ? "AVOID_ALL_DUMBBELL_SUPERSETS"
         : "ALLOWED";
   const progressionTracks = buildProgressionTrackPrompt(params.equipment);
+  const requestedFocusMusclesText =
+    params.focusMuscles && params.focusMuscles.length > 0
+      ? params.focusMuscles.join(", ")
+      : "inga uttryckligt valda fokusmuskler";
 
   return `
 Skapa ett evidensbaserat träningspass som strikt JSON.
@@ -545,6 +585,7 @@ Kontext:
 - föreslagen split-stil denna vecka: ${splitStyleText}
 - veckans muskelbudget och återstående set: ${weeklyBudgetText}
 - enkel veckoplan för kommande 7 dagar: ${weeklyPlanText}
+- uttryckligt valda fokusmuskler för detta builder-pass: ${requestedFocusMusclesText}
 - superset-preferens: ${supersetPreferenceText}
 - övningar användaren vill ha mindre av: ${
     params.lessOftenExerciseIds && params.lessOftenExerciseIds.length > 0
@@ -705,6 +746,7 @@ Viktiga regler:
 - Om senaste prestation låg higher_than_plan ska du bara öka försiktigt och ta hänsyn till återhämtning
 - Låt veckoplanen påverka passets huvudfokus. Om nästa fokus är upper_body, lower_body, core eller full_body ska passet tydligt kännas som detta utan att bli obalanserat
 - Prioritera muskelgrupper som fortfarande har återstående veckobudget, men håll passet realistiskt inom vald passlängd
+- Om uttryckligt valda fokusmuskler finns för detta builder-pass ska de prioriteras tydligt i övningsval, så länge passet fortfarande blir balanserat och realistiskt
 - Vid låg confidence score ska du vara mer konservativ med volym, komplexitet och övningssvårighet
 - Passet ska kännas coachat, inte slumpat
 `.trim();
@@ -726,6 +768,7 @@ export async function POST(req: Request) {
       weeklyBudget?: WeeklyBudgetPromptItem[];
       weeklyPlan?: WeeklyPlanPromptItem[];
       lessOftenExerciseIds?: string[];
+      focusMuscles?: FocusMuscle[];
       avoidSupersets?: boolean;
       supersetPreference?: SupersetPreference | null;
     };
@@ -798,6 +841,7 @@ export async function POST(req: Request) {
             typeof value === "string" && value.trim().length > 0,
         )
       : [];
+    const focusMuscles = normalizeFocusMuscles(body.focusMuscles);
 
     const availableExercises = getAvailableExercises(equipment);
     const [settings, recentLogs] = userId
@@ -837,6 +881,7 @@ export async function POST(req: Request) {
       weeklyBudget,
       weeklyPlan,
       lessOftenExerciseIds,
+      focusMuscles,
     });
 
     const response = await client.chat.completions.create({

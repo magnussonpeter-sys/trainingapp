@@ -97,9 +97,17 @@ function getNearbyAvailableWeights(
     .sort((a, b) => a - b);
 }
 
-function isDualDumbbellExercise(exercise: Exercise) {
-  const exerciseId = exercise.id.toLowerCase();
-  const exerciseName = exercise.name.toLowerCase();
+function isDualDumbbellExercise(
+  exercise: Exercise,
+  requiredEquipment: EquipmentId[] = [],
+) {
+  const normalizedText = [
+    exercise.id,
+    exercise.name,
+    exercise.description ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
 
   const explicitSinglePatterns = [
     "one_arm",
@@ -110,20 +118,54 @@ function isDualDumbbellExercise(exercise: Exercise) {
     "enarm",
     "enbens",
     "single",
+    "suitcase",
   ];
 
   if (
-    explicitSinglePatterns.some(
-      (pattern) => exerciseId.includes(pattern) || exerciseName.includes(pattern),
-    )
+    explicitSinglePatterns.some((pattern) => normalizedText.includes(pattern))
   ) {
     return false;
   }
 
-  return (
-    exerciseId.includes("dumbbell") ||
-    exerciseName.includes("hantel")
-  );
+  const explicitSinglePhrases = [
+    "med hantel",
+    "en hantel",
+    "en dumbbell",
+    "a dumbbell",
+  ];
+  const explicitSingleExerciseIds = new Set([
+    "goblet_squat",
+    "dumbbell_hip_thrust",
+    "overhead_triceps_extension",
+    "dumbbell_suitcase_carry",
+    "bird_dog_row",
+  ]);
+
+  if (explicitSingleExerciseIds.has(exercise.id)) {
+    return false;
+  }
+
+  if (explicitSinglePhrases.some((phrase) => normalizedText.includes(phrase))) {
+    return false;
+  }
+
+  const explicitDualHints = [
+    "hantlar",
+    "hantlarna",
+    "dumbbells",
+    "två hantlar",
+    "ett par hantlar",
+    "i händerna",
+    "arnoldpress",
+  ];
+
+  if (explicitDualHints.some((hint) => normalizedText.includes(hint))) {
+    return true;
+  }
+
+  // För hantelövningar tolkar vi dubbla hantlar som default om texten inte tydligt
+  // säger att det är en ensam hantel eller en unilateral variant.
+  return requiredEquipment.includes("dumbbells");
 }
 
 function getLoadMetadata(exercise: Exercise) {
@@ -178,7 +220,7 @@ function getLoadMetadata(exercise: Exercise) {
 
   const usesDumbbells = relevantEquipmentIds.includes("dumbbells");
 
-  if (usesDumbbells && isDualDumbbellExercise(exercise)) {
+  if (usesDumbbells && isDualDumbbellExercise(exercise, requiredEquipment)) {
     return {
       relevantEquipmentIds,
       weightSelectionMode: "per_hand" as const,
@@ -479,6 +521,71 @@ export function buildWeightChipOptions(params: {
     .map((item) => item.label);
 }
 
+function snapWeightDownToAvailableLimit(
+  availableWeightsKg: number[],
+  maxWeight: number,
+) {
+  const eligible = availableWeightsKg
+    .filter((weight) => weight <= maxWeight)
+    .sort((left, right) => right - left);
+
+  return eligible[0] ?? maxWeight;
+}
+
+function applyConservativePerHandGuardrail(params: {
+  exercise: Exercise;
+  suggestedWeight: number;
+  availableWeightsKg: number[];
+  lastWeight: number | null;
+  weightSelectionMode: "total" | "single_implement" | "per_hand";
+}) {
+  const {
+    exercise,
+    suggestedWeight,
+    availableWeightsKg,
+    lastWeight,
+    weightSelectionMode,
+  } = params;
+
+  if (weightSelectionMode !== "per_hand" || lastWeight != null) {
+    return {
+      suggestedWeight,
+      note: undefined as string | undefined,
+    };
+  }
+
+  const catalogExercise = getExerciseById(exercise.id);
+  const variantGroup = catalogExercise?.variantGroup ?? "";
+  const conservativeCaps: Record<string, number> = {
+    chest_fly: 15,
+    biceps_curl: 17.5,
+    lateral_raise: 10,
+    rear_delt: 10,
+    triceps_isolation: 15,
+  };
+  const genericPerHandCap = 25;
+  const maxSuggestedWeight =
+    conservativeCaps[variantGroup] ?? genericPerHandCap;
+
+  if (suggestedWeight <= maxSuggestedWeight) {
+    return {
+      suggestedWeight,
+      note: undefined as string | undefined,
+    };
+  }
+
+  const cappedWeight = snapWeightDownToAvailableLimit(
+    availableWeightsKg,
+    maxSuggestedWeight,
+  );
+
+  return {
+    suggestedWeight: cappedWeight,
+    // Nya hantelisolationsövningar ska starta konservativt tills faktisk historik finns.
+    note: "Startförslaget hölls medvetet konservativt för en ny hantelövning per hand.",
+  };
+}
+
 export function applyExerciseProgression(params: {
   exercise: Exercise;
   goal?: string | null;
@@ -552,18 +659,35 @@ export function applyExerciseProgression(params: {
     exerciseId: exercise.id,
     fallbackWeight,
   });
+  const perHandGuardrail =
+    typeof suggestedWeight === "number"
+      ? applyConservativePerHandGuardrail({
+          exercise,
+          suggestedWeight,
+          availableWeightsKg: loadMetadata.availableWeightsKg,
+          lastWeight: progression?.lastWeight ?? null,
+          weightSelectionMode: loadMetadata.weightSelectionMode,
+        })
+      : null;
+  const guardedSuggestedWeight =
+    perHandGuardrail && typeof perHandGuardrail.suggestedWeight === "number"
+      ? perHandGuardrail.suggestedWeight
+      : suggestedWeight;
 
   const snappedSuggestedWeight =
-    typeof suggestedWeight === "number" &&
+    typeof guardedSuggestedWeight === "number" &&
     loadMetadata.availableWeightsKg.length > 0
-      ? snapWeightToAvailableWeights(suggestedWeight, loadMetadata.availableWeightsKg)
-      : suggestedWeight;
+      ? snapWeightToAvailableWeights(
+          guardedSuggestedWeight,
+          loadMetadata.availableWeightsKg,
+        )
+      : guardedSuggestedWeight;
   const loadConstraintAdjustment =
-    typeof suggestedWeight === "number" && typeof snappedSuggestedWeight === "number"
+    typeof guardedSuggestedWeight === "number" && typeof snappedSuggestedWeight === "number"
       ? applyLoadConstraintAdjustments({
           exercise,
           goal,
-          requestedWeight: suggestedWeight,
+          requestedWeight: guardedSuggestedWeight,
           snappedWeight: snappedSuggestedWeight,
         })
       : {
@@ -596,6 +720,6 @@ export function applyExerciseProgression(params: {
       suggestedWeight:
         typeof snappedSuggestedWeight === "number" ? snappedSuggestedWeight : null,
       weightUnitLabel: loadMetadata.weightUnitLabel,
-    }) ?? loadConstraintAdjustment.note,
+    }) ?? perHandGuardrail?.note ?? loadConstraintAdjustment.note,
   };
 }

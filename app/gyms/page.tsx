@@ -145,10 +145,10 @@ export default function GymsPage() {
                 Gym
               </p>
               <h1 className="text-3xl font-semibold tracking-tight text-slate-950">
-                Dina gym
+                Gym
               </h1>
               <p className="max-w-2xl text-sm leading-6 text-slate-600">
-                Välj ett gym för att se utrustning och hålla flödet mot hem, AI-pass
+                Välj ett eget eller delat gym för att hålla flödet mot hem, AI-pass
                 och run tydligt.
               </p>
             </div>

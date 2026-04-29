@@ -1,4 +1,4 @@
-const CACHE_NAME = "trainingapp-static-v1";
+const CACHE_NAME = "trainingapp-static-v2";
 const OFFLINE_URL = "/offline";
 const STATIC_ASSETS = [
   OFFLINE_URL,
@@ -70,20 +70,24 @@ self.addEventListener("fetch", (event) => {
 
   if (isSafeStaticRequest(request, url)) {
     event.respondWith(
-      caches.match(request).then((cached) => {
-        if (cached) {
-          return cached;
-        }
-
-        return fetch(request).then((response) => {
+      // Nätet först håller installerad app uppdaterad, men cache finns kvar som offline-fallback.
+      fetch(request)
+        .then((response) => {
           if (response.ok) {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
 
           return response;
-        });
-      }),
+        })
+        .catch(async () => {
+          const cached = await caches.match(request);
+          if (cached) {
+            return cached;
+          }
+
+          throw new Error("Static asset unavailable offline");
+        }),
     );
   }
 });

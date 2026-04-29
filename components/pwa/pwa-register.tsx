@@ -19,9 +19,15 @@ export default function PwaRegister() {
 
     // Registrera sent så första render/auth/API-flöden inte blockeras av PWA-lagret.
     const register = () => {
-      navigator.serviceWorker.register("/sw.js").catch((error) => {
-        console.warn("Service worker kunde inte registreras:", error);
-      });
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then((registration) => {
+          // Tvinga en snabb kontroll så installerad app inte ligger kvar på äldre JS-buntar.
+          void registration.update();
+        })
+        .catch((error) => {
+          console.warn("Service worker kunde inte registreras:", error);
+        });
     };
 
     if (document.readyState === "complete") {

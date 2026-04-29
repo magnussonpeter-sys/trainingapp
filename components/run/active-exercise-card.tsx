@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 
 import EffortFeedbackRow from "@/components/run/effort-feedback-row";
+import ManualWeightInput from "@/components/run/manual-weight-input";
 import TimerPanel from "@/components/run/timer-panel";
 import WeightChipRow from "@/components/run/weight-chip-row";
 import { getExerciseById } from "@/lib/exercise-catalog";
+import { detectEquipmentIdsFromText } from "@/lib/equipment";
 import {
   formatExerciseTarget,
   formatRingSetupLabel,
@@ -29,20 +31,54 @@ function shouldShowWeightInput(params: {
 }) {
   const { exercise, weight, suggestedWeightValue, weightChipOptions } = params;
   const catalogExercise = getExerciseById(exercise.id);
-  const requiredEquipment = catalogExercise?.requiredEquipment ?? [];
-  const hasWeightedEquipment = requiredEquipment.some((equipmentId) =>
-    [
-      "dumbbells",
-      "barbell",
-      "ez_bar",
-      "trap_bar",
-      "kettlebells",
-      "smith_machine",
-      "cable_machine",
-      "machines",
-      "medicine_ball",
-    ].includes(equipmentId),
+  const weightedEquipmentIds = new Set([
+    "dumbbells",
+    "barbell",
+    "ez_bar",
+    "trap_bar",
+    "kettlebells",
+    "smith_machine",
+    "cable_machine",
+    "machines",
+    "medicine_ball",
+  ]);
+  const catalogRequiredEquipment = catalogExercise?.requiredEquipment ?? [];
+  const textDetectedEquipment = detectEquipmentIdsFromText(
+    [exercise.name, exercise.id, exercise.description ?? ""].filter(Boolean).join(" "),
   );
+  const weightedNameHints = [
+    "hantel",
+    "dumbbell",
+    "skivstang",
+    "skivstång",
+    "barbell",
+    "kabel",
+    "cable",
+    "smith",
+    "kettlebell",
+    "medicinboll",
+    "medicine ball",
+    "ez",
+    "maskin",
+    "machine",
+  ];
+  const normalizedText = [exercise.name, exercise.id, exercise.description ?? ""]
+    .join(" ")
+    .toLowerCase();
+  const catalogRequiredEquipmentSet = new Set(catalogRequiredEquipment);
+  const isPrimarilyBodyweightCatalogExercise =
+    catalogRequiredEquipmentSet.has("bodyweight");
+  const inferredWeightedFromCatalogOrText =
+    [...catalogRequiredEquipment, ...textDetectedEquipment].some((equipmentId) =>
+      weightedEquipmentIds.has(equipmentId),
+    ) ||
+    weightedNameHints.some((hint) => normalizedText.includes(hint));
+  // Fallback på text gör att vikt fortfarande visas om ett äldre/specialbyggt pass
+  // bär ett avvikande id men tydligt beskriver en belastad övning.
+  // Kroppsviktsövningar med setup-redskap, t.ex. stång i rack eller bänk, ska inte
+  // automatiskt få viktfält bara för att texten nämner redskapet.
+  const hasWeightedEquipment =
+    !isPrimarilyBodyweightCatalogExercise && inferredWeightedFromCatalogOrText;
 
   return Boolean(
     weight.trim() ||
@@ -125,6 +161,7 @@ type ActiveExerciseCardProps = {
   reps: string;
   onRepsChange: (value: string) => void;
   weight: string;
+  onWeightChange: (value: string) => void;
   onWeightChipSelect: (value: string) => void;
   suggestedWeightValue: string;
   weightUnitLabel: string;
@@ -163,6 +200,7 @@ export default function ActiveExerciseCard({
   reps,
   onRepsChange,
   weight,
+  onWeightChange,
   onWeightChipSelect,
   suggestedWeightValue,
   weightUnitLabel,
@@ -358,6 +396,24 @@ export default function ActiveExerciseCard({
             </div>
           ) : null}
 
+          {showWeightInput && !showWeightEditor ? (
+            <button
+              type="button"
+              onClick={() => setShowWeightEditor(true)}
+              className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left"
+            >
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                  Vikt
+                </p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {currentWeightLabel ?? `Ange vikt${weightUnitLabel ? ` (${weightUnitLabel})` : ""}`}
+                </p>
+              </div>
+              <span className="text-sm font-medium text-slate-500">Ändra</span>
+            </button>
+          ) : null}
+
           {showWeightInput && showWeightEditor ? (
             <div className="space-y-3 rounded-2xl bg-slate-50 px-4 py-4">
               <div className="flex items-center justify-between gap-3">
@@ -383,6 +439,14 @@ export default function ActiveExerciseCard({
                   {weightUnitLabel}
                 </span>
               </button>
+
+              <ManualWeightInput
+                value={weight}
+                onChange={onWeightChange}
+                suggestedWeightValue={suggestedWeightValue}
+                label="Ange vikt"
+                unitLabel={weightUnitLabel}
+              />
 
               {showWeightPicker ? (
                 <WeightChipRow

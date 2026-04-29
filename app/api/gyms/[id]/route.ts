@@ -1,4 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  ALL_EQUIPMENT_GYM_ID,
+  ALL_EQUIPMENT_GYM_NAME,
+  buildSyntheticAllEquipmentGym,
+  isAllEquipmentGymName,
+  mergeAllEquipmentGymEquipment,
+} from "@/lib/all-equipment-gym";
 import { pool } from "@/lib/db";
 import { requireAuthorizedUserId } from "@/lib/server-auth";
 
@@ -39,16 +46,27 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       );
     }
 
+    if (gymId === ALL_EQUIPMENT_GYM_ID) {
+      return NextResponse.json({
+        ok: true,
+        gym: buildSyntheticAllEquipmentGym(),
+      });
+    }
+
     // Hämta själva gymet först.
     const gymResult = await pool.query(
       `
       SELECT id, user_id, name, description, is_shared, created_at
       FROM gyms
       WHERE id = $1
-        AND user_id = $2
+        AND (
+          user_id = $2
+          OR is_shared = TRUE
+          OR LOWER(TRIM(name)) = LOWER(TRIM($3))
+        )
       LIMIT 1
       `,
-      [gymId, user.id]
+      [gymId, user.id, ALL_EQUIPMENT_GYM_NAME]
     );
 
     if (gymResult.rows.length === 0) {
@@ -83,9 +101,14 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       [gymId]
     );
 
+    const isUniversalGym = isAllEquipmentGymName(gymResult.rows[0]?.name);
+
     const gym = {
       ...gymResult.rows[0],
-      equipment: equipmentResult.rows,
+      is_shared: isUniversalGym ? true : gymResult.rows[0].is_shared,
+      equipment: isUniversalGym
+        ? mergeAllEquipmentGymEquipment(gymId, equipmentResult.rows)
+        : equipmentResult.rows,
     };
 
     return NextResponse.json({
