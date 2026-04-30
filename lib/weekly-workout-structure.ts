@@ -6,6 +6,10 @@ import {
   type MuscleBudgetGroup,
 } from "@/lib/planning/muscle-budget";
 import {
+  buildGoalTrajectory,
+  type GoalTrajectory,
+} from "@/lib/planning/goal-trajectory";
+import {
   buildCoachDecision,
   type CoachDecision,
 } from "@/lib/planning/coach-decision";
@@ -47,6 +51,7 @@ export type WeeklyWorkoutStructure = {
   confidenceScore: ConfidenceScore;
   configuredPriorityMuscles: MuscleBudgetGroup[];
   currentWeekFocuses: WorkoutFocus[];
+  goalTrajectory: GoalTrajectory;
   muscleBudget: MuscleBudgetEntry[];
   nextFocus: WorkoutFocus;
   nextFocusMuscleGroups: MuscleBudgetGroup[];
@@ -593,6 +598,7 @@ function buildPriorityMuscles(
 function buildFocusSummaryText(params: {
   coachDecision: CoachDecision;
   currentWeekFocuses: WorkoutFocus[];
+  goalTrajectory: GoalTrajectory;
   nextFocus: WorkoutFocus;
   nextFocusScore: AdaptiveFocusScore;
   patternPreferredFocus: WorkoutFocus;
@@ -614,7 +620,40 @@ function buildFocusSummaryText(params: {
 
   return `${recentSummary} Nästa fokus blir ${formatWorkoutFocus(
     params.nextFocus,
-  ).toLowerCase()} eftersom ${params.nextFocusScore.reason}. ${params.coachDecision.message}`;
+  ).toLowerCase()} eftersom ${params.nextFocusScore.reason}. ${params.goalTrajectory.message}`;
+}
+
+function buildOptimalPlanText(params: {
+  coachDecision: CoachDecision;
+  goalTrajectory: GoalTrajectory;
+  passCount: number;
+}) {
+  // Långsiktig riktning först, därefter konkret coachbeslut för denna vecka.
+  if (params.goalTrajectory.status === "too_aggressive") {
+    return `${params.goalTrajectory.message} ${params.coachDecision.message}`;
+  }
+
+  if (params.goalTrajectory.status === "behind") {
+    return `${params.goalTrajectory.message} Sikta på ungefär ${params.goalTrajectory.suggestedWeeklySessions ?? params.passCount} pass den här veckan.`;
+  }
+
+  if (params.goalTrajectory.status === "slightly_behind") {
+    return `${params.goalTrajectory.message} ${params.coachDecision.message}`;
+  }
+
+  if (params.goalTrajectory.status === "insufficient_data") {
+    return `${params.goalTrajectory.message} Tills vidare är cirka ${params.passCount} träningsfönster en bra start.`;
+  }
+
+  if (params.coachDecision.status === "need_extra_session") {
+    return `${params.goalTrajectory.message} Veckan kan behöva ${params.passCount + 1} träningsfönster om energin finns.`;
+  }
+
+  if (params.coachDecision.status === "recovery_needed") {
+    return `${params.goalTrajectory.message} Håll nästa pass kortare eller lättare om du tränar idag.`;
+  }
+
+  return `${params.goalTrajectory.message} ${params.coachDecision.message}`;
 }
 
 export function buildWeeklyWorkoutStructure(params: {
@@ -647,6 +686,15 @@ export function buildWeeklyWorkoutStructure(params: {
   }).entries;
   const currentWeekFocuses = recentCompletedLogs.map((log) => detectWorkoutFocus(log));
   const passCount = getGoalPassCount(goal);
+  const goalTrajectory = buildGoalTrajectory({
+    logs: params.logs,
+    goal,
+    experienceLevel: params.settings?.experience_level ?? null,
+    muscleBudget,
+    completedLast7Days: recentCompletedLogs.length,
+    passCount,
+    now,
+  });
   const nextPatternIndex = recentCompletedLogs.length % pattern.length;
   const patternPreferredFocus = pattern[nextPatternIndex] ?? pattern[0] ?? "full_body";
   const adaptiveFocusScores = (
@@ -766,6 +814,7 @@ export function buildWeeklyWorkoutStructure(params: {
   const summaryText = buildFocusSummaryText({
     coachDecision,
     currentWeekFocuses,
+    goalTrajectory,
     nextFocus,
     nextFocusScore:
       finalFocusScore ??
@@ -777,12 +826,11 @@ export function buildWeeklyWorkoutStructure(params: {
       }),
     patternPreferredFocus,
   });
-  const optimalPlanText =
-    coachDecision.status === "need_extra_session"
-      ? `${coachDecision.message} Veckan kan behöva ${passCount + 1} träningsfönster om energin finns.`
-      : coachDecision.status === "recovery_needed"
-        ? `${coachDecision.message} Håll nästa pass kortare eller lättare om du tränar idag.`
-        : `${coachDecision.message} Sikta på ungefär ${passCount} träningsfönster den här veckan.`;
+  const optimalPlanText = buildOptimalPlanText({
+    coachDecision,
+    goalTrajectory,
+    passCount,
+  });
 
   return {
     coachDecision,
@@ -790,6 +838,7 @@ export function buildWeeklyWorkoutStructure(params: {
     confidenceScore,
     configuredPriorityMuscles,
     currentWeekFocuses,
+    goalTrajectory,
     muscleBudget,
     nextFocus,
     nextFocusMuscleGroups,
