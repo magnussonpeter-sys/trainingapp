@@ -80,6 +80,14 @@ function formatDuration(seconds: number) {
   return `${minutes} min ${remainingSeconds} s`;
 }
 
+function toLocalIsoDate(value: string) {
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function getWorkoutVolume(workout: WorkoutLog) {
   return workout.exercises.reduce((sum, exercise) => {
     return (
@@ -144,6 +152,15 @@ export default function HistoryPage() {
   const [deletingWorkoutId, setDeletingWorkoutId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Läser datumfiltret lokalt för att undvika extra Suspense-krav på sidan.
+    const rawValue = new URLSearchParams(window.location.search).get("date");
+    setSelectedDate(
+      rawValue && /^\d{4}-\d{2}-\d{2}$/.test(rawValue) ? rawValue : null,
+    );
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -240,13 +257,21 @@ export default function HistoryPage() {
   }, [router]);
 
   const visibleWorkouts = useMemo(() => {
+    let nextWorkouts = workouts;
+
     if (historyFilter === "favorites") {
       const favoriteSet = new Set(favoriteIds);
-      return workouts.filter((workout) => favoriteSet.has(workout.id));
+      nextWorkouts = workouts.filter((workout) => favoriteSet.has(workout.id));
     }
 
-    return workouts;
-  }, [favoriteIds, historyFilter, workouts]);
+    if (selectedDate) {
+      nextWorkouts = nextWorkouts.filter(
+        (workout) => toLocalIsoDate(workout.completedAt) === selectedDate,
+      );
+    }
+
+    return nextWorkouts;
+  }, [favoriteIds, historyFilter, selectedDate, workouts]);
 
   const favoriteCount = useMemo(() => {
     const favoriteSet = new Set(favoriteIds);
@@ -446,6 +471,22 @@ export default function HistoryPage() {
                 {loadError}
               </div>
             ) : null}
+
+            {selectedDate ? (
+              <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Visar historik för {selectedDate}.
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedDate(null);
+                    router.push("/history");
+                  }}
+                  className="ml-2 font-semibold text-emerald-900 underline underline-offset-2"
+                >
+                  Visa hela historiken
+                </button>
+              </div>
+            ) : null}
           </section>
 
           <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
@@ -493,12 +534,16 @@ export default function HistoryPage() {
               <h2 className="text-xl font-semibold text-slate-950">
                 {historyFilter === "favorites"
                   ? "Inga favoritpass ännu"
-                  : "Ingen träningshistorik ännu"}
+                  : selectedDate
+                    ? "Ingen historik för vald dag"
+                    : "Ingen träningshistorik ännu"}
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 {historyFilter === "favorites"
                   ? "Markera pass med stjärnan så samlas de här för snabb åtkomst."
-                  : "När du har genomfört ett pass kommer det att visas här."}
+                  : selectedDate
+                    ? "Det finns inga genomförda pass sparade för just den här dagen."
+                    : "När du har genomfört ett pass kommer det att visas här."}
               </p>
               <button
                 type="button"

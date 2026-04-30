@@ -65,6 +65,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
   },
   {
+    id: "close_grip_push_up",
+    name: "Smala armhävningar",
+    requiredEquipment: ["bodyweight"],
+    description:
+      "Utförande: Gör armhävningar med händerna något smalare än axelbrett och håll armbågarna nära kroppen. Mål: Öka tricepsfokus jämfört med vanliga armhävningar.",
+    defaultSets: 3,
+    defaultReps: 10,
+    defaultRest: 60,
+    movementPattern: "horizontal_push",
+    primaryMuscles: ["triceps", "chest"],
+    secondaryMuscles: ["front_delts", "core"],
+    variantGroup: "push_up",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
+  },
+  {
     id: "decline_push_up",
     name: "Decline armhävningar",
     requiredEquipment: ["bodyweight", "bench"],
@@ -79,6 +95,24 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     variantGroup: "push_up",
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "hypertrofi"],
+  },
+  {
+    id: "bodyweight_bench_dip",
+    name: "Dips mot stol/bänk",
+    // Varianten kräver bara bodyweight eftersom stol, soffkant eller liknande
+    // normalt finns även utan registrerad träningsutrustning.
+    requiredEquipment: ["bodyweight"],
+    description:
+      "Utförande: Placera händerna bakom kroppen på en stadig stol, bänk eller soffkant. Sänk kroppen kontrollerat och pressa upp igen med fokus på triceps. Mål: Träna triceps med kroppsvikt utan särskild träningsutrustning.",
+    defaultSets: 3,
+    defaultReps: 10,
+    defaultRest: 90,
+    movementPattern: "vertical_push",
+    primaryMuscles: ["triceps"],
+    secondaryMuscles: ["chest", "front_delts"],
+    variantGroup: "dip",
+    riskLevel: "medium",
+    primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
   },
   {
     id: "pike_push_up",
@@ -1012,6 +1046,22 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryGoalTags: ["hypertrofi"],
   },
   {
+    id: "dumbbell_triceps_kickback",
+    name: "Triceps kickbacks",
+    requiredEquipment: ["dumbbells"],
+    description:
+      "Utförande: Stå lätt framåtlutad med neutral rygg och överarmen nära kroppen. Sträck armbågen bakåt kontrollerat och återgå långsamt. Mål: Isolera triceps med lätt till medeltung hantelbelastning.",
+    defaultSets: 3,
+    defaultReps: 12,
+    defaultRest: 45,
+    movementPattern: "vertical_push",
+    primaryMuscles: ["triceps"],
+    secondaryMuscles: [],
+    variantGroup: "triceps_isolation",
+    riskLevel: "low",
+    primaryGoalTags: ["hypertrofi", "allmän hälsa"],
+  },
+  {
     id: "dumbbell_calf_raise",
     name: "Vadpress med hantlar",
     requiredEquipment: ["dumbbells"],
@@ -1570,6 +1620,12 @@ export const EXERCISE_PROGRESSION_TRACKS: ExerciseProgressionTrack[] = [
     name: "Carry-steg",
     intent: "Flytta fokus från enkel belastning till större asymmetri och total bålutmaning.",
     stepIds: ["dumbbell_farmer_carry", "dumbbell_suitcase_carry"],
+  },
+  {
+    id: "triceps_bodyweight_progression",
+    name: "Triceps-steg med kroppsvikt",
+    intent: "Bygg tricepsstyrka från smala armhävningar till dips utan att kräva särskild utrustning.",
+    stepIds: ["close_grip_push_up", "bodyweight_bench_dip", "ring_dip"],
   },
   {
     id: "rotation_progression",

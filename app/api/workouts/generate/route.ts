@@ -447,11 +447,15 @@ function buildAvailableExercisePrompt(
           ? `${exercise.defaultSets} x ${exercise.defaultDuration}s`
           : `${exercise.defaultSets} x ${exercise.defaultReps ?? 10}`;
 
+      // Muskelmetadata skickas med så AI kan matcha fokusmuskler och veckobudget mot katalogen.
       return [
         `- id: ${exercise.id}`,
         `namn: ${exercise.name}`,
         `mönster: ${exercise.movementPattern}`,
         `utrustning: ${exercise.requiredEquipment.join(", ")}`,
+        `primära muskler: ${exercise.primaryMuscles.join(", ")}`,
+        `sekundära muskler: ${exercise.secondaryMuscles?.join(", ") ?? "inga"}`,
+        `variantgrupp: ${exercise.variantGroup}`,
         `standard: ${dose}`,
         `vila: ${exercise.defaultRest}s`,
       ].join(" | ");

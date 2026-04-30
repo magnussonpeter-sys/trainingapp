@@ -204,6 +204,253 @@ function getProgressLabel(progressStatus: string) {
   return "Begränsad data";
 }
 
+type CompletedWeekDaySummary = {
+  date: string;
+  dayLabel: string;
+  logs: WorkoutLog[];
+  plannedSets: number;
+  totalExercises: number;
+  totalSets: number;
+  totalDurationMinutes: number;
+};
+
+type WeeklyPlanDisplayDay = {
+  date: string;
+  dayLabel: string;
+  isToday: boolean;
+  completedSummary: CompletedWeekDaySummary | null;
+  plannedDay: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingDays"][number] | null;
+  plannedStep: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingSteps"][number] | null;
+  recommendedSets: number | null;
+  recommendedMinutes: number | null;
+};
+
+function toLocalIsoDate(value: Date | string) {
+  const date = typeof value === "string" ? new Date(value) : value;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatWeekDayLabel(value: Date) {
+  return value.toLocaleDateString("sv-SE", { weekday: "short" });
+}
+
+function addDays(value: Date, days: number) {
+  const nextDate = new Date(value);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getStartOfWeek(value: Date) {
+  const start = new Date(value);
+  const weekday = (start.getDay() + 6) % 7;
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - weekday);
+  return start;
+}
+
+function buildCompletedWeekSummaries(logs: WorkoutLog[], now: Date) {
+  // Samlar genomförda pass per dag i innevarande vecka för den visuella veckoplanen.
+  const weekStart = getStartOfWeek(now);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  const summaries = new Map<string, CompletedWeekDaySummary>();
+
+  for (const log of logs) {
+    if (log.status !== "completed") {
+      continue;
+    }
+
+    const completedAt = new Date(log.completedAt);
+    if (!Number.isFinite(completedAt.getTime())) {
+      continue;
+    }
+
+    if (completedAt < weekStart || completedAt > weekEnd) {
+      continue;
+    }
+
+    const dateKey = toLocalIsoDate(completedAt);
+    const existing = summaries.get(dateKey);
+    const totalExercises = log.exercises.length;
+    const totalSets = log.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
+    const plannedSets = log.exercises.reduce((sum, exercise) => sum + exercise.plannedSets, 0);
+    const totalDurationMinutes = Math.max(1, Math.round(log.durationSeconds / 60));
+
+    if (existing) {
+      existing.logs.push(log);
+      existing.totalExercises += totalExercises;
+      existing.totalSets += totalSets;
+      existing.plannedSets += plannedSets;
+      existing.totalDurationMinutes += totalDurationMinutes;
+      continue;
+    }
+
+    summaries.set(dateKey, {
+      date: dateKey,
+      dayLabel: formatWeekDayLabel(completedAt),
+      logs: [log],
+      plannedSets,
+      totalExercises,
+      totalSets,
+      totalDurationMinutes,
+    });
+  }
+
+  return summaries;
+}
+
+function buildRecommendedVolumeByDate(params: {
+  weeklyPlanDays: Array<{
+    date: string;
+    plannedDay: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingDays"][number] | null;
+    plannedStep: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingSteps"][number] | null;
+    completedSummary: CompletedWeekDaySummary | null;
+  }>;
+  weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+}) {
+  const remainingEntries = new Map(
+    params.weeklyStructure.muscleBudget.map((entry) => [entry.group, entry]),
+  );
+  const remainingTrainingDays = params.weeklyPlanDays.filter(
+    (day) =>
+      day.plannedDay?.type === "training" &&
+      !day.completedSummary &&
+      (day.plannedStep?.muscleGroups.length ?? 0) > 0,
+  );
+  const occurrencesByGroup = new Map<MuscleBudgetGroup, number>();
+
+  for (const day of remainingTrainingDays) {
+    for (const group of day.plannedStep?.muscleGroups ?? []) {
+      occurrencesByGroup.set(group, (occurrencesByGroup.get(group) ?? 0) + 1);
+    }
+  }
+
+  const recommendedByDate = new Map<
+    string,
+    { recommendedSets: number; recommendedMinutes: number }
+  >();
+
+  for (const day of remainingTrainingDays) {
+    const recommendedSetsRaw = (day.plannedStep?.muscleGroups ?? []).reduce(
+      (sum, group) => {
+        const entry = remainingEntries.get(group);
+        const occurrences = occurrencesByGroup.get(group) ?? 1;
+
+        if (!entry || entry.remainingSets <= 0) {
+          return sum;
+        }
+
+        return sum + entry.remainingSets / occurrences;
+      },
+      0,
+    );
+    // Håll rekommendationen enkel och stabil i UI:t.
+    const recommendedSets = Math.round(
+      clampNumber(recommendedSetsRaw || 8, 6, 18),
+    );
+    const recommendedMinutes = Math.round(
+      clampNumber(recommendedSets * 2.5, 20, 55),
+    );
+
+    recommendedByDate.set(day.date, {
+      recommendedSets,
+      recommendedMinutes,
+    });
+  }
+
+  return recommendedByDate;
+}
+
+function buildWeeklyPlanDisplayDays(params: {
+  now: Date;
+  logs: WorkoutLog[];
+  weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+}) {
+  // Bygger en enkel måndag-söndag-vy som blandar genomfört och återstående pass.
+  const completedSummaries = buildCompletedWeekSummaries(params.logs, params.now);
+  const plannedByDate = new Map<
+    string,
+    {
+      day: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingDays"][number];
+      step: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingSteps"][number] | null;
+    }
+  >();
+
+  params.weeklyStructure.upcomingDays.forEach((day, index) => {
+    plannedByDate.set(day.date, {
+      day,
+      step: params.weeklyStructure.upcomingSteps[index] ?? null,
+    });
+  });
+
+  const baseDays = Array.from({ length: 7 }, (_, index) => {
+    const date = addDays(getStartOfWeek(params.now), index);
+    const dateKey = toLocalIsoDate(date);
+    const planned = plannedByDate.get(dateKey) ?? null;
+
+    return {
+      date: dateKey,
+      dayLabel: formatWeekDayLabel(date),
+      isToday: dateKey === toLocalIsoDate(params.now),
+      completedSummary: completedSummaries.get(dateKey) ?? null,
+      plannedDay: planned?.day ?? null,
+      plannedStep: planned?.step ?? null,
+      recommendedSets: null,
+      recommendedMinutes: null,
+    } satisfies WeeklyPlanDisplayDay;
+  });
+  const recommendedByDate = buildRecommendedVolumeByDate({
+    weeklyPlanDays: baseDays,
+    weeklyStructure: params.weeklyStructure,
+  });
+
+  return baseDays.map((day) => {
+    const recommended = recommendedByDate.get(day.date);
+
+    return {
+      ...day,
+      recommendedSets: recommended?.recommendedSets ?? null,
+      recommendedMinutes: recommended?.recommendedMinutes ?? null,
+    };
+  });
+}
+
+function getWeeklyAdjustmentSummary(
+  weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>,
+) {
+  const overloadedGroups = weeklyStructure.muscleBudget
+    .filter((entry) => entry.loadStatus === "high_risk" || entry.loadStatus === "over")
+    .slice(0, 3)
+    .map((entry) => entry.label.toLowerCase());
+  const remainingGroups = weeklyStructure.muscleBudget
+    .filter(
+      (entry) =>
+        entry.remainingSets > 0 &&
+        entry.loadStatus !== "high_risk" &&
+        entry.loadStatus !== "over",
+    )
+    .sort((left, right) => right.remainingSets - left.remainingSets)
+    .slice(0, 3)
+    .map((entry) => `${entry.label}: ${formatDecimal(entry.remainingSets)} kvar`);
+
+  if (overloadedGroups.length > 0 && remainingGroups.length > 0) {
+    return `Planen är justerad. ${overloadedGroups.join(", ")} ligger redan högt, så nästa pass prioriterar ${remainingGroups.join(" · ")} utifrån kvarvarande set.`;
+  }
+
+  if (remainingGroups.length > 0) {
+    return `Planen uppdateras löpande efter genomförda pass. Just nu ligger fokus på ${remainingGroups.join(" · ")} utifrån kvarvarande set.`;
+  }
+
+  return "Planen uppdateras löpande efter genomförda pass och återhämtning.";
+}
+
 function HomeHeroCard(props: {
   name: string;
   wisdomText: string;
@@ -502,6 +749,9 @@ function WeeklyInsightsPanel(props: {
   showWeeklyInsights: boolean;
   onToggle: () => void;
   weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+  weeklyPlanDays: WeeklyPlanDisplayDay[];
+  onOpenHistoryDay: (date: string) => void;
+  onStartWorkout: () => void;
 }) {
   return (
     <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
@@ -522,41 +772,136 @@ function WeeklyInsightsPanel(props: {
 
       {props.showWeeklyInsights ? (
         <div className="mt-5 space-y-6">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-sm leading-6 text-slate-700">
+              {getWeeklyAdjustmentSummary(props.weeklyStructure)}
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {props.weeklyStructure.upcomingSteps.map((step) => (
-              <div
-                key={step.label}
-                className={cn(
-                  "rounded-2xl border px-4 py-4",
-                  step.type === "training"
-                    ? "border-emerald-200 bg-emerald-50"
-                    : "border-slate-200 bg-slate-50",
-                )}
-              >
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  {step.label}
-                </p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">
-                  {step.focus ? formatWorkoutFocus(step.focus) : "Återhämtning"}
-                </p>
-                <div className="mt-2 flex min-h-[40px] flex-wrap gap-1.5">
-                  {step.type === "training" && step.muscleGroups.length > 0 ? (
-                    step.muscleGroups.map((group) => (
-                      <span
-                        key={`${step.label}-${group}`}
-                        className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700"
-                      >
-                        {formatMuscleGroup(group)}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-xs text-slate-500">
-                      Återhämtning efter tid, energi och senaste pass.
-                    </span>
+            {props.weeklyPlanDays.map((day, index) => {
+              const isCompleted = Boolean(day.completedSummary);
+              const isTraining = day.plannedDay?.type === "training";
+              const actionLabel = isCompleted
+                ? "Visa historik"
+                : isTraining
+                  ? "Starta pass"
+                  : "Öppna historik";
+              const focusLabel = isCompleted
+                ? day.completedSummary!.logs[0]?.workoutName ?? "Genomfört pass"
+                : day.plannedDay?.focus
+                  ? formatWorkoutFocus(day.plannedDay.focus)
+                  : "Återhämtning";
+              const summaryText = isCompleted
+                ? `${day.completedSummary!.logs.length} pass · ${day.completedSummary!.totalExercises} öv · ${day.completedSummary!.totalSets} set`
+                : isTraining && day.plannedStep?.muscleGroups.length
+                  ? day.plannedStep.muscleGroups
+                      .slice(0, 2)
+                      .map((group) => formatMuscleGroup(group))
+                      .join(" · ")
+                  : "Lugnare dag";
+              const volumeText = isCompleted
+                ? `Plan ${day.completedSummary!.plannedSets} set · Gjort ${day.completedSummary!.totalSets} set · ${day.completedSummary!.totalDurationMinutes} min`
+                : isTraining && day.recommendedSets && day.recommendedMinutes
+                  ? `Rek. ${day.recommendedSets} set · ca ${day.recommendedMinutes} min`
+                  : "Ingen volym att styra mot";
+
+              return (
+                <button
+                  key={`${day.date}-${index}`}
+                  type="button"
+                  onClick={() => {
+                    if (isTraining && !isCompleted) {
+                      props.onStartWorkout();
+                      return;
+                    }
+
+                    props.onOpenHistoryDay(day.date);
+                  }}
+                  className={cn(
+                    "rounded-2xl border px-4 py-4 text-left transition focus:outline-none focus:ring-2 focus:ring-emerald-500",
+                    day.isToday
+                      ? "border-emerald-400 bg-emerald-100 shadow-[0_10px_24px_rgba(16,185,129,0.14)]"
+                      : isCompleted
+                        ? "border-sky-200 bg-sky-50"
+                        : isTraining
+                          ? "border-emerald-200 bg-emerald-50"
+                          : "border-slate-300 bg-slate-100",
                   )}
-                </div>
-              </div>
-            ))}
+                  aria-label={`${day.dayLabel} ${day.date}. ${focusLabel}. ${actionLabel}.`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {day.dayLabel}
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">{day.date}</p>
+                    </div>
+
+                    {day.isToday ? (
+                      <span className="rounded-full border border-emerald-300 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                        Idag
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <p className="mt-3 text-sm font-semibold text-slate-950">
+                    {focusLabel}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-slate-700">
+                    {summaryText}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                    {volumeText}
+                  </p>
+
+                  <div className="mt-3 flex items-center justify-between">
+                    <span
+                      className={cn(
+                        "rounded-full px-2.5 py-1 text-[11px] font-medium",
+                        isCompleted
+                          ? "border border-sky-200 bg-white text-sky-700"
+                          : isTraining
+                            ? "border border-emerald-200 bg-white text-emerald-700"
+                            : "border border-slate-300 bg-white text-slate-600",
+                      )}
+                    >
+                      {isCompleted ? "Genomfört" : isTraining ? "Planerat pass" : "Återhämtning"}
+                    </span>
+                    <span className="text-[11px] font-medium text-slate-500">{actionLabel}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                Klart
+              </p>
+              <p className="mt-1 text-base font-semibold text-slate-950">
+                {props.weeklyPlanDays.filter((day) => day.completedSummary).length}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                Återstår
+              </p>
+              <p className="mt-1 text-base font-semibold text-slate-950">
+                {props.weeklyPlanDays.filter(
+                  (day) => day.plannedDay?.type === "training" && !day.completedSummary,
+                ).length}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                Dagens läge
+              </p>
+              <p className="mt-1 text-base font-semibold text-slate-950">
+                {formatWorkoutFocus(props.weeklyStructure.nextFocus)}
+              </p>
+            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -680,6 +1025,13 @@ export default function HomePage() {
       settings,
     });
   }, [settings, workoutLogs]);
+  const weeklyPlanDays = useMemo(() => {
+    return buildWeeklyPlanDisplayDays({
+      now: new Date(),
+      logs: workoutLogs,
+      weeklyStructure,
+    });
+  }, [weeklyStructure, workoutLogs]);
 
   const coachMessage = useMemo(() => {
     return getCoachMessage({
@@ -842,6 +1194,10 @@ export default function HomePage() {
     } finally {
       setIsGenerating(false);
     }
+  }
+
+  function handleOpenHistoryDay(date: string) {
+    router.push(`/history?date=${encodeURIComponent(date)}`);
   }
 
   async function handleQuickStartTodayWorkout() {
@@ -1038,6 +1394,9 @@ export default function HomePage() {
           showWeeklyInsights={showWeeklyInsights}
           onToggle={() => setShowWeeklyInsights((previous) => !previous)}
           weeklyStructure={weeklyStructure}
+          weeklyPlanDays={weeklyPlanDays}
+          onOpenHistoryDay={handleOpenHistoryDay}
+          onStartWorkout={handleReviewAiWorkout}
         />
 
         <SecondaryActionsCard
