@@ -5,6 +5,10 @@ import {
   type MuscleBudgetEntry,
   type MuscleBudgetGroup,
 } from "@/lib/planning/muscle-budget";
+import {
+  buildCoachDecision,
+  type CoachDecision,
+} from "@/lib/planning/coach-decision";
 import { getExerciseById } from "@/lib/exercise-catalog";
 import type { WorkoutLog } from "@/lib/workout-log-storage";
 import type { WorkoutFocus } from "@/types/workout";
@@ -38,6 +42,7 @@ export type WeeklyPlanStep = {
 };
 
 export type WeeklyWorkoutStructure = {
+  coachDecision: CoachDecision;
   completedLast7Days: number;
   confidenceScore: ConfidenceScore;
   configuredPriorityMuscles: MuscleBudgetGroup[];
@@ -529,6 +534,7 @@ function getSplitStyle(passCount: number) {
 function buildPriorityMuscles(
   entries: MuscleBudgetEntry[],
   configuredPriorityMuscles: MuscleBudgetGroup[],
+  coachPriorityGroups?: MuscleBudgetGroup[],
 ) {
   const result: MuscleBudgetGroup[] = [];
 
@@ -537,6 +543,9 @@ function buildPriorityMuscles(
       result.push(group);
     }
   };
+
+  // Coachlagret får lägga sina viktigaste grupper först utan att skriva över budgeten.
+  (coachPriorityGroups ?? []).forEach((group) => addIfMissing(group));
 
   configuredPriorityMuscles
     .map((group) => entries.find((entry) => entry.group === group) ?? null)
@@ -582,6 +591,7 @@ function buildPriorityMuscles(
 }
 
 function buildFocusSummaryText(params: {
+  coachDecision: CoachDecision;
   currentWeekFocuses: WorkoutFocus[];
   nextFocus: WorkoutFocus;
   nextFocusScore: AdaptiveFocusScore;
@@ -599,12 +609,12 @@ function buildFocusSummaryText(params: {
       params.patternPreferredFocus,
     ).toLowerCase()}, men fokus flyttades till ${formatWorkoutFocus(
       params.nextFocus,
-    ).toLowerCase()} eftersom ${params.nextFocusScore.reason}.`;
+    ).toLowerCase()} eftersom ${params.coachDecision.message.toLowerCase()}`;
   }
 
   return `${recentSummary} Nästa fokus blir ${formatWorkoutFocus(
     params.nextFocus,
-  ).toLowerCase()} eftersom ${params.nextFocusScore.reason}.`;
+  ).toLowerCase()} eftersom ${params.nextFocusScore.reason}. ${params.coachDecision.message}`;
 }
 
 export function buildWeeklyWorkoutStructure(params: {
@@ -678,7 +688,30 @@ export function buildWeeklyWorkoutStructure(params: {
     return right.patternBonus - left.patternBonus;
   });
   const selectedFocusScore = sortedFocusCandidates[0] ?? null;
-  const nextFocus = selectedFocusScore?.focus ?? patternPreferredFocus;
+  const coachDecision = buildCoachDecision({
+    entries: muscleBudget,
+    configuredPriorityMuscles,
+    currentWeekFocuses,
+    completedLast7Days: recentCompletedLogs.length,
+    passCount,
+    patternPreferredFocus,
+    confidenceScore,
+  });
+  const coachSuggestedFocus = coachDecision.suggestedFocus;
+  const coachSuggestedFocusScore = coachSuggestedFocus
+    ? adaptiveFocusScores.find((entry) => entry.focus === coachSuggestedFocus) ?? null
+    : null;
+  const selectedFocusIsUsable =
+    coachSuggestedFocusScore &&
+    (coachDecision.status === "rebalance_focus" ||
+      coachDecision.status === "need_more_volume" ||
+      coachDecision.status === "need_extra_session") &&
+    (!isFocusOverloaded(muscleBudget, coachSuggestedFocusScore.focus) ||
+      nonOverloadedCandidates.length === 0);
+  const finalFocusScore = selectedFocusIsUsable
+    ? coachSuggestedFocusScore
+    : selectedFocusScore;
+  const nextFocus = finalFocusScore?.focus ?? patternPreferredFocus;
   const nextFocusMuscleGroups = getFocusMuscleGroups(muscleBudget, nextFocus, {
     limit: 3,
     configuredPriorityMuscles,
@@ -728,12 +761,14 @@ export function buildWeeklyWorkoutStructure(params: {
   const priorityMuscles = buildPriorityMuscles(
     muscleBudget,
     configuredPriorityMuscles,
+    coachDecision.priorityGroups,
   );
   const summaryText = buildFocusSummaryText({
+    coachDecision,
     currentWeekFocuses,
     nextFocus,
     nextFocusScore:
-      selectedFocusScore ??
+      finalFocusScore ??
       getAdaptiveFocusScore({
         focus: nextFocus,
         entries: muscleBudget,
@@ -743,11 +778,14 @@ export function buildWeeklyWorkoutStructure(params: {
     patternPreferredFocus,
   });
   const optimalPlanText =
-    passCount <= 3
-      ? `Optimalt just nu: sikta på ${passCount} pass i valfri rytm, med återhämtning mellan passen när du behöver det.`
-      : `Optimalt just nu: sikta på ${passCount} pass där du växlar träning och återhämtning utifrån tid och energi, inte fasta veckodagar.`;
+    coachDecision.status === "need_extra_session"
+      ? `${coachDecision.message} Veckan kan behöva ${passCount + 1} träningsfönster om energin finns.`
+      : coachDecision.status === "recovery_needed"
+        ? `${coachDecision.message} Håll nästa pass kortare eller lättare om du tränar idag.`
+        : `${coachDecision.message} Sikta på ungefär ${passCount} träningsfönster den här veckan.`;
 
   return {
+    coachDecision,
     completedLast7Days: recentCompletedLogs.length,
     confidenceScore,
     configuredPriorityMuscles,
