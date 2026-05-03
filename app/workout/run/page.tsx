@@ -24,7 +24,11 @@ import {
   getWorkoutDraft,
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
-import { getActiveWorkout } from "@/lib/workout-storage";
+import {
+  clearActiveWorkout,
+  getActiveWorkout,
+  saveActiveWorkout,
+} from "@/lib/workout-storage";
 import { useActiveWorkout } from "@/hooks/use-active-workout";
 import type { Exercise, Workout } from "@/types/workout";
 
@@ -328,6 +332,44 @@ export default function RunPage() {
       );
     }, 0);
   }, [workout]);
+  const canReplaceCurrentBlock = useMemo(() => {
+    if (!currentBlockExercises.length) {
+      return false;
+    }
+
+    if (currentBlockType === "superset") {
+      return false;
+    }
+
+    // I vanliga block får bara övningar utan loggade set bytas ut.
+    return currentBlockExercises.some((exercise) => {
+      const completedExercise = completedExercises.find(
+        (item) => item.exerciseId === exercise.id,
+      );
+      return !completedExercise || completedExercise.sets.length === 0;
+    });
+  }, [completedExercises, currentBlockExercises, currentBlockType]);
+  const canMoveCurrentBlockDown = (() => {
+    if (!workout?.blocks?.length || currentBlockType === "superset") {
+      return false;
+    }
+
+    if (currentBlockIndex >= workout.blocks.length - 1) {
+      return false;
+    }
+
+    // Det ska vara tryggt att skjuta fram blocket bara innan något i blocket startat.
+    if (currentBlockExercisePosition !== 1 || currentSet !== 1 || totalCompletedSets > 0) {
+      return false;
+    }
+
+    return currentBlockExercises.every((exercise) => {
+      const completedExercise = completedExercises.find(
+        (item) => item.exerciseId === exercise.id,
+      );
+      return !completedExercise || completedExercise.sets.length === 0;
+    });
+  })();
 
   const nextExerciseName = useMemo(() => {
     if (!currentExercise || allExercises.length === 0) {
@@ -379,6 +421,8 @@ export default function RunPage() {
     }
 
     try {
+      // Håll både aktivt pass och draft i synk så återupptagning blir stabil.
+      saveActiveWorkout(resolvedUserId, nextWorkout);
       saveWorkoutDraft(resolvedUserId, nextWorkout);
     } catch {
       setPageError("Kunde inte spara ändring i passupplägget lokalt.");
@@ -390,6 +434,7 @@ export default function RunPage() {
       return;
     }
 
+    clearActiveWorkout(resolvedUserId);
     clearActiveWorkoutSessionDraft(resolvedUserId);
     clearWorkoutDraft(resolvedUserId);
   }
@@ -488,6 +533,45 @@ export default function RunPage() {
     );
   }
 
+  function handleMoveUpcomingBlock(fromIndex: number, toIndex: number) {
+    setWorkout((previous) => {
+      if (!previous?.blocks?.length) {
+        return previous;
+      }
+
+      const maxIndex = previous.blocks.length - 1;
+      const safeFromIndex = clampNumber(fromIndex, 0, maxIndex);
+      const safeToIndex = clampNumber(toIndex, 0, maxIndex);
+
+      // Aktuellt block får bara flyttas nedåt. Kommande block kan flyttas fritt framåt/bakåt.
+      if (
+        safeFromIndex < currentBlockIndex ||
+        safeToIndex < currentBlockIndex ||
+        (safeFromIndex === currentBlockIndex && safeToIndex <= currentBlockIndex) ||
+        safeFromIndex === safeToIndex
+      ) {
+        return previous;
+      }
+
+      const nextBlocks = [...previous.blocks];
+      const [movedBlock] = nextBlocks.splice(safeFromIndex, 1);
+
+      if (!movedBlock) {
+        return previous;
+      }
+
+      nextBlocks.splice(safeToIndex, 0, movedBlock);
+
+      const nextWorkout: Workout = {
+        ...previous,
+        blocks: nextBlocks,
+      };
+
+      persistWorkoutDraft(nextWorkout);
+      return nextWorkout;
+    });
+  }
+
   function handlePrimaryAction() {
     if (timedExercise) {
       if (timerState === "idle") {
@@ -509,7 +593,24 @@ export default function RunPage() {
 
   function handleGoHome() {
     clearLocalRunState();
+    router.push("/home?notice=workout_saved");
+  }
+
+  function handleGoHomeFromSheet() {
+    setOptionsOpen(false);
     router.push("/home");
+  }
+
+  function handleReplaceCurrentBlock() {
+    if (!resolvedUserId) {
+      return;
+    }
+
+    router.push(
+      `/workout/run/replace-block?userId=${encodeURIComponent(
+        resolvedUserId,
+      )}&blockIndex=${currentBlockIndex}`,
+    );
   }
 
   function handleSkipExerciseFromSheet() {
@@ -524,9 +625,10 @@ export default function RunPage() {
 
   function confirmAbortWorkout() {
     setAbortConfirmOpen(false);
+    const hasAnyCompletedSets = completedExercises.some((exercise) => exercise.sets.length > 0);
     abortWorkout();
     clearLocalRunState();
-    router.push("/home");
+    router.push(hasAnyCompletedSets ? "/home?notice=workout_aborted_saved" : "/home");
   }
 
   function handleResetTimedSetFromSheet() {
@@ -552,7 +654,7 @@ export default function RunPage() {
             onClick={() => router.push("/home")}
             className={cn(uiButtonClasses.primary, "mt-4")}
           >
-            Till home
+            Till hem
           </button>
 
           {pageError ? (
@@ -581,12 +683,16 @@ export default function RunPage() {
             completedExercises={completedExercises}
           />
 
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            Passet är sparat till historiken. Du kan gå tillbaka till hem nu eller öppna historiken senare.
+          </div>
+
           <button
             type="button"
             onClick={handleGoHome}
             className={cn(uiButtonClasses.primary, "w-full")}
           >
-            Till home
+            Till hem
           </button>
         </div>
       </main>
@@ -611,6 +717,9 @@ export default function RunPage() {
     currentBlockExerciseCount,
     currentBlockExercises,
     workoutBlocks: workout.blocks,
+    showExerciseFlow: false,
+    canReplaceCurrentBlock,
+    canMoveCurrentBlockDown,
     currentRound,
     currentRoundTotal,
     currentSet,
@@ -655,6 +764,7 @@ export default function RunPage() {
     abortConfirmOpen,
     setAbortConfirmOpen,
     handleSkipExerciseFromSheet,
+    handleGoHomeFromSheet,
     handleAbortFromSheet,
     handleResetTimedSetFromSheet,
     handleIncreaseSets,
@@ -665,6 +775,8 @@ export default function RunPage() {
     handleDecreaseDuration,
     handleIncreaseRest,
     handleDecreaseRest,
+    handleReplaceCurrentBlock,
+    handleMoveUpcomingBlock,
     confirmAbortWorkout,
   };
 

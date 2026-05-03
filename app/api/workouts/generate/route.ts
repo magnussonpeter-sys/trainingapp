@@ -21,6 +21,7 @@ import type {
   ConfidenceScore,
   MuscleBudgetEntry,
 } from "@/lib/planning/muscle-budget";
+import type { TrainingGap } from "@/lib/planning/training-gap";
 import type { CompletedExercise, CompletedSet } from "@/lib/workout-log-storage";
 import type { WorkoutFocus } from "@/types/workout";
 
@@ -111,6 +112,22 @@ type WeeklyBudgetValidationItem = Pick<
 > & {
   loadStatus?: MuscleBudgetEntry["loadStatus"];
 };
+
+type TrainingGapPromptItem = Pick<
+  TrainingGap,
+  | "status"
+  | "completionRatio"
+  | "plannedSessions"
+  | "completedSessions"
+  | "plannedMinutes"
+  | "completedMinutes"
+  | "missingMinutes"
+  | "missingSets"
+  | "missingMuscles"
+  | "message"
+  | "suggestedCatchUpOptions"
+  | "thirtyDayEffect"
+>;
 
 type FocusMuscle =
   | "chest"
@@ -514,6 +531,7 @@ function buildGenerationPrompt(params: {
   supersetPreference: SupersetPreference;
   weeklyBudget: WeeklyBudgetPromptItem[];
   weeklyPlan: WeeklyPlanPromptItem[];
+  trainingGap: TrainingGapPromptItem | null;
   lessOftenExerciseIds?: string[];
   focusMuscles?: FocusMuscle[];
 }) {
@@ -552,6 +570,9 @@ function buildGenerationPrompt(params: {
     params.weeklyBudget.length > 0
       ? JSON.stringify(params.weeklyBudget, null, 2)
       : "[]";
+  const trainingGapText = params.trainingGap
+    ? JSON.stringify(params.trainingGap, null, 2)
+    : "null";
   const nextFocusText = params.nextFocus ?? "full_body";
   const confidenceText = params.confidenceScore ?? "medium";
   const splitStyleText = params.splitStyle ?? "adaptive";
@@ -589,6 +610,7 @@ Kontext:
 - föreslagen split-stil denna vecka: ${splitStyleText}
 - veckans muskelbudget och återstående set: ${weeklyBudgetText}
 - enkel veckoplan för kommande 7 dagar: ${weeklyPlanText}
+- regelbaserat träningsgap för veckan: ${trainingGapText}
 - uttryckligt valda fokusmuskler för detta builder-pass: ${requestedFocusMusclesText}
 - superset-preferens: ${supersetPreferenceText}
 - övningar användaren vill ha mindre av: ${
@@ -611,6 +633,8 @@ Viktförslag:
 - Om registrerade vikter finns i gymmet ska du försöka lägga suggestedWeight nära en rimlig faktisk vikt i gymmet.
 - För kroppsviktsövningar eller tidsstyrda övningar där extern vikt inte är relevant ska suggestedWeight vara null.
 - Om du är osäker mellan två nivåer, välj den lättare och säkrare nivån.
+- Use thirtyDayEffect only as coaching context. Do not claim measured muscle growth.
+- Phrase long-term adaptations as likely training stimulus, not exact outcomes.
 
 För korta pass ska du tänka i denna ordning:
 1. välj blockstruktur
@@ -771,6 +795,7 @@ export async function POST(req: Request) {
       splitStyle?: string | null;
       weeklyBudget?: WeeklyBudgetPromptItem[];
       weeklyPlan?: WeeklyPlanPromptItem[];
+      trainingGap?: TrainingGapPromptItem | null;
       lessOftenExerciseIds?: string[];
       focusMuscles?: FocusMuscle[];
       avoidSupersets?: boolean;
@@ -839,6 +864,8 @@ export async function POST(req: Request) {
         : null;
     const weeklyBudget = Array.isArray(body.weeklyBudget) ? body.weeklyBudget : [];
     const weeklyPlan = Array.isArray(body.weeklyPlan) ? body.weeklyPlan : [];
+    const trainingGap =
+      body.trainingGap && typeof body.trainingGap === "object" ? body.trainingGap : null;
     const lessOftenExerciseIds = Array.isArray(body.lessOftenExerciseIds)
       ? body.lessOftenExerciseIds.filter(
           (value): value is string =>
@@ -884,6 +911,7 @@ export async function POST(req: Request) {
       supersetPreference,
       weeklyBudget,
       weeklyPlan,
+      trainingGap,
       lessOftenExerciseIds,
       focusMuscles,
     });

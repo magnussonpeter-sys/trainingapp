@@ -22,6 +22,9 @@ export type RunScreenProps = {
   currentBlockExerciseCount: number;
   currentBlockExercises: Exercise[];
   workoutBlocks: WorkoutBlock[];
+  showExerciseFlow: boolean;
+  canReplaceCurrentBlock: boolean;
+  canMoveCurrentBlockDown: boolean;
   currentRound: number;
   currentRoundTotal: number;
   currentSet: number;
@@ -66,6 +69,7 @@ export type RunScreenProps = {
   abortConfirmOpen: boolean;
   setAbortConfirmOpen: (value: boolean) => void;
   handleSkipExerciseFromSheet: () => void;
+  handleGoHomeFromSheet: () => void;
   handleAbortFromSheet: () => void;
   handleResetTimedSetFromSheet: () => void;
   handleIncreaseSets: () => void;
@@ -76,5 +80,7 @@ export type RunScreenProps = {
   handleDecreaseDuration: () => void;
   handleIncreaseRest: () => void;
   handleDecreaseRest: () => void;
+  handleReplaceCurrentBlock: () => void;
+  handleMoveUpcomingBlock: (fromIndex: number, toIndex: number) => void;
   confirmAbortWorkout: () => void;
 };

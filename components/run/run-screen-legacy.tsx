@@ -319,6 +319,7 @@ export default function RunScreenLegacy(props: RunScreenProps) {
         timedExercise={timedExercise}
         timerState={timerState}
         onClose={() => setOptionsOpen(false)}
+        onGoHome={props.handleGoHomeFromSheet}
         onSkipExercise={handleSkipExerciseFromSheet}
         onAbortWorkout={handleAbortFromSheet}
         onResetTimedSet={handleResetTimedSetFromSheet}

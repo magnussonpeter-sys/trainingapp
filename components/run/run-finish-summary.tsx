@@ -615,7 +615,7 @@ export default function RunFinishSummary({
         },
         {
           label: "Arbetsset",
-          value: String(totalCompletedSets),
+          value: String(performanceSummary.completedSetCount),
           helper:
             performanceSummary.skippedSetCount > 0
               ? `${performanceSummary.skippedSetCount} planerade set hoppades över`

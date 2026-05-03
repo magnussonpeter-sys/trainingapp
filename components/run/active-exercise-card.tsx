@@ -396,6 +396,23 @@ export default function ActiveExerciseCard({
             </div>
           ) : null}
 
+          {!timedExercise ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                Reps
+              </p>
+              <input
+                inputMode="numeric"
+                value={reps}
+                onChange={(event) => onRepsChange(event.target.value)}
+                className="mt-2 w-full border-none bg-transparent p-0 text-2xl font-semibold text-slate-900 outline-none"
+              />
+              <p className="mt-1 text-sm text-slate-500">
+                Planerat: {exercise.reps ?? "-"}
+              </p>
+            </div>
+          ) : null}
+
           {showWeightInput && !showWeightEditor ? (
             <button
               type="button"
@@ -457,18 +474,6 @@ export default function ActiveExerciseCard({
                   onSelect={onWeightChipSelect}
                 />
               ) : null}
-
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-                  Reps
-                </p>
-                <input
-                  inputMode="numeric"
-                  value={reps}
-                  onChange={(event) => onRepsChange(event.target.value)}
-                  className="mt-2 w-full border-none bg-transparent p-0 text-2xl font-semibold text-slate-900 outline-none"
-                />
-              </div>
             </div>
           ) : null}
 

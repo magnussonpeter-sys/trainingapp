@@ -51,6 +51,16 @@ function getBlockLetter(index: number) {
 }
 
 let sharedWorkoutAudioContext: AudioContext | null = null;
+type WakeLockSentinelLike = {
+  released: boolean;
+  release: () => Promise<void>;
+};
+
+type WakeLockNavigator = Navigator & {
+  wakeLock?: {
+    request: (type: "screen") => Promise<WakeLockSentinelLike>;
+  };
+};
 
 function getWorkoutAudioContext() {
   if (typeof window === "undefined") {
@@ -73,6 +83,37 @@ function getWorkoutAudioContext() {
   return sharedWorkoutAudioContext;
 }
 
+function playTimerTone(params: {
+  frequency: number;
+  durationSeconds: number;
+  peakGain: number;
+}) {
+  const audioContext = getWorkoutAudioContext();
+  if (!audioContext || audioContext.state !== "running") {
+    return;
+  }
+
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+
+  oscillator.type = "sine";
+  oscillator.frequency.value = params.frequency;
+  gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+  gain.gain.exponentialRampToValueAtTime(
+    params.peakGain,
+    audioContext.currentTime + 0.01,
+  );
+  gain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    audioContext.currentTime + params.durationSeconds,
+  );
+
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+  oscillator.start();
+  oscillator.stop(audioContext.currentTime + params.durationSeconds + 0.02);
+}
+
 async function unlockWorkoutAudio() {
   const audioContext = getWorkoutAudioContext();
   if (!audioContext) {
@@ -91,24 +132,19 @@ async function unlockWorkoutAudio() {
 }
 
 function playCountdownBeep() {
-  const audioContext = getWorkoutAudioContext();
-  if (!audioContext || audioContext.state !== "running") {
-    return;
-  }
+  playTimerTone({
+    frequency: 880,
+    durationSeconds: 0.22,
+    peakGain: 0.12,
+  });
+}
 
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-
-  oscillator.type = "sine";
-  oscillator.frequency.value = 880;
-  gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.08, audioContext.currentTime + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.18);
-
-  oscillator.connect(gain);
-  gain.connect(audioContext.destination);
-  oscillator.start();
-  oscillator.stop(audioContext.currentTime + 0.2);
+function playTimerCompleteBeep() {
+  playTimerTone({
+    frequency: 740,
+    durationSeconds: 0.55,
+    peakGain: 0.14,
+  });
 }
 
 function speakSideSwitchCue() {
@@ -182,15 +218,22 @@ export default function RunScreenStructured(props: RunScreenProps) {
 
   const [isOverviewExpanded, setIsOverviewExpanded] = useState(false);
   const restCountdownRef = useRef<string | null>(null);
+  const previousRestStateRef = useRef<{
+    showRestTimer: boolean;
+    restRemainingSeconds: number;
+  } | null>(null);
   const exerciseCountdownRef = useRef<string | null>(null);
   const sideSwitchCueRef = useRef<string | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
+  // Flödet finns kvar i koden, men döljs tillfälligt för ett lugnare run-läge.
+  const showExerciseFlow = props.showExerciseFlow;
 
   const progressPercent = getProgressPercent(totalCompletedSets, totalPlannedSets);
   const currentSetTotal = getCurrentSetTotal(props);
   const primaryActionLabel = getPrimaryActionLabel(props, currentSetTotal);
   const overviewHeight = isOverviewExpanded
     ? "min(50dvh, 400px)"
-    : "min(18dvh, 148px)";
+    : "88px";
   const overviewItems = useMemo(() => {
     return buildOverviewItems({
       workoutBlocks,
@@ -198,6 +241,68 @@ export default function RunScreenStructured(props: RunScreenProps) {
       currentExerciseId: props.currentExerciseId,
     });
   }, [props.currentBlockIndex, props.currentExerciseId, workoutBlocks]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.isSecureContext) {
+      return;
+    }
+
+    const wakeLockNavigator = navigator as WakeLockNavigator;
+    if (!wakeLockNavigator.wakeLock?.request) {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function releaseWakeLock() {
+      const sentinel = wakeLockRef.current;
+      wakeLockRef.current = null;
+
+      if (!sentinel || sentinel.released) {
+        return;
+      }
+
+      try {
+        await sentinel.release();
+      } catch {
+        // Ignorera tysta release-fel, eftersom låset kan ha släppts av systemet.
+      }
+    }
+
+    async function requestWakeLock() {
+      if (!isMounted || document.visibilityState !== "visible") {
+        return;
+      }
+
+      if (wakeLockRef.current && !wakeLockRef.current.released) {
+        return;
+      }
+
+      try {
+        wakeLockRef.current = await wakeLockNavigator.wakeLock.request("screen");
+      } catch {
+        // Systemet kan neka vid t.ex. låg batterinivå; run-flödet ska fortsätta ändå.
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void requestWakeLock();
+        return;
+      }
+
+      void releaseWakeLock();
+    }
+
+    void requestWakeLock();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      isMounted = false;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      void releaseWakeLock();
+    };
+  }, []);
 
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
@@ -248,6 +353,24 @@ export default function RunScreenStructured(props: RunScreenProps) {
 
     restCountdownRef.current = beepKey;
     playCountdownBeep();
+  }, [props.restRemainingSeconds, props.showRestTimer]);
+
+  useEffect(() => {
+    const previousState = previousRestStateRef.current;
+    const restJustFinished = Boolean(
+      previousState?.showRestTimer &&
+        previousState.restRemainingSeconds === 1 &&
+        props.restRemainingSeconds === 0,
+    );
+
+    if (restJustFinished) {
+      playTimerCompleteBeep();
+    }
+
+    previousRestStateRef.current = {
+      showRestTimer: props.showRestTimer,
+      restRemainingSeconds: props.restRemainingSeconds,
+    };
   }, [props.restRemainingSeconds, props.showRestTimer]);
 
   useEffect(() => {
@@ -394,22 +517,24 @@ export default function RunScreenStructured(props: RunScreenProps) {
                 onSubmitFeedback={submitExerciseFeedback}
               />
 
-              <div className="shrink-0">
-                <ExerciseFlowIndicator
-                  blockType={currentBlockType}
-                  currentExercise={currentExercise}
-                  currentExerciseIndex={currentBlockExercisePosition}
-                  currentExerciseCount={currentBlockExerciseCount}
-                  currentSet={currentSet}
-                  currentSetTotal={currentSetTotal}
-                  currentRound={currentRound}
-                  currentRoundTotal={currentRoundTotal}
-                  currentBlockExercises={currentBlockExercises}
-                  showRestTimer={props.showRestTimer}
-                  restRemainingSeconds={props.restRemainingSeconds}
-                  nextExerciseName={props.nextExerciseName}
-                />
-              </div>
+              {showExerciseFlow ? (
+                <div className="shrink-0">
+                  <ExerciseFlowIndicator
+                    blockType={currentBlockType}
+                    currentExercise={currentExercise}
+                    currentExerciseIndex={currentBlockExercisePosition}
+                    currentExerciseCount={currentBlockExerciseCount}
+                    currentSet={currentSet}
+                    currentSetTotal={currentSetTotal}
+                    currentRound={currentRound}
+                    currentRoundTotal={currentRoundTotal}
+                    currentBlockExercises={currentBlockExercises}
+                    showRestTimer={props.showRestTimer}
+                    restRemainingSeconds={props.restRemainingSeconds}
+                    nextExerciseName={props.nextExerciseName}
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -421,8 +546,14 @@ export default function RunScreenStructured(props: RunScreenProps) {
           <div className="pointer-events-auto h-full">
             <WorkoutOverviewSheet
               items={overviewItems}
+              totalBlockCount={workoutBlocks.length}
+              currentBlockIndex={props.currentBlockIndex}
+              canReplaceCurrentBlock={props.canReplaceCurrentBlock}
+              canMoveCurrentBlockDown={props.canMoveCurrentBlockDown}
               expanded={isOverviewExpanded}
               onSetExpanded={setIsOverviewExpanded}
+              onReplaceCurrentBlock={props.handleReplaceCurrentBlock}
+              onMoveUpcomingBlock={props.handleMoveUpcomingBlock}
             />
           </div>
         </div>
@@ -438,6 +569,7 @@ export default function RunScreenStructured(props: RunScreenProps) {
         timedExercise={Boolean(currentExercise?.duration)}
         timerState={props.timerState}
         onClose={() => setOptionsOpen(false)}
+        onGoHome={props.handleGoHomeFromSheet}
         onSkipExercise={handleSkipExerciseFromSheet}
         onAbortWorkout={handleAbortFromSheet}
         onResetTimedSet={handleResetTimedSetFromSheet}
@@ -454,7 +586,7 @@ export default function RunScreenStructured(props: RunScreenProps) {
       <ConfirmSheet
         open={abortConfirmOpen}
         title="Avbryt passet?"
-        description="Passet markeras som avbrutet. Du kan starta ett nytt pass från hem."
+        description="Om du redan loggat något sparas det till historiken som avbrutet. Annars lämnar du bara passet."
         confirmLabel="Avbryt pass"
         cancelLabel="Fortsätt träna"
         onConfirm={confirmAbortWorkout}

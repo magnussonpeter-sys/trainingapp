@@ -26,6 +26,14 @@ function safePositiveNumber(value: number | null | undefined) {
     : null;
 }
 
+function isSubstantiveCompletedSet(set: CompletedSet) {
+  // Ett set ska bara räknas som genomfört om verkligt arbete faktiskt loggades.
+  const actualReps = safePositiveNumber(set.actualReps);
+  const actualDuration = safePositiveNumber(set.actualDuration);
+
+  return actualReps !== null || actualDuration !== null;
+}
+
 function getSetCompletionRatio(set: CompletedSet) {
   const plannedWeight = safePositiveNumber(set.plannedWeight);
   const actualWeight = safePositiveNumber(set.actualWeight);
@@ -81,25 +89,32 @@ export function buildWorkoutPerformanceSummary(params: {
 
   for (const exercise of completedExercises) {
     for (const set of exercise.sets) {
-      completedSetCount += 1;
-
       const setPlannedReps = safePositiveNumber(set.plannedReps);
       const setActualReps = safePositiveNumber(set.actualReps);
       const setPlannedWeight = safePositiveNumber(set.plannedWeight);
       const setActualWeight = safePositiveNumber(set.actualWeight);
       const setPlannedDuration = safePositiveNumber(set.plannedDuration);
       const setActualDuration = safePositiveNumber(set.actualDuration);
+      const countsAsCompleted = isSubstantiveCompletedSet(set);
+
+      if (countsAsCompleted) {
+        completedSetCount += 1;
+      }
 
       if (setPlannedReps) plannedReps += setPlannedReps;
-      if (setActualReps) actualReps += setActualReps;
+      if (countsAsCompleted && setActualReps) actualReps += setActualReps;
       if (setPlannedDuration) plannedDuration += setPlannedDuration;
-      if (setActualDuration) actualDuration += setActualDuration;
+      if (countsAsCompleted && setActualDuration) actualDuration += setActualDuration;
 
       if (setPlannedWeight && setPlannedReps) {
         plannedVolume += setPlannedWeight * setPlannedReps;
       }
-      if (setActualWeight && setActualReps) {
+      if (countsAsCompleted && setActualWeight && setActualReps) {
         actualVolume += setActualWeight * setActualReps;
+      }
+
+      if (!countsAsCompleted) {
+        continue;
       }
 
       const ratio = getSetCompletionRatio(set);

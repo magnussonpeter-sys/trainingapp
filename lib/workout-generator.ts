@@ -4,6 +4,7 @@ import type {
   ConfidenceScore,
   MuscleBudgetEntry,
 } from "@/lib/planning/muscle-budget";
+import type { TrainingGap } from "@/lib/planning/training-gap";
 
 export async function generateWorkout(params: {
   userId: string;
@@ -41,6 +42,7 @@ export async function generateWorkout(params: {
     focus: WorkoutFocus | null;
     type: "training" | "recovery";
   }>;
+  trainingGap?: TrainingGap | null;
   lessOftenExerciseIds?: string[];
   avoidSupersets?: boolean | null;
   supersetPreference?: "allowed" | "avoid_all" | "avoid_all_dumbbell" | null;

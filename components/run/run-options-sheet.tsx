@@ -26,6 +26,7 @@ function formatDuration(seconds?: number) {
 type ValueAdjusterProps = {
   label: string;
   value: string;
+  hint?: string;
   onDecrease: () => void;
   onIncrease: () => void;
 };
@@ -33,6 +34,7 @@ type ValueAdjusterProps = {
 function ValueAdjuster({
   label,
   value,
+  hint,
   onDecrease,
   onIncrease,
 }: ValueAdjusterProps) {
@@ -46,6 +48,7 @@ function ValueAdjuster({
         <button
           type="button"
           onClick={onDecrease}
+          aria-label={`Minska ${label.toLowerCase()}`}
           className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-lg font-semibold text-slate-700 transition active:scale-[0.98]"
         >
           −
@@ -58,11 +61,14 @@ function ValueAdjuster({
         <button
           type="button"
           onClick={onIncrease}
+          aria-label={`Öka ${label.toLowerCase()}`}
           className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-lg font-semibold text-slate-700 transition active:scale-[0.98]"
         >
           +
         </button>
       </div>
+
+      {hint ? <p className="mt-2 text-xs text-slate-500">{hint}</p> : null}
     </div>
   );
 }
@@ -77,6 +83,7 @@ type RunOptionsSheetProps = {
   timedExercise: boolean;
   timerState: "idle" | "running" | "ready_to_save";
   onClose: () => void;
+  onGoHome: () => void;
   onSkipExercise: () => void;
   onAbortWorkout: () => void;
   onResetTimedSet: () => void;
@@ -100,6 +107,7 @@ export default function RunOptionsSheet({
   timedExercise,
   timerState,
   onClose,
+  onGoHome,
   onSkipExercise,
   onAbortWorkout,
   onResetTimedSet,
@@ -140,7 +148,7 @@ export default function RunOptionsSheet({
                 Alternativ
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                Justera aktuell övning utan att störa huvudflödet.
+                Justera aktuell övning utan att störa huvudflödet. Ändringarna sparas direkt.
               </p>
             </div>
 
@@ -164,23 +172,26 @@ export default function RunOptionsSheet({
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <ValueAdjuster
-                  label="Set"
+                  label="Antal set"
                   value={String(plannedSets ?? 0)}
+                  hint="Välj mellan 1 och 10 set."
                   onDecrease={onDecreaseSets}
                   onIncrease={onIncreaseSets}
                 />
 
                 <ValueAdjuster
-                  label="Vila"
+                  label="Vila mellan set"
                   value={formatDuration(plannedRest)}
+                  hint="Justeras i steg om 15 sekunder, upp till 10 minuter."
                   onDecrease={onDecreaseRest}
                   onIncrease={onIncreaseRest}
                 />
 
                 {!timedExercise ? (
                   <ValueAdjuster
-                    label="Reps"
+                    label="Reps per set"
                     value={String(plannedReps ?? 0)}
+                    hint="Välj mellan 1 och 30 reps."
                     onDecrease={onDecreaseReps}
                     onIncrease={onIncreaseReps}
                   />
@@ -188,6 +199,7 @@ export default function RunOptionsSheet({
                   <ValueAdjuster
                     label="Tid per set"
                     value={formatDuration(plannedDuration)}
+                    hint="Justeras i steg om 5 sekunder, upp till 10 minuter."
                     onDecrease={onDecreaseDuration}
                     onIncrease={onIncreaseDuration}
                   />
@@ -196,6 +208,14 @@ export default function RunOptionsSheet({
             </section>
 
             <section className="space-y-3">
+              <button
+                type="button"
+                onClick={onGoHome}
+                className={cn(uiButtonClasses.secondary, "w-full justify-start")}
+              >
+                Till hem utan att avsluta passet
+              </button>
+
               <button
                 type="button"
                 onClick={onSkipExercise}
@@ -219,7 +239,7 @@ export default function RunOptionsSheet({
                 onClick={onAbortWorkout}
                 className="min-h-11 w-full rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-left text-sm font-semibold text-rose-700 transition hover:bg-rose-100 active:scale-[0.99]"
               >
-                Avbryt pass och gå till home
+                Avbryt passet helt
               </button>
             </section>
           </div>

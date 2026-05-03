@@ -10,6 +10,10 @@ import {
   type GoalTrajectory,
 } from "@/lib/planning/goal-trajectory";
 import {
+  buildTrainingGap,
+  type TrainingGap,
+} from "@/lib/planning/training-gap";
+import {
   buildCoachDecision,
   type CoachDecision,
 } from "@/lib/planning/coach-decision";
@@ -60,6 +64,7 @@ export type WeeklyWorkoutStructure = {
   optimalPlanText: string;
   splitStyle: "full_body" | "upper_lower" | "upper_lower_full" | "adaptive";
   summaryText: string;
+  trainingGap: TrainingGap;
   upcomingDays: WeeklyPlanDay[];
   upcomingSteps: WeeklyPlanStep[];
 };
@@ -695,6 +700,15 @@ export function buildWeeklyWorkoutStructure(params: {
     passCount,
     now,
   });
+  const trainingGap = buildTrainingGap({
+    logs: params.logs,
+    muscleBudget,
+    goal,
+    experienceLevel: params.settings?.experience_level ?? null,
+    targetSessionsPerWeek: goalTrajectory.weeklyFrequencyTarget,
+    targetMinutesPerWeek: goalTrajectory.weeklyFrequencyTarget * 30,
+    now,
+  });
   const nextPatternIndex = recentCompletedLogs.length % pattern.length;
   const patternPreferredFocus = pattern[nextPatternIndex] ?? pattern[0] ?? "full_body";
   const adaptiveFocusScores = (
@@ -847,6 +861,7 @@ export function buildWeeklyWorkoutStructure(params: {
     optimalPlanText,
     splitStyle: getSplitStyle(passCount),
     summaryText,
+    trainingGap,
     upcomingDays,
     upcomingSteps,
   };

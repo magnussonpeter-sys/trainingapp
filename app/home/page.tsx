@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import AppToast from "@/components/shared/app-toast";
 import { useHomeData } from "@/hooks/use-home-data";
 import { getDailyHomeWisdom } from "@/lib/get-daily-home-wisdom";
 import {
@@ -17,19 +18,21 @@ import {
   formatWorkoutFocus,
 } from "@/lib/weekly-workout-structure";
 import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
+import type { TrainingGap } from "@/lib/planning/training-gap";
 import { generateWorkout } from "@/lib/workout-generator";
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 import { getPendingSyncQueue } from "@/lib/workout-flow/pending-sync-store";
+import { getActiveWorkout } from "@/lib/workout-storage";
 import {
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
 import { getExercisePreferences } from "@/lib/exercise-preference-storage";
 import { saveAiDebugGeneratedWorkoutSnapshot } from "@/lib/analysis/ai-debug-generated-history";
 import { getStoredHomeGymId, storeHomeGymId } from "@/hooks/use-home-preferences";
-import type { WorkoutFocus } from "@/types/workout";
+import type { Workout, WorkoutFocus } from "@/types/workout";
 import type { WorkoutLog } from "@/lib/workout-log-storage";
 
 type AuthUser = {
@@ -77,6 +80,26 @@ function formatMuscleGroup(group: MuscleBudgetGroup) {
   if (group === "triceps") return "Triceps";
   if (group === "calves") return "Vader";
   return "Bål";
+}
+
+function formatTrainingGapStatusTone(status: TrainingGap["status"]) {
+  if (status === "recovery_first") {
+    return "border-amber-200 bg-amber-50 text-amber-900";
+  }
+
+  if (status === "major_gap") {
+    return "border-sky-200 bg-sky-50 text-sky-900";
+  }
+
+  if (status === "minor_gap") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-900";
+  }
+
+  if (status === "insufficient_data") {
+    return "border-slate-200 bg-slate-50 text-slate-800";
+  }
+
+  return "border-lime-200 bg-lime-50 text-lime-900";
 }
 
 function getDisplayName(user: AuthUser | null) {
@@ -514,6 +537,8 @@ function TodayFocusCard(props: {
   gymLabel: string;
   onAction: () => void;
   isGenerating: boolean;
+  hasActiveWorkout: boolean;
+  activeWorkoutName?: string | null;
 }) {
   return (
     <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
@@ -533,6 +558,11 @@ function TodayFocusCard(props: {
         <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700">
           Gym: {props.gymLabel}
         </span>
+        {props.hasActiveWorkout ? (
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">
+            Pågående pass
+          </span>
+        ) : null}
         {props.muscleGroups.length > 0 ? (
           props.muscleGroups.map((group) => (
             <span
@@ -549,14 +579,205 @@ function TodayFocusCard(props: {
         )}
       </div>
 
+      {props.hasActiveWorkout ? (
+        <p className="mt-3 text-sm leading-6 text-emerald-800">
+          {props.activeWorkoutName?.trim()
+            ? `${props.activeWorkoutName.trim()} väntar på dig.`
+            : "Du har ett pågående pass som väntar på dig."}
+        </p>
+      ) : null}
+
       <button
         type="button"
         onClick={props.onAction}
         disabled={props.isGenerating}
-        className={cn(uiButtonClasses.secondary, "mt-4 w-full justify-center")}
+        className={cn(
+          props.hasActiveWorkout
+            ? "mt-4 min-h-11 w-full justify-center rounded-2xl bg-emerald-200 px-4 py-3 text-sm font-semibold text-emerald-950 shadow-sm transition hover:bg-emerald-300 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+            : uiButtonClasses.secondary,
+          !props.hasActiveWorkout && "mt-4 w-full justify-center",
+        )}
       >
-        {props.isGenerating ? "Skapar..." : "Snabbstarta dagens pass"}
+        {props.isGenerating
+          ? "Skapar..."
+          : props.hasActiveWorkout
+            ? "Fortsätt dagens pass"
+            : "Snabbstarta dagens pass"}
       </button>
+    </section>
+  );
+}
+
+function TrainingGapCard(props: {
+  trainingGap: TrainingGap;
+}) {
+  const progressPercent = Math.round(props.trainingGap.completionRatio * 100);
+  const tone = formatTrainingGapStatusTone(props.trainingGap.status);
+  const thirtyDayEffect = props.trainingGap.thirtyDayEffect;
+  const thirtyDayVolumePercent = Math.round(
+    ((thirtyDayEffect?.setCompletionRatio ?? 0) * 100),
+  );
+  const lowestCoverageMuscles = [...(thirtyDayEffect?.muscleEstimates ?? [])]
+    .sort((left, right) => left.completionRatio - right.completionRatio)
+    .slice(0, 3);
+
+  return (
+    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+            Mot veckans mål
+          </p>
+          <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
+            {progressPercent}% på plats
+          </h2>
+        </div>
+        <span className={cn("rounded-full border px-3 py-1 text-xs font-medium", tone)}>
+          {props.trainingGap.status === "recovery_first"
+            ? "Återhämtning först"
+            : props.trainingGap.status === "major_gap"
+              ? "Mer kvar"
+              : props.trainingGap.status === "minor_gap"
+                ? "Lite kvar"
+                : props.trainingGap.status === "insufficient_data"
+                  ? "Lär känna dig"
+                  : "Bra riktning"}
+        </span>
+      </div>
+
+      <p className="mt-3 text-sm leading-6 text-slate-600">{props.trainingGap.message}</p>
+
+      <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-lime-500"
+          style={{ width: `${Math.max(8, progressPercent)}%` }}
+        />
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+            Pass
+          </p>
+          <p className="mt-1 text-base font-semibold text-slate-950">
+            {props.trainingGap.completedSessions} / {props.trainingGap.plannedSessions}
+          </p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+            Minuter
+          </p>
+          <p className="mt-1 text-base font-semibold text-slate-950">
+            {props.trainingGap.completedMinutes} / {props.trainingGap.plannedMinutes}
+          </p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+            Återstår
+          </p>
+          <p className="mt-1 text-base font-semibold text-slate-950">
+            {props.trainingGap.missingMinutes} min
+          </p>
+        </div>
+      </div>
+
+      <p className="mt-4 text-sm text-slate-700">
+        Främst:{" "}
+        <span className="font-medium text-slate-900">
+          {props.trainingGap.missingMuscles.length > 0
+            ? props.trainingGap.missingMuscles.map((group) => formatMuscleGroup(group)).join(" · ")
+            : "jämn riktning just nu"}
+        </span>
+      </p>
+
+      {props.trainingGap.suggestedCatchUpOptions.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          {props.trainingGap.suggestedCatchUpOptions.map((option) => (
+            <div
+              key={option.id}
+              className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-900">{option.label}</p>
+                <span className="text-xs font-medium text-slate-500">
+                  {option.sessions > 0
+                    ? `${option.sessions} × ${option.minutesPerSession} min`
+                    : "Ingen extra tid"}
+                </span>
+              </div>
+              <p className="mt-1 text-sm leading-6 text-slate-600">{option.description}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {thirtyDayEffect ? (
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+            Senaste 30 dagarna
+          </p>
+          <p className="mt-2 text-base font-semibold text-slate-950">
+            {thirtyDayEffect.estimatedEffectLabel}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {thirtyDayEffect.estimatedEffectMessage}
+          </p>
+
+          <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-sky-500 to-emerald-500"
+              style={{ width: `${Math.max(8, Math.min(100, thirtyDayVolumePercent))}%` }}
+            />
+          </div>
+
+          <p className="mt-3 text-sm leading-6 text-slate-700">
+            Du har genomfört cirka <span className="font-medium text-slate-900">{thirtyDayVolumePercent}%</span>{" "}
+            av planerad träningsvolym.
+          </p>
+
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                Pass
+              </p>
+              <p className="mt-1 text-base font-semibold text-slate-950">
+                {thirtyDayEffect.completedSessions} / {Math.round(thirtyDayEffect.plannedSessions)}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                Minuter
+              </p>
+              <p className="mt-1 text-base font-semibold text-slate-950">
+                {Math.round(thirtyDayEffect.completedMinutes)} / {Math.round(thirtyDayEffect.plannedMinutes)}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                Arbetsset
+              </p>
+              <p className="mt-1 text-base font-semibold text-slate-950">
+                {Math.round(thirtyDayEffect.completedSets)} / {Math.round(thirtyDayEffect.plannedSets)}
+              </p>
+            </div>
+          </div>
+
+          {lowestCoverageMuscles.length > 0 ? (
+            <p className="mt-4 text-sm leading-6 text-slate-700">
+              Minst täckning:{" "}
+              <span className="font-medium text-slate-900">
+                {lowestCoverageMuscles
+                  .map((estimate) => {
+                    return `${formatMuscleGroup(estimate.muscle)} ${Math.round(
+                      estimate.completionRatio * 100,
+                    )}%`;
+                  })
+                  .join(", ")}
+              </span>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -708,18 +929,6 @@ function RecentWorkoutCard(props: {
         </button>
       </div>
 
-      {props.latestWorkout ? (
-        <div className="mt-4 flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={props.onRepeat}
-            disabled={props.isGenerating}
-            className={cn(uiButtonClasses.secondary, "justify-center")}
-          >
-            {props.isGenerating ? "Skapar..." : "Skapa liknande"}
-          </button>
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -991,6 +1200,8 @@ export default function HomePage() {
   const [pendingCount, setPendingCount] = useState(0);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [showWeeklyInsights, setShowWeeklyInsights] = useState(false);
+  const [homeNotice, setHomeNotice] = useState<string | null>(null);
+  const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
   const hasAppliedInitialGymRef = useRef(false);
 
   const gymOptions = useMemo(() => {
@@ -1032,6 +1243,24 @@ export default function HomePage() {
       weeklyStructure,
     });
   }, [weeklyStructure, workoutLogs]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const notice = params.get("notice");
+
+    if (notice === "workout_saved") {
+      setHomeNotice("Passet sparades till historiken.");
+    } else if (notice === "workout_aborted_saved") {
+      setHomeNotice("Det avbrutna passet sparades till historiken.");
+    } else {
+      return;
+    }
+
+    params.delete("notice");
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, []);
 
   const coachMessage = useMemo(() => {
     return getCoachMessage({
@@ -1096,6 +1325,20 @@ export default function HomePage() {
     }
   }, [userId, workoutLogs]);
 
+  useEffect(() => {
+    if (!userId) {
+      setActiveWorkout(null);
+      return;
+    }
+
+    try {
+      // Startsidan ska kunna visa om ett pass väntar i run-flödet.
+      setActiveWorkout(getActiveWorkout(userId));
+    } catch {
+      setActiveWorkout(null);
+    }
+  }, [userId, workoutLogs]);
+
   async function handleReviewAiWorkout() {
     if (!userId) {
       setAiError("Kunde inte läsa in användaren.");
@@ -1138,6 +1381,7 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
         })),
         weeklyPlan: weeklyStructure.upcomingDays,
+        trainingGap: weeklyStructure.trainingGap,
         lessOftenExerciseIds,
         avoidSupersets: settings?.avoid_supersets ?? null,
         supersetPreference: settings?.superset_preference ?? null,
@@ -1206,6 +1450,11 @@ export default function HomePage() {
       return;
     }
 
+    if (activeWorkout) {
+      router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);
+      return;
+    }
+
     try {
       setAiError(null);
       setIsGenerating(true);
@@ -1244,6 +1493,7 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
         })),
         weeklyPlan: weeklyStructure.upcomingDays,
+        trainingGap: weeklyStructure.trainingGap,
         lessOftenExerciseIds,
         avoidSupersets: settings?.avoid_supersets ?? null,
         supersetPreference: settings?.superset_preference ?? null,
@@ -1345,6 +1595,7 @@ export default function HomePage() {
 
   return (
     <main className={uiPageShellClasses.page}>
+      <AppToast message={homeNotice} onDismiss={() => setHomeNotice(null)} />
       <div className={cn(uiPageShellClasses.content, "space-y-5 pb-8")}>
         <HomeHeroCard
           name={getDisplayName(authUser)}
@@ -1362,7 +1613,11 @@ export default function HomePage() {
           gymLabel={selectedGym?.name ?? "Kroppsvikt / utan gym"}
           onAction={handleQuickStartTodayWorkout}
           isGenerating={isGenerating}
+          hasActiveWorkout={Boolean(activeWorkout)}
+          activeWorkoutName={activeWorkout?.name ?? null}
         />
+
+        <TrainingGapCard trainingGap={weeklyStructure.trainingGap} />
 
         <QuickStartCard
           gymOptions={gymOptions}

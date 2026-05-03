@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import StickyActionBar from "@/components/app-shell/sticky-action-bar";
+import AppToast from "@/components/shared/app-toast";
 import {
   clearFavoriteWorkoutIds,
   getFavoriteWorkoutIds,
@@ -153,6 +154,7 @@ export default function HistoryPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     // Läser datumfiltret lokalt för att undvika extra Suspense-krav på sidan.
@@ -299,6 +301,7 @@ export default function HistoryPage() {
     }
 
     const nextValue = toggleWorkoutFavorite(String(authUser.id), workoutId);
+    const workout = workouts.find((item) => item.id === workoutId) ?? null;
 
     setFavoriteIds((previous) => {
       if (nextValue) {
@@ -307,6 +310,11 @@ export default function HistoryPage() {
 
       return previous.filter((id) => id !== workoutId);
     });
+    setToastMessage(
+      nextValue
+        ? `${workout?.workoutName ?? "Passet"} lades till i favoriter.`
+        : `${workout?.workoutName ?? "Passet"} togs bort från favoriter.`,
+    );
   };
 
   const openDetails = (workoutId: string) => {
@@ -363,6 +371,7 @@ export default function HistoryPage() {
       setFavoriteIds((previous) => previous.filter((id) => id !== workoutId));
       setWorkouts((previous) => previous.filter((workout) => workout.id !== workoutId));
       setDeletingWorkoutId(null);
+      setToastMessage("Passet raderades från historiken.");
     } catch (error) {
       console.error("Failed to delete workout", error);
       alert("Kunde inte radera passet.");
@@ -429,6 +438,7 @@ export default function HistoryPage() {
 
   return (
     <main className={uiPageShellClasses.page}>
+      <AppToast message={toastMessage} onDismiss={() => setToastMessage(null)} />
       <div className={cn(uiPageShellClasses.content, "pb-6")}>
         <div className="space-y-5">
           <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
@@ -587,6 +597,7 @@ export default function HistoryPage() {
                         type="button"
                         onClick={() => toggleFavorite(workout.id)}
                         aria-label={isFavorite ? "Ta bort favorit" : "Markera som favorit"}
+                        title={isFavorite ? "Ta bort favorit" : "Markera som favorit"}
                         className={cn(
                           "flex h-11 w-11 items-center justify-center rounded-2xl border text-lg transition",
                           isFavorite
@@ -636,7 +647,8 @@ export default function HistoryPage() {
                       </div>
                     </div>
 
-                    <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                    <div className="mt-5 flex flex-col gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row">
                       <button
                         type="button"
                         onClick={() => openDetails(workout.id)}
@@ -652,6 +664,7 @@ export default function HistoryPage() {
                       >
                         Kör igen
                       </button>
+                      </div>
 
                       <button
                         type="button"
@@ -661,7 +674,7 @@ export default function HistoryPage() {
                           )
                         }
                         disabled={isDeleting}
-                        className="min-h-11 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 disabled:opacity-50 sm:flex-1"
+                        className="min-h-11 self-start rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 disabled:opacity-50"
                       >
                         Radera
                       </button>

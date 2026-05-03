@@ -519,8 +519,7 @@ export default function SettingsPage() {
                     Prioriteringsordning
                   </p>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
-                    Dra korten för att byta ordning, eller använd pilarna om du
-                    föredrar det.
+                    Använd pilarna för att byta ordning. Du kan också dra korten om du vill.
                   </p>
 
                   <div className="mt-4 space-y-3">
@@ -576,6 +575,8 @@ export default function SettingsPage() {
                             onClick={() => movePriorityMuscle(index, index - 1)}
                             disabled={index === 0}
                             className={uiButtonClasses.ghost}
+                            aria-label={`Flytta upp ${getPriorityLabel(muscle)}`}
+                            title="Flytta upp"
                           >
                             ↑
                           </button>
@@ -584,6 +585,8 @@ export default function SettingsPage() {
                             onClick={() => movePriorityMuscle(index, index + 1)}
                             disabled={index === priorityMuscles.length - 1}
                             className={uiButtonClasses.ghost}
+                            aria-label={`Flytta ned ${getPriorityLabel(muscle)}`}
+                            title="Flytta ned"
                           >
                             ↓
                           </button>
@@ -591,6 +594,7 @@ export default function SettingsPage() {
                             type="button"
                             onClick={() => togglePriorityMuscle(muscle)}
                             className={uiButtonClasses.ghost}
+                            aria-label={`Ta bort ${getPriorityLabel(muscle)} från prioriteringen`}
                           >
                             Ta bort
                           </button>
