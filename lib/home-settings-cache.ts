@@ -1,10 +1,10 @@
 "use client";
 
-type CachedHomeGoal =
-  | "strength"
-  | "hypertrophy"
-  | "health"
-  | "body_composition";
+import {
+  isSportFocus,
+  type SportFocus,
+  type TrainingGoal,
+} from "@/types/training-profile";
 
 type CachedPriorityMuscle =
   | "chest"
@@ -24,7 +24,8 @@ type CachedSupersetPreference =
   | "avoid_all_dumbbell";
 
 type HomeSettingsCacheValue = {
-  training_goal?: CachedHomeGoal | null;
+  training_goal?: TrainingGoal | null;
+  sport_focus?: SportFocus | null;
   avoid_supersets?: boolean | null;
   superset_preference?: CachedSupersetPreference | null;
   primary_priority_muscle?: CachedPriorityMuscle | null;
@@ -32,7 +33,7 @@ type HomeSettingsCacheValue = {
   tertiary_priority_muscle?: CachedPriorityMuscle | null;
 };
 
-function isCachedHomeGoal(value: unknown): value is CachedHomeGoal {
+function isCachedHomeGoal(value: unknown): value is TrainingGoal {
   return (
     value === "strength" ||
     value === "hypertrophy" ||
@@ -84,6 +85,7 @@ export function getCachedHomeSettings(userId: string) {
 
     const parsed = JSON.parse(raw) as {
       training_goal?: unknown;
+      sport_focus?: unknown;
       avoid_supersets?: unknown;
       superset_preference?: unknown;
       primary_priority_muscle?: unknown;
@@ -95,6 +97,7 @@ export function getCachedHomeSettings(userId: string) {
       training_goal: isCachedHomeGoal(parsed.training_goal)
         ? parsed.training_goal
         : null,
+      sport_focus: isSportFocus(parsed.sport_focus) ? parsed.sport_focus : null,
       avoid_supersets:
         typeof parsed.avoid_supersets === "boolean"
           ? parsed.avoid_supersets

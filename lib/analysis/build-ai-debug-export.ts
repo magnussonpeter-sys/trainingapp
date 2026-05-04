@@ -1,24 +1,44 @@
-import { getExerciseById } from "@/lib/exercise-catalog";
+import {
+  getExerciseById,
+  getSportRelevanceHint,
+} from "@/lib/exercise-catalog";
 import type {
+  AiDebugAdherenceDiagnostics,
+  AiDebugAdherencePeriod,
   AiDebugCompletedWorkout,
   AiDebugCompletedWorkoutExercise,
+  AiDebugCurrentPlanSnapshot,
+  AiDebugDataQuality,
   AiDebugExerciseSelectionDiagnostic,
   AiDebugExport,
   AiDebugExportOptions,
   AiDebugGeneratedWorkout,
   AiDebugGeneratedWorkoutExercise,
+  AiDebugLatestWorkoutEvaluationContext,
+  AiDebugLongTermMuscleTrend,
   AiDebugMuscleBudgetSnapshotEntry,
   AiDebugPlannerDiagnostic,
   AiDebugProgressionDiagnostic,
+  AiDebugWorkoutValidity,
   StoredAiGeneratedWorkoutSnapshot,
 } from "@/lib/analysis/ai-debug-types";
-import { buildWeeklyWorkoutStructure } from "@/lib/weekly-workout-structure";
 import type {
   MuscleBudgetEntry,
   MuscleBudgetGroup,
 } from "@/lib/planning/muscle-budget";
+import {
+  buildWeeklyWorkoutStructure,
+  formatSplitStyle,
+  formatWorkoutFocus,
+  getAdaptiveFocusScore,
+  type WeeklyWorkoutStructure,
+} from "@/lib/weekly-workout-structure";
 import type { WorkoutLog } from "@/lib/workout-log-storage";
-import type { Workout } from "@/types/workout";
+import {
+  normalizeSportFocus,
+  type SportFocus,
+} from "@/types/training-profile";
+import type { Workout, WorkoutFocus } from "@/types/workout";
 
 type ProgressionSnapshot = {
   lastWeight: number | null;
@@ -31,6 +51,7 @@ type ProgressionSnapshot = {
 
 type SettingsLike = {
   training_goal?: string | null;
+  sport_focus?: string | null;
   sex?: string | null;
   age?: number | null;
   height_cm?: number | null;
@@ -52,14 +73,29 @@ type BuildAiDebugExportParams = {
   logs: WorkoutLog[];
   gyms: GymLike[];
   generatedWorkouts: StoredAiGeneratedWorkoutSnapshot[];
+  generatedWorkout: Workout | null;
   draftWorkout: Workout | null;
   progressionSnapshots: Record<string, ProgressionSnapshot>;
   options: AiDebugExportOptions;
 };
 
+type LatestWorkoutSource =
+  | "generated_workout"
+  | "preview_draft"
+  | "completed_ai_workout"
+  | "fallback_from_history"
+  | "missing";
+
+type LatestWorkoutCandidate = {
+  snapshot: StoredAiGeneratedWorkoutSnapshot;
+  source: Exclude<LatestWorkoutSource, "missing">;
+  sourceConfidence: "high" | "medium" | "low";
+};
+
 type NormalizedWeeklyPlanningSettings = {
   experience_level?: string | null;
   training_goal?: "strength" | "hypertrophy" | "health" | "body_composition" | null;
+  sport_focus?: SportFocus | null;
   primary_priority_muscle?: MuscleBudgetGroup | null;
   secondary_priority_muscle?: MuscleBudgetGroup | null;
   tertiary_priority_muscle?: MuscleBudgetGroup | null;
@@ -132,6 +168,25 @@ const GOAL_DEFAULT_PRIORITIES: Record<
   },
 };
 
+const EXERCISE_IDS_THAT_OFTEN_NEED_LOAD = new Set([
+  "dumbbells",
+  "barbell",
+  "ez_bar",
+  "trap_bar",
+  "kettlebells",
+  "smith_machine",
+  "cable_machine",
+  "machines",
+  "medicine_ball",
+]);
+
+const FOCUS_TO_BUDGET_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
+  full_body: ["quads", "glutes", "back", "chest", "core"],
+  upper_body: ["chest", "back", "shoulders", "biceps", "triceps"],
+  lower_body: ["quads", "hamstrings", "glutes", "calves", "core"],
+  core: ["core", "glutes"],
+};
+
 function parseDateMs(value: string | null | undefined) {
   if (!value) {
     return 0;
@@ -172,6 +227,7 @@ function normalizeWeeklyPlanningSettings(
   return {
     experience_level: settings.experience_level ?? null,
     training_goal: trainingGoal,
+    sport_focus: normalizeSportFocus(settings.sport_focus),
     primary_priority_muscle: primary ?? null,
     secondary_priority_muscle: secondary ?? null,
     tertiary_priority_muscle: tertiary ?? null,
@@ -193,6 +249,16 @@ function getRequestedHistoryWindow(options: AiDebugExportOptions) {
 function filterLogsByWindow(logs: WorkoutLog[], windowDays: number) {
   const now = Date.now();
   const threshold = windowDays * 24 * 60 * 60 * 1000;
+
+  return logs.filter((log) => {
+    const completedAtMs = parseDateMs(log.completedAt);
+    return completedAtMs > 0 && now - completedAtMs <= threshold;
+  });
+}
+
+function filterLogsWithinDays(logs: WorkoutLog[], days: number) {
+  const now = Date.now();
+  const threshold = days * 24 * 60 * 60 * 1000;
 
   return logs.filter((log) => {
     const completedAtMs = parseDateMs(log.completedAt);
@@ -259,7 +325,7 @@ function getEffectivePriorityReason(params: {
 }
 
 function buildMuscleBudgetSnapshot(params: {
-  weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+  weeklyStructure: WeeklyWorkoutStructure;
   settings: SettingsLike | null;
 }): AiDebugMuscleBudgetSnapshotEntry[] {
   const priorityMuscles = getPriorityMuscles(params.settings);
@@ -326,6 +392,164 @@ function mapStimulusGroup(rawMuscle: string) {
   return null;
 }
 
+function hasCompletedWorkInSet(
+  set: WorkoutLog["exercises"][number]["sets"][number],
+) {
+  return (
+    (typeof set.actualReps === "number" && set.actualReps > 0) ||
+    (typeof set.actualDuration === "number" && set.actualDuration > 0)
+  );
+}
+
+function countCompletedWorkingSets(exercise: WorkoutLog["exercises"][number]) {
+  return exercise.sets.filter((set) => hasCompletedWorkInSet(set)).length;
+}
+
+function countPlannedSets(log: WorkoutLog) {
+  return log.exercises.reduce((sum, exercise) => sum + Math.max(0, exercise.plannedSets), 0);
+}
+
+function countCompletedWorkingSetsInLog(log: WorkoutLog) {
+  return log.exercises.reduce((sum, exercise) => sum + countCompletedWorkingSets(exercise), 0);
+}
+
+function getLogDurationMinutes(log: WorkoutLog) {
+  return Math.max(0, Math.round((log.durationSeconds ?? 0) / 60));
+}
+
+function buildWorkoutValidity(
+  log: WorkoutLog,
+  plannedDurationMinutes: number | null,
+): AiDebugWorkoutValidity {
+  const completedWorkingSets = countCompletedWorkingSetsInLog(log);
+  const plannedSets = countPlannedSets(log);
+  const durationMinutes = getLogDurationMinutes(log);
+  const durationCompletionRatio =
+    plannedDurationMinutes && plannedDurationMinutes > 0
+      ? roundToSingleDecimal(durationMinutes / plannedDurationMinutes)
+      : null;
+  const setCompletionRatio =
+    plannedSets > 0 ? roundToSingleDecimal(completedWorkingSets / plannedSets) : null;
+
+  if (log.status !== "completed") {
+    return {
+      classification: "aborted_or_invalid",
+      reason: "Passet är inte markerat som completed och bör tolkas försiktigt.",
+      plannedDurationMinutes,
+      actualDurationMinutes: durationMinutes,
+      durationCompletionRatio,
+      plannedSets,
+      completedSets: completedWorkingSets,
+      setCompletionRatio,
+      countsForMuscleBudget: false,
+      countsForWeeklyRhythm: false,
+      countsForAdherence: false,
+      confidence: "high",
+    };
+  }
+
+  if (log.exercises.length === 0) {
+    return {
+      classification: "empty_completed",
+      reason: "Passet är markerat som completed men innehåller inga övningar.",
+      plannedDurationMinutes,
+      actualDurationMinutes: durationMinutes,
+      durationCompletionRatio,
+      plannedSets,
+      completedSets: completedWorkingSets,
+      setCompletionRatio,
+      countsForMuscleBudget: false,
+      countsForWeeklyRhythm: false,
+      countsForAdherence: false,
+      confidence: "high",
+    };
+  }
+
+  if (completedWorkingSets === 0) {
+    return {
+      classification: "partial",
+      // Ett sparat pass utan tydliga arbetsset bör inte väga tungt i plananalysen.
+      reason: "Passet innehåller sparade övningar men inga tydligt genomförda arbetsset.",
+      plannedDurationMinutes,
+      actualDurationMinutes: durationMinutes,
+      durationCompletionRatio,
+      plannedSets,
+      completedSets: completedWorkingSets,
+      setCompletionRatio,
+      countsForMuscleBudget: false,
+      countsForWeeklyRhythm: false,
+      countsForAdherence: true,
+      confidence: "medium",
+    };
+  }
+
+  if (durationMinutes < 5) {
+    return {
+      classification: "too_short",
+      reason: "Passet innehåller arbete men är mycket kort och bör vägas försiktigt.",
+      plannedDurationMinutes,
+      actualDurationMinutes: durationMinutes,
+      durationCompletionRatio,
+      plannedSets,
+      completedSets: completedWorkingSets,
+      setCompletionRatio,
+      countsForMuscleBudget: true,
+      countsForWeeklyRhythm: false,
+      countsForAdherence: true,
+      confidence: "medium",
+    };
+  }
+
+  if (plannedSets > 0 && completedWorkingSets / plannedSets < 0.6) {
+    return {
+      classification: "partial",
+      reason: "Passet innehåller genomförda set men täcker tydligt mindre arbete än planerat.",
+      plannedDurationMinutes,
+      actualDurationMinutes: durationMinutes,
+      durationCompletionRatio,
+      plannedSets,
+      completedSets: completedWorkingSets,
+      setCompletionRatio,
+      countsForMuscleBudget: true,
+      countsForWeeklyRhythm: true,
+      countsForAdherence: true,
+      confidence: "medium",
+    };
+  }
+
+  if (durationCompletionRatio !== null && durationCompletionRatio < 0.7) {
+    return {
+      classification: "valid_shortened",
+      reason: "Passet innehåller tydliga arbetsset men blev klart kortare än planerad passlängd.",
+      plannedDurationMinutes,
+      actualDurationMinutes: durationMinutes,
+      durationCompletionRatio,
+      plannedSets,
+      completedSets: completedWorkingSets,
+      setCompletionRatio,
+      countsForMuscleBudget: true,
+      countsForWeeklyRhythm: true,
+      countsForAdherence: true,
+      confidence: "medium",
+    };
+  }
+
+  return {
+    classification: "valid_full",
+    reason: "Passet har rimlig varaktighet och innehåller tydliga arbetsset.",
+    plannedDurationMinutes,
+    actualDurationMinutes: durationMinutes,
+    durationCompletionRatio,
+    plannedSets,
+    completedSets: completedWorkingSets,
+    setCompletionRatio,
+    countsForMuscleBudget: true,
+    countsForWeeklyRhythm: true,
+    countsForAdherence: true,
+    confidence: "high",
+  };
+}
+
 function buildStimulusEstimate(exercises: WorkoutLog["exercises"]) {
   const totals = Object.fromEntries(
     Object.keys(MUSCLE_LABELS).map((key) => [key, 0]),
@@ -337,7 +561,7 @@ function buildStimulusEstimate(exercises: WorkoutLog["exercises"]) {
       continue;
     }
 
-    const setCount = Math.max(0, exercise.sets.length || exercise.plannedSets || 0);
+    const setCount = Math.max(0, countCompletedWorkingSets(exercise) || exercise.plannedSets || 0);
 
     for (const primary of catalogExercise.primaryMuscles) {
       const mapped = mapStimulusGroup(primary);
@@ -371,6 +595,7 @@ function buildCompletedWorkoutExercise(
   const completedDuration = exercise.sets.reduce((sum, set) => {
     return sum + (typeof set.actualDuration === "number" ? set.actualDuration : 0);
   }, 0);
+  const completedSets = countCompletedWorkingSets(exercise);
   const usedWeightValues = exercise.sets
     .map((set) => set.actualWeight)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
@@ -385,7 +610,7 @@ function buildCompletedWorkoutExercise(
     prescribedSets: exercise.plannedSets,
     prescribedReps: exercise.plannedReps ?? null,
     prescribedDuration: exercise.plannedDuration ?? null,
-    completedSets: exercise.sets.length,
+    completedSets,
     completedReps: completedReps > 0 ? completedReps : null,
     completedDuration: completedDuration > 0 ? completedDuration : null,
     usedWeight: lastWeight,
@@ -397,10 +622,10 @@ function buildCompletedWorkoutExercise(
 function buildCompletedWorkouts(params: {
   logs: WorkoutLog[];
   settings: SettingsLike | null;
+  plannedDurationByWorkoutName: Map<string, number>;
   limit: number;
 }): AiDebugCompletedWorkout[] {
   return params.logs
-    .filter((log) => log.status === "completed")
     .sort((left, right) => parseDateMs(right.completedAt) - parseDateMs(left.completedAt))
     .slice(0, params.limit)
     .map((log) => {
@@ -416,7 +641,7 @@ function buildCompletedWorkouts(params: {
 
       return {
         date: log.completedAt,
-        durationMinutes: Math.max(1, Math.round(log.durationSeconds / 60)),
+        durationMinutes: getLogDurationMinutes(log),
         workoutName: log.workoutName,
         goal: params.settings?.training_goal ?? null,
         source: getSourceLabel(log),
@@ -425,6 +650,10 @@ function buildCompletedWorkouts(params: {
         primaryMuscles,
         secondaryMuscles,
         estimatedStimulusPerMuscle: buildStimulusEstimate(log.exercises),
+        workoutValidity: buildWorkoutValidity(
+          log,
+          params.plannedDurationByWorkoutName.get(log.workoutName) ?? null,
+        ),
       };
     });
 }
@@ -454,8 +683,76 @@ function sanitizeRequest(
   };
 }
 
+function buildSnapshotFromWorkout(params: {
+  workout: Workout;
+  source: Exclude<LatestWorkoutSource, "missing">;
+  sourceConfidence: "high" | "medium" | "low";
+}): LatestWorkoutCandidate {
+  return {
+    source: params.source,
+    sourceConfidence: params.sourceConfidence,
+    snapshot: {
+      createdAt: params.workout.createdAt ?? new Date().toISOString(),
+      requestedDurationMinutes: params.workout.duration ?? null,
+      goal: params.workout.goal ?? null,
+      selectedGym: params.workout.gymLabel ?? params.workout.gym ?? null,
+      equipmentSeed: [],
+      workoutFocusTag: params.workout.plannedFocus ?? null,
+      request: null,
+      weeklyBudget: null,
+      weeklyPlan: null,
+      normalizedWorkout: params.workout,
+      aiDebug: params.workout.aiDebug ?? null,
+    },
+  };
+}
+
+function buildWorkoutFromCompletedLog(log: WorkoutLog): Workout {
+  return {
+    name: log.workoutName,
+    duration: Math.max(1, getLogDurationMinutes(log)),
+    goal: undefined,
+    blocks: [
+      {
+        type: "straight_sets",
+        title: "Återskapat från genomfört pass",
+        exercises: log.exercises.map((exercise) => ({
+          id: exercise.exerciseId,
+          name: exercise.exerciseName,
+          sets: Math.max(1, exercise.plannedSets),
+          reps: exercise.plannedReps ?? null,
+          duration: exercise.plannedDuration ?? null,
+          rest: 60,
+        })),
+      },
+    ],
+    createdAt: log.completedAt,
+  };
+}
+
+function buildFallbackSnapshotFromCompletedLog(log: WorkoutLog): LatestWorkoutCandidate {
+  return {
+    source: getSourceLabel(log) === "ai" ? "completed_ai_workout" : "fallback_from_history",
+    sourceConfidence: getSourceLabel(log) === "ai" ? "medium" : "low",
+    snapshot: {
+      createdAt: log.completedAt,
+      requestedDurationMinutes: null,
+      goal: null,
+      selectedGym: null,
+      equipmentSeed: [],
+      workoutFocusTag: null,
+      request: null,
+      weeklyBudget: null,
+      weeklyPlan: null,
+      normalizedWorkout: buildWorkoutFromCompletedLog(log),
+      aiDebug: null,
+    },
+  };
+}
+
 function buildGeneratedWorkoutExercise(
   exercise: NonNullable<Workout["blocks"]>[number]["exercises"][number],
+  sportFocus: SportFocus | null,
 ): AiDebugGeneratedWorkoutExercise {
   const catalogExercise = getExerciseById(exercise.id);
 
@@ -465,6 +762,9 @@ function buildGeneratedWorkoutExercise(
     movementPattern: catalogExercise?.movementPattern ?? null,
     primaryMuscles: catalogExercise?.primaryMuscles ?? [],
     secondaryMuscles: catalogExercise?.secondaryMuscles ?? [],
+    sportRelevanceHint: catalogExercise
+      ? getSportRelevanceHint(catalogExercise, sportFocus)
+      : 0,
     suggestedWeight: exercise.suggestedWeight ?? null,
     suggestedWeightLabel: exercise.suggestedWeightLabel ?? null,
     progressionNote: exercise.progressionNote ?? null,
@@ -472,12 +772,16 @@ function buildGeneratedWorkoutExercise(
 }
 
 function buildGeneratedWorkoutSummary(
-  snapshot: StoredAiGeneratedWorkoutSnapshot,
+  candidate: LatestWorkoutCandidate,
   anonymize: boolean,
+  sportFocus: SportFocus | null,
 ): AiDebugGeneratedWorkout {
+  const snapshot = candidate.snapshot;
   const exercises =
     snapshot.normalizedWorkout?.blocks.flatMap((block) => {
-      return block.exercises.map((exercise) => buildGeneratedWorkoutExercise(exercise));
+      return block.exercises.map((exercise) =>
+        buildGeneratedWorkoutExercise(exercise, sportFocus),
+      );
     }) ?? [];
 
   return {
@@ -492,6 +796,8 @@ function buildGeneratedWorkoutSummary(
     workoutFocusTag: snapshot.workoutFocusTag,
     chosenExercises: exercises,
     whyChosen: null,
+    source: candidate.source,
+    sourceConfidence: candidate.sourceConfidence,
     suggestedProgression: exercises
       .filter(
         (exercise) =>
@@ -508,38 +814,71 @@ function buildGeneratedWorkoutSummary(
 
 function getLatestGeneratedWorkouts(params: {
   generatedWorkouts: StoredAiGeneratedWorkoutSnapshot[];
+  generatedWorkout: Workout | null;
   draftWorkout: Workout | null;
+  logs: WorkoutLog[];
   limit: number;
-}): StoredAiGeneratedWorkoutSnapshot[] {
-  const history = [...params.generatedWorkouts];
+}): LatestWorkoutCandidate[] {
+  const candidates: LatestWorkoutCandidate[] = [];
 
   if (params.draftWorkout?.aiDebug) {
-    history.unshift({
-      createdAt: params.draftWorkout.createdAt ?? new Date().toISOString(),
-      requestedDurationMinutes: params.draftWorkout.duration ?? null,
-      goal: params.draftWorkout.goal ?? null,
-      selectedGym: params.draftWorkout.gymLabel ?? params.draftWorkout.gym ?? null,
-      equipmentSeed: [],
-      workoutFocusTag: params.draftWorkout.plannedFocus ?? null,
-      request: null,
-      weeklyBudget: null,
-      weeklyPlan: null,
-      normalizedWorkout: params.draftWorkout,
-      aiDebug: params.draftWorkout.aiDebug ?? null,
+    candidates.push(
+      buildSnapshotFromWorkout({
+        workout: params.draftWorkout,
+        source: "preview_draft",
+        sourceConfidence: "high",
+      }),
+    );
+  }
+
+  if (params.generatedWorkout?.aiDebug) {
+    candidates.push(
+      buildSnapshotFromWorkout({
+        workout: params.generatedWorkout,
+        source: "generated_workout",
+        sourceConfidence: "high",
+      }),
+    );
+  }
+
+  for (const snapshot of params.generatedWorkouts) {
+    candidates.push({
+      snapshot,
+      source: "generated_workout",
+      sourceConfidence: snapshot.aiDebug ? "high" : "medium",
     });
   }
 
-  const unique = new Map<string, StoredAiGeneratedWorkoutSnapshot>();
+  const latestCompletedAiWorkout = [...params.logs]
+    .filter((log) => log.status === "completed" && getSourceLabel(log) === "ai")
+    .sort((left, right) => parseDateMs(right.completedAt) - parseDateMs(left.completedAt))[0];
 
-  for (const snapshot of history) {
-    const key = `${snapshot.createdAt}:${snapshot.normalizedWorkout?.name ?? "workout"}`;
+  if (latestCompletedAiWorkout) {
+    candidates.push(buildFallbackSnapshotFromCompletedLog(latestCompletedAiWorkout));
+  }
+
+  const latestCompletedWorkout = [...params.logs]
+    .filter((log) => log.status === "completed")
+    .sort((left, right) => parseDateMs(right.completedAt) - parseDateMs(left.completedAt))[0];
+
+  if (latestCompletedWorkout && !latestCompletedAiWorkout) {
+    candidates.push(buildFallbackSnapshotFromCompletedLog(latestCompletedWorkout));
+  }
+
+  const unique = new Map<string, LatestWorkoutCandidate>();
+
+  for (const candidate of candidates) {
+    const key = `${candidate.source}:${candidate.snapshot.createdAt}:${candidate.snapshot.normalizedWorkout?.name ?? "workout"}`;
     if (!unique.has(key)) {
-      unique.set(key, snapshot);
+      unique.set(key, candidate);
     }
   }
 
   return Array.from(unique.values())
-    .sort((left, right) => parseDateMs(right.createdAt) - parseDateMs(left.createdAt))
+    .sort(
+      (left, right) =>
+        parseDateMs(right.snapshot.createdAt) - parseDateMs(left.snapshot.createdAt),
+    )
     .slice(0, params.limit);
 }
 
@@ -602,7 +941,8 @@ function buildRecentHistorySummary(
 
   return history
     .map(({ completedAt, exercise }) => {
-      const lastSet = exercise.sets[exercise.sets.length - 1];
+      const completedSets = exercise.sets.filter((set) => hasCompletedWorkInSet(set));
+      const lastSet = completedSets[completedSets.length - 1] ?? exercise.sets[exercise.sets.length - 1];
       const weight =
         typeof lastSet?.actualWeight === "number" ? `${lastSet.actualWeight} kg` : "ingen vikt";
       const reps =
@@ -617,14 +957,99 @@ function buildRecentHistorySummary(
     .join(" | ");
 }
 
+function buildBodyweightProgressionSuggestion(
+  exercise: NonNullable<Workout["blocks"]>[number]["exercises"][number],
+) {
+  const catalogExercise = getExerciseById(exercise.id);
+
+  if (!catalogExercise) {
+    return null;
+  }
+
+  if ((catalogExercise.requiredEquipment ?? []).includes("rings")) {
+    return "Behåll repsnivån men gör vinkeln något tyngre, använd längre ROM eller lägg in en kort paus i toppläget.";
+  }
+
+  if (exercise.duration) {
+    return "Behåll ungefär samma arbetstid men öka kontroll, paus eller ett extra set om tekniken känns stabil.";
+  }
+
+  if (exercise.reps) {
+    return "Öka 1–2 reps, lägg till en kort paus eller ett extra set innan du gör varianten tyngre.";
+  }
+
+  return "Behåll utförandet och öka svårigheten stegvis via tempo, ROM, paus eller fler set.";
+}
+
+function buildProgressionMissingDataWarnings(params: {
+  exercise: NonNullable<Workout["blocks"]>[number]["exercises"][number];
+  progressionSnapshot: ProgressionSnapshot | null;
+  lastWeight: number | null;
+  suggestedWeight: number | null;
+}) {
+  const warnings: string[] = [];
+
+  if (
+    typeof params.lastWeight === "number" &&
+    typeof params.suggestedWeight === "number" &&
+    params.suggestedWeight > params.lastWeight &&
+    params.progressionSnapshot?.lastExtraReps == null &&
+    params.progressionSnapshot?.lastTimedEffort == null
+  ) {
+    warnings.push(
+      "Viktökningen kan vara aggressiv eftersom tidigare effort/RIR saknas.",
+    );
+  }
+
+  if (
+    params.suggestedWeight == null &&
+    params.progressionSnapshot == null &&
+    !params.exercise.progressionNote
+  ) {
+    warnings.push("Övningen saknar tydlig progressionshistorik och bör tolkas försiktigt.");
+  }
+
+  return warnings;
+}
+
+function buildProgressionInterpretation(params: {
+  confidenceFlag: AiDebugProgressionDiagnostic["confidenceFlag"];
+  progressionSeemsAggressive: boolean;
+  progressionSeemsConservative: boolean;
+  missingDataWarnings: string[];
+  suggestedWeight: number | null;
+}) {
+  if (params.progressionSeemsAggressive) {
+    return "Progressionen ser relativt offensiv ut och bör dubbelkollas mot faktisk effort.";
+  }
+
+  if (params.progressionSeemsConservative) {
+    return "Progressionen ser försiktig ut, vilket kan vara rimligt om tekniken eller datakvaliteten är osäker.";
+  }
+
+  if (params.missingDataWarnings.length > 0) {
+    return "Progressionen bör tolkas som ett försiktigt förslag snarare än en stark rekommendation.";
+  }
+
+  if (params.suggestedWeight == null) {
+    return "Övningen saknar belastningsförslag och bör främst bedömas via reps, tempo eller svårighetsgrad.";
+  }
+
+  if (params.confidenceFlag === "high" || params.confidenceFlag === "medium") {
+    return "Progressionen vilar på viss historik och verkar användbar som nästa försök.";
+  }
+
+  return "Progressionen bygger på begränsad historik och bör ses som en försiktig startpunkt.";
+}
+
 function buildProgressionDiagnostics(params: {
-  workouts: StoredAiGeneratedWorkoutSnapshot[];
+  workouts: LatestWorkoutCandidate[];
   logs: WorkoutLog[];
   progressionSnapshots: Record<string, ProgressionSnapshot>;
   limit: number;
 }): AiDebugProgressionDiagnostic[] {
   const allExercises = params.workouts.flatMap((snapshot) => {
-    return snapshot.normalizedWorkout?.blocks.flatMap((block) => block.exercises) ?? [];
+    return snapshot.snapshot.normalizedWorkout?.blocks.flatMap((block) => block.exercises) ?? [];
   });
   const uniqueExercises = new Map<string, NonNullable<Workout["blocks"]>[number]["exercises"][number]>();
 
@@ -640,11 +1065,11 @@ function buildProgressionDiagnostics(params: {
       const history = getRecentExerciseHistory(params.logs, exercise.id);
       const progressionSnapshot = params.progressionSnapshots[exercise.id] ?? null;
       const lastEntry = history[0];
-      const lastSet = lastEntry?.exercise.sets[lastEntry.exercise.sets.length - 1];
+      const completedSets = lastEntry?.exercise.sets.filter((set) => hasCompletedWorkInSet(set)) ?? [];
+      const lastSet = completedSets[completedSets.length - 1] ?? lastEntry?.exercise.sets[lastEntry.exercise.sets.length - 1];
       const suggestedWeight =
-        exercise.suggestedWeight ?? null;
-      const numericSuggestedWeight =
-        typeof suggestedWeight === "number" ? suggestedWeight : null;
+        typeof exercise.suggestedWeight === "number" ? exercise.suggestedWeight : null;
+      const rawSuggestedWeight = exercise.suggestedWeight ?? null;
       const lastWeight =
         progressionSnapshot?.lastWeight ??
         (typeof lastSet?.actualWeight === "number" ? lastSet.actualWeight : null);
@@ -657,20 +1082,27 @@ function buildProgressionDiagnostics(params: {
       const confidenceFlag =
         historyCount >= 3 ? "high" : historyCount === 2 ? "medium" : historyCount === 1 ? "low" : "very_low";
       const seemsAggressive =
-        numericSuggestedWeight !== null &&
+        suggestedWeight !== null &&
         typeof lastWeight === "number" &&
-        (numericSuggestedWeight - lastWeight >= 5 ||
-          numericSuggestedWeight > lastWeight * 1.15);
+        (suggestedWeight - lastWeight >= 5 ||
+          suggestedWeight > lastWeight * 1.15);
       const seemsConservative =
-        numericSuggestedWeight !== null &&
+        suggestedWeight !== null &&
         typeof lastWeight === "number" &&
-        numericSuggestedWeight <= lastWeight &&
+        suggestedWeight <= lastWeight &&
         (progressionSnapshot?.lastExtraReps ?? 0) >= 4;
+      const missingDataWarnings = buildProgressionMissingDataWarnings({
+        exercise,
+        progressionSnapshot,
+        lastWeight,
+        suggestedWeight,
+      });
 
       return {
         exerciseId: exercise.id,
         exerciseName: exercise.name,
         lastPerformedAt: lastEntry?.completedAt ?? progressionSnapshot?.updatedAt ?? null,
+        recentHistorySummary: buildRecentHistorySummary(history),
         lastUsedWeight: lastWeight,
         lastReps:
           progressionSnapshot?.lastReps ??
@@ -678,8 +1110,7 @@ function buildProgressionDiagnostics(params: {
         lastDuration:
           progressionSnapshot?.lastDuration ??
           (typeof lastSet?.actualDuration === "number" ? lastSet.actualDuration : null),
-        recentHistorySummary: buildRecentHistorySummary(history),
-        suggestedWeight,
+        suggestedWeight: rawSuggestedWeight,
         suggestedReps: exercise.reps ?? null,
         suggestedDuration: exercise.duration ?? null,
         progressionRuleUsed: rule,
@@ -687,6 +1118,16 @@ function buildProgressionDiagnostics(params: {
         confidenceFlag,
         progressionSeemsAggressive: seemsAggressive,
         progressionSeemsConservative: seemsConservative,
+        recommendedAiInterpretation: buildProgressionInterpretation({
+          confidenceFlag,
+          progressionSeemsAggressive: seemsAggressive,
+          progressionSeemsConservative: seemsConservative,
+          missingDataWarnings,
+          suggestedWeight,
+        }),
+        missingDataWarnings,
+        bodyweightProgressionSuggestion:
+          rawSuggestedWeight == null ? buildBodyweightProgressionSuggestion(exercise) : null,
       };
     });
 }
@@ -698,8 +1139,80 @@ function getGoalDefaults(goal: string | null | undefined) {
   return GOAL_DEFAULT_PRIORITIES[resolvedGoal] ?? GOAL_DEFAULT_PRIORITIES.health;
 }
 
+function getGoalPattern(goal?: string | null): WorkoutFocus[] {
+  if (goal === "strength") {
+    return ["lower_body", "upper_body", "full_body"];
+  }
+
+  if (goal === "hypertrophy") {
+    return ["upper_body", "lower_body", "upper_body", "core"];
+  }
+
+  if (goal === "body_composition") {
+    return ["upper_body", "lower_body", "core", "full_body"];
+  }
+
+  return ["full_body", "upper_body", "lower_body"];
+}
+
+function getPatternPreferredFocus(weeklyStructure: WeeklyWorkoutStructure, goal?: string | null) {
+  const pattern = getGoalPattern(goal);
+  const nextPatternIndex = weeklyStructure.completedLast7Days % pattern.length;
+  return pattern[nextPatternIndex] ?? pattern[0] ?? "full_body";
+}
+
+function buildFocusTradeoffs(params: {
+  weeklyStructure: WeeklyWorkoutStructure;
+  focusScores: ReturnType<typeof getAdaptiveFocusScore>[];
+  patternPreferredFocus: WorkoutFocus;
+}) {
+  const overloaded = params.weeklyStructure.muscleBudget
+    .filter((entry) => entry.loadStatus === "over" || entry.loadStatus === "high_risk")
+    .map((entry) => entry.label.toLowerCase());
+  const tradeoffs: string[] = [];
+
+  if (params.weeklyStructure.nextFocus !== params.patternPreferredFocus) {
+    tradeoffs.push(
+      `Veckorytmen pekade mot ${formatWorkoutFocus(params.patternPreferredFocus).toLowerCase()}, men modellen valde ${formatWorkoutFocus(params.weeklyStructure.nextFocus).toLowerCase()}.`,
+    );
+  }
+
+  if (overloaded.length > 0) {
+    tradeoffs.push(`Överbelastning i ${overloaded.join(", ")} drog ned vissa fokusval.`);
+  }
+
+  const runnerUp = [...params.focusScores]
+    .sort((left, right) => right.score - left.score)
+    .find((entry) => entry.focus !== params.weeklyStructure.nextFocus);
+
+  if (runnerUp) {
+    tradeoffs.push(
+      `${formatWorkoutFocus(runnerUp.focus)} var ett alternativ men fick lägre totalpoäng än ${formatWorkoutFocus(params.weeklyStructure.nextFocus).toLowerCase()}.`,
+    );
+  }
+
+  return tradeoffs;
+}
+
+function buildWhyNotFocus(
+  focusScores: ReturnType<typeof getAdaptiveFocusScore>[],
+  selectedFocus: WorkoutFocus,
+  requestedFocus: WorkoutFocus,
+) {
+  if (selectedFocus === requestedFocus) {
+    return undefined;
+  }
+
+  const match = focusScores.find((entry) => entry.focus === requestedFocus);
+  if (!match) {
+    return undefined;
+  }
+
+  return `${formatWorkoutFocus(requestedFocus)} fick ${roundToSingleDecimal(match.score)} i fokuspoäng. ${match.reason}.`;
+}
+
 function buildPlannerDiagnostics(params: {
-  weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+  weeklyStructure: WeeklyWorkoutStructure;
   settings: SettingsLike | null;
   latestGeneratedWorkout: StoredAiGeneratedWorkoutSnapshot | null;
 }): AiDebugPlannerDiagnostic {
@@ -708,6 +1221,20 @@ function buildPlannerDiagnostics(params: {
     .slice(0, 6);
   const availableEquipment = params.latestGeneratedWorkout?.equipmentSeed ?? [];
   const duration = params.latestGeneratedWorkout?.requestedDurationMinutes ?? null;
+  const patternPreferredFocus = getPatternPreferredFocus(
+    params.weeklyStructure,
+    params.settings?.training_goal,
+  );
+  const focusScores = (
+    ["upper_body", "lower_body", "core", "full_body"] as WorkoutFocus[]
+  ).map((focus) =>
+    getAdaptiveFocusScore({
+      focus,
+      entries: params.weeklyStructure.muscleBudget,
+      configuredPriorityMuscles: params.weeklyStructure.configuredPriorityMuscles,
+      patternPreferredFocus,
+    }),
+  );
 
   return {
     weeklyFocusSelected: params.weeklyStructure.nextFocus ?? null,
@@ -737,13 +1264,33 @@ function buildPlannerDiagnostics(params: {
     recoveryConstraintImpact:
       params.weeklyStructure.confidenceScore === "low"
         ? "Låg datatillit gör att planeringen bör tolkas mer försiktigt."
-        : "Ingen explicit recovery-signal används i veckovyn utöver historik och muskelbudget.",
+        : "Planeringen använder historik, budget och coachbeslut utan separat readiness-signal.",
+    focusScores,
+    whyNotLowerBody: buildWhyNotFocus(
+      focusScores,
+      params.weeklyStructure.nextFocus,
+      "lower_body",
+    ),
+    whyNotFullBody: buildWhyNotFocus(
+      focusScores,
+      params.weeklyStructure.nextFocus,
+      "full_body",
+    ),
+    whyNotPriorityOnly:
+      params.weeklyStructure.priorityMuscles.length > 0
+        ? "Prioriterade muskler vägs in, men modellen försöker fortfarande hålla ihop hel veckorytm och återhämtning."
+        : undefined,
+    selectedFocusTradeoffs: buildFocusTradeoffs({
+      weeklyStructure: params.weeklyStructure,
+      focusScores,
+      patternPreferredFocus,
+    }),
   };
 }
 
 function buildExerciseSelectionDiagnostics(params: {
-  workouts: StoredAiGeneratedWorkoutSnapshot[];
-  weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+  latestGeneratedWorkout: LatestWorkoutCandidate | null;
+  weeklyStructure: WeeklyWorkoutStructure;
   settings: SettingsLike | null;
   limit: number;
 }): AiDebugExerciseSelectionDiagnostic[] {
@@ -752,61 +1299,93 @@ function buildExerciseSelectionDiagnostics(params: {
     .sort((left, right) => right.remainingSets - left.remainingSets)
     .slice(0, 4)
     .map((entry) => entry.group);
+  const overloaded = params.weeklyStructure.muscleBudget
+    .filter((entry) => entry.loadStatus === "over" || entry.loadStatus === "high_risk")
+    .map((entry) => entry.group);
   const diagnostics: AiDebugExerciseSelectionDiagnostic[] = [];
 
-  for (const snapshot of params.workouts) {
-    const availableEquipment = new Set(snapshot.equipmentSeed);
-    const exercises =
-      snapshot.normalizedWorkout?.blocks.flatMap((block) => block.exercises) ?? [];
+  const snapshot = params.latestGeneratedWorkout?.snapshot;
+  const availableEquipment = new Set(snapshot?.equipmentSeed ?? []);
+  const exercises =
+    snapshot?.normalizedWorkout?.blocks.flatMap((block) => block.exercises) ?? [];
 
-    for (const exercise of exercises) {
-      if (diagnostics.length >= params.limit) {
-        return diagnostics;
-      }
-
-      const catalogExercise = getExerciseById(exercise.id);
-      const primaryMuscles = catalogExercise?.primaryMuscles ?? [];
-      const secondaryMuscles = catalogExercise?.secondaryMuscles ?? [];
-      const mappedNeeds = primaryMuscles
-        .map((muscle) => mapStimulusGroup(muscle))
-        .filter((value): value is MuscleBudgetGroup => value !== null)
-        .filter((group) => topNeeds.includes(group));
-      const availableInSelectedGym =
-        (catalogExercise?.requiredEquipment ?? []).length === 0 ||
-        (catalogExercise?.requiredEquipment ?? []).every((equipmentId) => {
-          return availableEquipment.has(equipmentId);
-        });
-      const goal = params.settings?.training_goal ?? "health";
-      const goalFitText =
-        catalogExercise?.primaryGoalTags?.length
-          ? `Övningen har mål-taggarna ${catalogExercise.primaryGoalTags.join(", ")} och täcker ${catalogExercise.movementPattern}.`
-          : `Övningen täcker rörelsemönstret ${catalogExercise?.movementPattern ?? "okänt"} för målet ${goal}.`;
-
-      diagnostics.push({
-        exerciseName: catalogExercise?.name ?? exercise.name,
-        movementPattern: catalogExercise?.movementPattern ?? null,
-        requiredEquipment: catalogExercise?.requiredEquipment ?? [],
-        availableInSelectedGym,
-        primaryMuscles,
-        secondaryMuscles,
-        whyThisExerciseFitsGoal: goalFitText,
-        whyThisExerciseFitsEquipment:
-          (catalogExercise?.requiredEquipment ?? []).length > 0
-            ? `Övningen kräver ${catalogExercise?.requiredEquipment.join(", ")} och matchar vald utrustning: ${availableInSelectedGym ? "ja" : "nej"}.`
-            : null,
-        whyThisExerciseFitsCurrentWeeklyNeed:
-          mappedNeeds.length > 0
-            ? `Övningen träffar veckobehov i ${mappedNeeds.map((group) => MUSCLE_LABELS[group]).join(", ")}.`
-            : "Ingen stark direkt träff mot mest eftersatta muskelgrupper kunde härledas.",
-        progressionBasis:
-          exercise.progressionNote ??
-          (exercise.suggestedWeight != null
-            ? "Förslag finns men exakt regel saknas i debugdatan."
-            : null),
-        alternativeCandidatesRejected: null,
-        rejectionReasons: null,
-      });
+  for (const exercise of exercises) {
+    if (diagnostics.length >= params.limit) {
+      return diagnostics;
     }
+
+    const catalogExercise = getExerciseById(exercise.id);
+    const primaryMuscles = catalogExercise?.primaryMuscles ?? [];
+    const secondaryMuscles = catalogExercise?.secondaryMuscles ?? [];
+    const directMainMuscles = primaryMuscles
+      .map((muscle) => mapStimulusGroup(muscle))
+      .filter((value): value is MuscleBudgetGroup => value !== null);
+    const indirectMainMuscles = secondaryMuscles
+      .map((muscle) => mapStimulusGroup(muscle))
+      .filter((value): value is MuscleBudgetGroup => value !== null)
+      .filter((group) => !directMainMuscles.includes(group));
+    const hitsPriorityMusclesDirectly = directMainMuscles.filter((group) =>
+      getPriorityMuscles(params.settings).includes(group),
+    );
+    const hitsPriorityMusclesIndirectly = indirectMainMuscles.filter((group) =>
+      getPriorityMuscles(params.settings).includes(group),
+    );
+    const hitsUnderservedMuscles = directMainMuscles
+      .concat(indirectMainMuscles)
+      .filter((group, index, current) => current.indexOf(group) === index)
+      .filter((group) => topNeeds.includes(group));
+    const hitsOverloadedMuscles = directMainMuscles
+      .concat(indirectMainMuscles)
+      .filter((group, index, current) => current.indexOf(group) === index)
+      .filter((group) => overloaded.includes(group));
+    const availableInSelectedGym =
+      (catalogExercise?.requiredEquipment ?? []).length === 0 ||
+      (catalogExercise?.requiredEquipment ?? []).every((equipmentId) => {
+        return availableEquipment.has(equipmentId);
+      });
+    const goal = params.settings?.training_goal ?? "health";
+    const goalFitText =
+      catalogExercise?.primaryGoalTags?.length
+        ? `Övningen har mål-taggarna ${catalogExercise.primaryGoalTags.join(", ")} och täcker ${catalogExercise.movementPattern}.`
+        : `Övningen täcker rörelsemönstret ${catalogExercise?.movementPattern ?? "okänt"} för målet ${goal}.`;
+
+    diagnostics.push({
+      exerciseId: exercise.id,
+      exerciseName: catalogExercise?.name ?? exercise.name,
+      movementPattern: catalogExercise?.movementPattern ?? null,
+      requiredEquipment: catalogExercise?.requiredEquipment ?? [],
+      availableInSelectedGym,
+      primaryMuscles,
+      secondaryMuscles,
+      directMainMuscles,
+      indirectMainMuscles,
+      hitsPriorityMusclesDirectly,
+      hitsPriorityMusclesIndirectly,
+      hitsUnderservedMuscles,
+      hitsOverloadedMuscles,
+      whyThisExerciseFitsGoal: goalFitText,
+      whyThisExerciseFitsEquipment:
+        (catalogExercise?.requiredEquipment ?? []).length > 0
+          ? `Övningen kräver ${catalogExercise?.requiredEquipment.join(", ")} och matchar vald utrustning: ${availableInSelectedGym ? "ja" : "nej"}.`
+          : null,
+      whyThisExerciseFitsCurrentWeeklyNeed:
+        hitsUnderservedMuscles.length > 0
+          ? `Övningen träffar veckobehov i ${hitsUnderservedMuscles.map((group) => MUSCLE_LABELS[group]).join(", ")}.`
+          : "Ingen stark direkt träff mot mest eftersatta muskelgrupper kunde härledas.",
+      whyThisExerciseFitsLongTermPlan:
+        hitsPriorityMusclesDirectly.length > 0
+          ? `Övningen ger direkt volym till prioriterade muskler: ${hitsPriorityMusclesDirectly.map((group) => MUSCLE_LABELS[group]).join(", ")}.`
+          : hitsPriorityMusclesIndirectly.length > 0
+            ? `Övningen ger främst indirekt träff på prioriterade muskler: ${hitsPriorityMusclesIndirectly.map((group) => MUSCLE_LABELS[group]).join(", ")}.`
+            : "Övningen bidrar mer till helheten än till användarens prioriterade muskler.",
+      progressionBasis:
+        exercise.progressionNote ??
+        (exercise.suggestedWeight != null
+          ? "Förslag finns men exakt regel saknas i debugdatan."
+          : null),
+      alternativeCandidatesRejected: null,
+      rejectionReasons: null,
+    });
   }
 
   return diagnostics;
@@ -825,19 +1404,39 @@ function getSelectedGym(params: {
   return params.anonymize ? "selected_gym" : latestGym;
 }
 
-function getAvailableEquipment(params: {
-  latestGeneratedWorkout: StoredAiGeneratedWorkoutSnapshot | null;
-  gyms: GymLike[];
-}) {
-  if (params.latestGeneratedWorkout?.equipmentSeed?.length) {
-    return params.latestGeneratedWorkout.equipmentSeed;
+function getSelectedGymIdFromSnapshot(snapshot: StoredAiGeneratedWorkoutSnapshot | null) {
+  const rawGym = snapshot?.request?.gym;
+  return typeof rawGym === "string" && rawGym.trim() ? rawGym : null;
+}
+
+function inferHistoricallyUsedEquipment(logs: WorkoutLog[]) {
+  const equipment = new Set<string>();
+
+  for (const log of logs) {
+    for (const exercise of log.exercises) {
+      const catalogExercise = getExerciseById(exercise.exerciseId);
+      for (const equipmentId of catalogExercise?.requiredEquipment ?? []) {
+        equipment.add(equipmentId);
+      }
+    }
   }
 
-  const matchedGym = params.gyms.find((gym) => {
-    return gym.name === params.latestGeneratedWorkout?.selectedGym;
-  });
+  return Array.from(equipment).sort();
+}
 
-  return Array.isArray(matchedGym?.equipment)
+function buildEquipmentContext(params: {
+  gyms: GymLike[];
+  latestGeneratedWorkout: LatestWorkoutCandidate | null;
+  logs: WorkoutLog[];
+}) {
+  const snapshot = params.latestGeneratedWorkout?.snapshot ?? null;
+  const selectedGymLabel = snapshot?.selectedGym ?? null;
+  const selectedGymId = getSelectedGymIdFromSnapshot(snapshot);
+  const matchedGym =
+    params.gyms.find((gym) => String(gym.id) === selectedGymId) ??
+    params.gyms.find((gym) => gym.name === selectedGymLabel) ??
+    null;
+  const selectedGymEquipment = Array.isArray(matchedGym?.equipment)
     ? matchedGym.equipment
         .map((item) => {
           const value =
@@ -850,6 +1449,673 @@ function getAvailableEquipment(params: {
         })
         .filter((value): value is string => Boolean(value))
     : [];
+  const equipmentSeedForLatestGeneration = snapshot?.equipmentSeed ?? [];
+  const historicallyUsedEquipment28d = inferHistoricallyUsedEquipment(
+    filterLogsWithinDays(params.logs, 28).filter((log) => log.status === "completed"),
+  );
+  const inferredAvailableEquipment = historicallyUsedEquipment28d.filter(
+    (equipmentId) => !selectedGymEquipment.includes(equipmentId),
+  );
+  const equipmentForNextGeneration =
+    selectedGymEquipment.length > 0
+      ? selectedGymEquipment
+      : equipmentSeedForLatestGeneration.length > 0
+        ? equipmentSeedForLatestGeneration
+        : [];
+  const notes: string[] = [];
+  let confidence: "high" | "medium" | "low" = "high";
+
+  if (!selectedGymLabel && historicallyUsedEquipment28d.length > 0) {
+    confidence = "medium";
+    notes.push(
+      "Inget valt gym i userContext, men historiken antyder nylig användning av registrerad utrustning.",
+    );
+  }
+
+  if (equipmentForNextGeneration.length === 0 && historicallyUsedEquipment28d.length > 0) {
+    confidence = "low";
+    notes.push(
+      "Inget tydligt equipment-seed finns för nästa generering trots att historiken visar utrustning. Detta ska inte tolkas som valt gym.",
+    );
+  }
+
+  if (selectedGymEquipment.length === 0 && equipmentSeedForLatestGeneration.length > 0) {
+    notes.push("Senaste generering sparade equipment-seed men valt gyms utrustning kunde inte härledas direkt.");
+  }
+
+  return {
+    selectedGymId,
+    selectedGymLabel,
+    selectedGymEquipment,
+    equipmentSeedForLatestGeneration,
+    historicallyUsedEquipment28d,
+    inferredAvailableEquipment,
+    equipmentForNextGeneration,
+    confidence,
+    notes,
+  };
+}
+
+function buildPlanRiskDiagnostics(weeklyStructure: WeeklyWorkoutStructure) {
+  const risks: Array<{
+    date: string;
+    focus: WorkoutFocus | null;
+    riskLevel: "low" | "medium" | "high";
+    reason: string;
+    affectedMuscles: MuscleBudgetGroup[];
+    recommendation: string;
+  }> = [];
+  const notes: string[] = [];
+
+  for (const day of weeklyStructure.upcomingDays) {
+    if (!day.focus) {
+      continue;
+    }
+
+    const affectedMuscles = FOCUS_TO_BUDGET_GROUPS[day.focus] ?? [];
+    const riskyEntries = weeklyStructure.muscleBudget.filter(
+      (entry) =>
+        affectedMuscles.includes(entry.group) &&
+        (entry.loadStatus === "high_risk" || entry.remainingSets <= 0),
+    );
+
+    if (riskyEntries.length === 0) {
+      continue;
+    }
+
+    const riskLevel =
+      riskyEntries.some((entry) => entry.loadStatus === "high_risk") ? "high" : "medium";
+    const reason = `${formatWorkoutFocus(day.focus)} träffar ${riskyEntries
+      .map((entry) => `${entry.label.toLowerCase()} (${entry.loadStatus}, ${roundToSingleDecimal(entry.remainingSets)} kvar)`)
+      .join(", ")}.`;
+    const recommendation =
+      day.focus === "core"
+        ? "Ändra core-pass till recovery/mobility eller byt fokus till mindre belastade muskelgrupper."
+        : "Överväg ett lättare eller omdirigerat pass om detta fokus verkligen behövs just nu.";
+
+    risks.push({
+      date: day.date,
+      focus: day.focus,
+      riskLevel,
+      reason,
+      affectedMuscles: riskyEntries.map((entry) => entry.group),
+      recommendation,
+    });
+  }
+
+  if (risks.some((risk) => risk.focus === "core" && risk.riskLevel === "high")) {
+    notes.push("Kommande separat core-fokus krockar med hög core-belastning i aktuell budget.");
+  }
+
+  return {
+    upcomingFocusRisks: risks,
+    notes,
+  };
+}
+
+function buildAnalysisAvailability(params: {
+  latestWorkoutEvaluationContext: AiDebugLatestWorkoutEvaluationContext;
+  progressionDiagnostics: AiDebugProgressionDiagnostic[];
+  exerciseSelectionDiagnostics: AiDebugExerciseSelectionDiagnostic[];
+}) {
+  const limitations: string[] = [];
+  const canEvaluateLatestGeneratedWorkout =
+    params.latestWorkoutEvaluationContext.source !== "missing";
+  const canEvaluateExerciseSelection =
+    canEvaluateLatestGeneratedWorkout && params.exerciseSelectionDiagnostics.length > 0;
+  const canEvaluateProgression =
+    canEvaluateLatestGeneratedWorkout && params.progressionDiagnostics.length > 0;
+
+  if (!canEvaluateLatestGeneratedWorkout) {
+    limitations.push("Inget senaste AI-genererat pass hittades.");
+  }
+
+  if (!canEvaluateExerciseSelection) {
+    limitations.push("ExerciseSelectionDiagnostics saknas eftersom inget tydligt senaste pass kunde byggas.");
+  }
+
+  if (!canEvaluateProgression) {
+    limitations.push("ProgressionDiagnostics saknas eftersom inget senaste pass kunde identifieras.");
+  }
+
+  return {
+    canEvaluateLatestGeneratedWorkout,
+    canEvaluateExerciseSelection,
+    canEvaluateProgression,
+    canEvaluateLongTermPlan: true,
+    canEvaluateAdherence: true,
+    limitations,
+  };
+}
+
+function isExerciseLikelyLoaded(exerciseId: string) {
+  const catalogExercise = getExerciseById(exerciseId);
+  if (!catalogExercise) {
+    return false;
+  }
+
+  return (catalogExercise.requiredEquipment ?? []).some((equipmentId) =>
+    EXERCISE_IDS_THAT_OFTEN_NEED_LOAD.has(equipmentId),
+  );
+}
+
+function buildDataQuality(logs: WorkoutLog[]): AiDebugDataQuality {
+  const completed7d = filterLogsWithinDays(logs, 7).filter((log) => log.status === "completed");
+  const completed28d = filterLogsWithinDays(logs, 28).filter((log) => log.status === "completed");
+  const valid7d = completed7d.filter(
+    (log) => buildWorkoutValidity(log, null).classification === "valid_full",
+  );
+  const valid28d = completed28d.filter(
+    (log) => {
+      const classification = buildWorkoutValidity(log, null).classification;
+      return classification === "valid_full" || classification === "valid_shortened";
+    },
+  );
+  const veryShortWorkoutCount28d = completed28d.filter(
+    (log) => buildWorkoutValidity(log, null).classification === "too_short",
+  ).length;
+  const emptyWorkoutCount28d = completed28d.filter(
+    (log) => buildWorkoutValidity(log, null).classification === "empty_completed",
+  ).length;
+  let missingEffortCount28d = 0;
+  let loadRelevantSetCount28d = 0;
+  let missingWeightCount28d = 0;
+
+  for (const log of completed28d) {
+    for (const exercise of log.exercises) {
+      for (const set of exercise.sets) {
+        if (!hasCompletedWorkInSet(set)) {
+          continue;
+        }
+
+        if (set.repsLeft == null && set.timedEffort == null) {
+          missingEffortCount28d += 1;
+        }
+
+        if (isExerciseLikelyLoaded(exercise.exerciseId)) {
+          loadRelevantSetCount28d += 1;
+
+          if (set.actualWeight == null) {
+            missingWeightCount28d += 1;
+          }
+        }
+      }
+    }
+  }
+
+  const reasons: string[] = [];
+  const notes: string[] = [];
+  let overallConfidence: AiDebugDataQuality["overallConfidence"] = "high";
+
+  if (valid28d.length < 3) {
+    overallConfidence = "low";
+    reasons.push("Få tydligt giltiga pass senaste 28 dagarna.");
+  } else if (valid28d.length < 6) {
+    overallConfidence = "medium";
+    reasons.push("Historiken är användbar men fortfarande ganska tunn.");
+  }
+
+  if (veryShortWorkoutCount28d >= 2) {
+    overallConfidence = overallConfidence === "high" ? "medium" : overallConfidence;
+    reasons.push("Flera mycket korta pass gör veckorytmen svårare att tolka.");
+  }
+
+  if (emptyWorkoutCount28d > 0) {
+    overallConfidence = "low";
+    reasons.push("Minst ett completed-pass saknar övningar.");
+  }
+
+  if (missingEffortCount28d > 0) {
+    notes.push("Effort/RIR saknas för en del av sethistoriken.");
+  }
+
+  if (loadRelevantSetCount28d > 0 && missingWeightCount28d > 0) {
+    notes.push("Viktdata saknas för vissa belastade set.");
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("Historiken innehåller tillräckligt många giltiga pass för försiktiga slutsatser.");
+  }
+
+  return {
+    overallConfidence,
+    reasons,
+    completedWorkoutCount7d: completed7d.length,
+    completedWorkoutCount28d: completed28d.length,
+    validWorkoutCount7d: valid7d.length,
+    validWorkoutCount28d: valid28d.length,
+    veryShortWorkoutCount28d,
+    emptyWorkoutCount28d,
+    missingEffortCount28d,
+    missingWeightCount28d,
+    notes,
+  };
+}
+
+function buildCurrentPlanSnapshot(params: {
+  weeklyStructure: WeeklyWorkoutStructure;
+  settings: SettingsLike | null;
+}): AiDebugCurrentPlanSnapshot {
+  const patternPreferredFocus = getPatternPreferredFocus(
+    params.weeklyStructure,
+    params.settings?.training_goal,
+  );
+  const topNeeds = params.weeklyStructure.muscleBudget
+    .filter((entry) => entry.remainingSets > 0)
+    .sort((left, right) => right.remainingSets - left.remainingSets)
+    .slice(0, 3)
+    .map((entry) => entry.label.toLowerCase());
+  const planInterpretation =
+    // Den här texten ska hjälpa extern AI att läsa planen som en coach, inte bara som rådata.
+    topNeeds.length > 0
+      ? `Planen försöker nu kombinera ${topNeeds.join(", ")} med veckorytm och återhämtning. ${params.weeklyStructure.optimalPlanText}`
+      : params.weeklyStructure.optimalPlanText;
+
+  return {
+    trainingGoal: params.settings?.training_goal ?? null,
+    experienceLevel: params.settings?.experience_level ?? null,
+    splitStyle: formatSplitStyle(params.weeklyStructure.splitStyle),
+    selectedWeeklyFocus: params.weeklyStructure.nextFocus,
+    patternPreferredFocus,
+    reasonForSelectedFocus: params.weeklyStructure.summaryText,
+    coachDecision: params.weeklyStructure.coachDecision,
+    goalTrajectory: params.weeklyStructure.goalTrajectory,
+    trainingGap: params.weeklyStructure.trainingGap,
+    optimalPlanText: params.weeklyStructure.optimalPlanText,
+    completedLast7Days: params.weeklyStructure.completedLast7Days,
+    passCount: params.weeklyStructure.passCount,
+    confidenceScore: params.weeklyStructure.confidenceScore,
+    upcomingDays: params.weeklyStructure.upcomingDays,
+    upcomingSteps: params.weeklyStructure.upcomingSteps,
+    planInterpretation,
+  };
+}
+
+function buildAdherencePeriod(params: {
+  logs: WorkoutLog[];
+  windowType: AiDebugAdherencePeriod["windowType"];
+  windowStart: string;
+  windowEnd: string;
+  plannedSessions: number | null;
+  targetMinutes: number | null;
+}) {
+  const completedLogs = params.logs.filter((log) => log.status === "completed");
+  const completedMinutes = completedLogs.reduce(
+    (sum, log) => sum + getLogDurationMinutes(log),
+    0,
+  );
+  const validCompletedSessions = completedLogs.filter((log) => {
+    const validity = buildWorkoutValidity(log, null);
+    return (
+      validity.classification === "valid_full" ||
+      validity.classification === "valid_shortened" ||
+      validity.classification === "partial"
+    );
+  }).length;
+  const completionRatio =
+    params.targetMinutes && params.targetMinutes > 0
+      ? roundToSingleDecimal(completedMinutes / params.targetMinutes)
+      : null;
+
+  let interpretation = "Tillräckligt med data saknas för en stark tolkning.";
+
+  if (params.targetMinutes == null || params.plannedSessions == null) {
+    interpretation = "Det finns ingen tydlig minutplan att jämföra mot för denna period.";
+  } else if (completedLogs.length === 0) {
+    interpretation = "Inga completed-pass hittades i perioden.";
+  } else if (validCompletedSessions < completedLogs.length) {
+    interpretation =
+      "Det finns completed-pass av lägre kvalitet i perioden, så följsamheten bör tolkas försiktigt.";
+  } else if ((completionRatio ?? 0) >= 0.85) {
+    interpretation = "Genomförandet ligger nära planerad träningsmängd i denna period.";
+  } else if ((completionRatio ?? 0) >= 0.6) {
+    interpretation = "En del av planeringen följs, men inte hela målvolymen ännu.";
+  } else {
+    interpretation = "Genomförandet är begränsat i förhållande till planerad träningsmängd.";
+  }
+
+  return {
+    windowType: params.windowType,
+    windowStart: params.windowStart,
+    windowEnd: params.windowEnd,
+    plannedSessions: params.plannedSessions,
+    completedSessions: completedLogs.length,
+    validCompletedSessions,
+    completedMinutes,
+    targetMinutes: params.targetMinutes,
+    completionRatio,
+    interpretation,
+  } satisfies AiDebugAdherencePeriod;
+}
+
+function buildAdherenceDiagnostics(params: {
+  logs: WorkoutLog[];
+  weeklyStructure: WeeklyWorkoutStructure;
+}) {
+  const last7Logs = filterLogsWithinDays(params.logs, 7);
+  const last28Logs = filterLogsWithinDays(params.logs, 28);
+  const now = new Date();
+  const last7Start = new Date(now);
+  last7Start.setDate(now.getDate() - 6);
+  const last28Start = new Date(now);
+  last28Start.setDate(now.getDate() - 27);
+  const last7Days = buildAdherencePeriod({
+    logs: last7Logs,
+    windowType: "rolling_7_days",
+    windowStart: last7Start.toISOString().slice(0, 10),
+    windowEnd: now.toISOString().slice(0, 10),
+    plannedSessions: params.weeklyStructure.goalTrajectory.weeklyFrequencyTarget,
+    targetMinutes: params.weeklyStructure.goalTrajectory.weeklyFrequencyTarget * 30,
+  });
+  const last28Days = buildAdherencePeriod({
+    logs: last28Logs,
+    windowType: "rolling_28_days",
+    windowStart: last28Start.toISOString().slice(0, 10),
+    windowEnd: now.toISOString().slice(0, 10),
+    plannedSessions: roundToSingleDecimal(
+      params.weeklyStructure.goalTrajectory.weeklyFrequencyTarget * 4,
+    ),
+    targetMinutes: params.weeklyStructure.goalTrajectory.weeklyFrequencyTarget * 30 * 4,
+  });
+  const notes: string[] = [];
+  let signal: AiDebugAdherenceDiagnostics["missedOrLowQualityTrainingSignal"] = "none";
+
+  const lowQualityCount = last28Logs.filter((log) => {
+    const classification = buildWorkoutValidity(log, null).classification;
+    return classification === "too_short" || classification === "empty_completed";
+  }).length;
+
+  if (lowQualityCount >= 3) {
+    signal = "clear";
+    notes.push("Flera mycket korta eller tomma completed-pass gör veckorytmen osäker.");
+  } else if (lowQualityCount >= 2) {
+    signal = "moderate";
+    notes.push("Det finns flera lågkvalitativa completed-pass i 28-dagarsfönstret.");
+  } else if (lowQualityCount === 1) {
+    signal = "mild";
+    notes.push("Minst ett completed-pass bör tolkas försiktigt.");
+  }
+
+  if ((last7Days.completionRatio ?? 1) < 0.5 && signal !== "clear") {
+    signal = signal === "none" ? "moderate" : signal;
+    notes.push("Senaste 7 dagarna når bara en mindre del av planerad minutvolym.");
+  }
+
+  return {
+    last7Days,
+    last28Days,
+    missedOrLowQualityTrainingSignal: signal,
+    notes,
+    consistencyCheck: {
+      hasConflictingSignals: params.weeklyStructure.trainingGap.windowType !== last7Days.windowType,
+      notes:
+        params.weeklyStructure.trainingGap.windowType !== last7Days.windowType
+          ? [
+              "trainingGap använder nuvarande vecka medan adherenceDiagnostics.last7Days använder rullande 7 dagar. Jämför dem inte direkt.",
+            ]
+          : [],
+    },
+  } satisfies AiDebugAdherenceDiagnostics;
+}
+
+function buildLongTermMuscleTrends(params: {
+  weeklyStructure: WeeklyWorkoutStructure;
+}): AiDebugLongTermMuscleTrend[] {
+  return params.weeklyStructure.muscleBudget.map((entry) => {
+    const userPriorityRank = params.weeklyStructure.configuredPriorityMuscles.indexOf(entry.group);
+    const completionRatioCurrentWeek =
+      entry.targetSets > 0 ? roundToSingleDecimal(entry.completedSets / entry.targetSets) : 0;
+    const longTermInterpretation =
+      userPriorityRank >= 0 && entry.recent4WeekAvgSets < entry.targetSets * 0.7
+        ? `${entry.label} är användarprioriterad men har låg rullande volym jämfört med veckomålet.`
+        : entry.recent4WeekAvgSets >= entry.targetSets
+          ? `${entry.label} har redan en rullande volym nära eller över veckomålet.`
+          : `${entry.label} ligger fortfarande under sin nuvarande målvolym över tid.`;
+    const recommendationForNext7Days =
+      entry.loadStatus === "high_risk" || entry.loadStatus === "over"
+        ? `Behåll ${entry.label.toLowerCase()} mer kontrollerad tills återhämtningen ser bättre ut.`
+        : entry.remainingSets > 0
+          ? `Lägg in ungefär ${roundToSingleDecimal(entry.remainingSets)} set till för ${entry.label.toLowerCase()} under nästa 7-dagarsperiod.`
+          : `Ingen extra volym behövs direkt för ${entry.label.toLowerCase()} just nu.`;
+
+    return {
+      muscle: entry.group,
+      label: entry.label,
+      priorityLevel: entry.priority,
+      userPriorityRank: userPriorityRank >= 0 ? userPriorityRank + 1 : null,
+      targetSetsCurrentWeek: entry.targetSets,
+      completedSetsCurrentWeek: entry.completedSets,
+      remainingSetsCurrentWeek: entry.remainingSets,
+      completionRatioCurrentWeek,
+      rolling4WeekAverage: entry.recent4WeekAvgSets,
+      trend: entry.progressStatus,
+      longTermInterpretation,
+      recommendationForNext7Days,
+    };
+  });
+}
+
+function collectWorkoutMuscles(
+  workout: Workout | null,
+  mode: "primary" | "secondary",
+) {
+  const muscles = new Set<MuscleBudgetGroup>();
+
+  for (const block of workout?.blocks ?? []) {
+    for (const exercise of block.exercises) {
+      const catalogExercise = getExerciseById(exercise.id);
+      const rawMuscles =
+        mode === "primary"
+          ? catalogExercise?.primaryMuscles ?? []
+          : catalogExercise?.secondaryMuscles ?? [];
+
+      for (const rawMuscle of rawMuscles) {
+        const group = mapStimulusGroup(rawMuscle);
+        if (group) {
+          muscles.add(group);
+        }
+      }
+    }
+  }
+
+  return Array.from(muscles);
+}
+
+function buildLatestWorkoutEvaluationContext(params: {
+  latestGeneratedWorkout: LatestWorkoutCandidate | null;
+  weeklyStructure: WeeklyWorkoutStructure;
+  settings: SettingsLike | null;
+}): AiDebugLatestWorkoutEvaluationContext {
+  const latestWorkout = params.latestGeneratedWorkout?.snapshot.normalizedWorkout ?? null;
+  if (!latestWorkout) {
+    return {
+      source: "missing",
+      sourceConfidence: "high",
+      latestGeneratedWorkoutName: null,
+      requestedDurationMinutes: null,
+      plannedFocus: null,
+      selectedBecause: null,
+      fitsLongTermPlan: "unclear",
+      musclesDirectlyTargeted: [],
+      musclesIndirectlyTargeted: [],
+      priorityMusclesHitDirectly: [],
+      priorityMusclesHitIndirectly: [],
+      priorityMusclesMissing: [],
+      underservedMusclesAddressed: [],
+      underservedMusclesNotAddressed: [],
+      overloadedMusclesHitDirectly: [],
+      overloadedMusclesHitIndirectly: [],
+      expectedRoleInPlan: "unclear",
+      interpretation:
+        "Inget senaste AI-genererat pass kunde hittas. Denna export kan användas för plan- och historikanalys, men inte för detaljerad övningsvalsanalys.",
+    };
+  }
+
+  const direct = collectWorkoutMuscles(latestWorkout, "primary");
+  const indirect = collectWorkoutMuscles(latestWorkout, "secondary").filter(
+    (group) => !direct.includes(group),
+  );
+  const priorityMuscles = getPriorityMuscles(params.settings);
+  const underserved = params.weeklyStructure.muscleBudget
+    .filter((entry) => entry.remainingSets > 0)
+    .sort((left, right) => right.remainingSets - left.remainingSets)
+    .slice(0, 5)
+    .map((entry) => entry.group);
+  const overloaded = params.weeklyStructure.muscleBudget
+    .filter((entry) => entry.loadStatus === "over" || entry.loadStatus === "high_risk")
+    .map((entry) => entry.group);
+  const priorityMusclesHitDirectly = priorityMuscles.filter((group) =>
+    direct.includes(group),
+  );
+  const priorityMusclesHitIndirectly = priorityMuscles.filter(
+    (group) => !direct.includes(group) && indirect.includes(group),
+  );
+  // Saknade prioriterade muskler mäts mot direkt träff, eftersom indirekt volym ofta inte räcker.
+  const priorityMusclesMissing = priorityMuscles.filter(
+    (group) => !direct.includes(group),
+  );
+  const underservedMusclesAddressed = underserved.filter(
+    (group) => direct.includes(group) || indirect.includes(group),
+  );
+  const underservedMusclesNotAddressed = underserved.filter(
+    (group) => !direct.includes(group) && !indirect.includes(group),
+  );
+  const overloadedMusclesHitDirectly = overloaded.filter((group) => direct.includes(group));
+  const overloadedMusclesHitIndirectly = overloaded.filter(
+    (group) => !direct.includes(group) && indirect.includes(group),
+  );
+  const expectedRoleInPlan =
+    (params.latestGeneratedWorkout?.snapshot.requestedDurationMinutes ?? latestWorkout.duration) <= 25
+      ? "short_extra_session"
+      : params.weeklyStructure.trainingGap.status === "major_gap"
+        ? "catch_up_session"
+      : params.weeklyStructure.trainingGap.status === "recovery_first"
+        ? "recovery_or_light_session"
+        : "main_workout";
+  const fitsLongTermPlan =
+    params.latestGeneratedWorkout?.snapshot.workoutFocusTag === params.weeklyStructure.nextFocus
+      ? "yes"
+      : underservedMusclesAddressed.length >= Math.max(1, Math.ceil(underserved.length / 2))
+        ? "partly"
+        : "unclear";
+  const interpretation = [
+    `${latestWorkout.name} riktar främst ${direct.map((group) => MUSCLE_LABELS[group].toLowerCase()).join(", ") || "inga tydliga muskelgrupper"}.`,
+    priorityMusclesMissing.length > 0
+      ? `Direkt volym saknas för ${priorityMusclesMissing.map((group) => MUSCLE_LABELS[group].toLowerCase()).join(", ")} trots användarprioritet.`
+      : "Alla prioriterade muskler får direkt träff i passet.",
+    underservedMusclesNotAddressed.length > 0
+      ? `Vissa eftersatta grupper täcks inte: ${underservedMusclesNotAddressed.map((group) => MUSCLE_LABELS[group].toLowerCase()).join(", ")}.`
+      : "Passet träffar de flesta mest eftersatta muskelgrupperna.",
+    overloadedMusclesHitDirectly.length > 0
+      ? `Passet lägger direkt träff på redan högt belastade grupper: ${overloadedMusclesHitDirectly.map((group) => MUSCLE_LABELS[group].toLowerCase()).join(", ")}.`
+      : "",
+  ].join(" ");
+
+  return {
+    source: params.latestGeneratedWorkout?.source ?? "missing",
+    sourceConfidence: params.latestGeneratedWorkout?.sourceConfidence ?? "high",
+    latestGeneratedWorkoutName: latestWorkout.name,
+    requestedDurationMinutes:
+      params.latestGeneratedWorkout?.snapshot.requestedDurationMinutes ?? latestWorkout.duration,
+    plannedFocus: params.latestGeneratedWorkout?.snapshot.workoutFocusTag ?? latestWorkout.plannedFocus ?? null,
+    selectedBecause: params.weeklyStructure.summaryText,
+    fitsLongTermPlan,
+    musclesDirectlyTargeted: direct,
+    musclesIndirectlyTargeted: indirect,
+    priorityMusclesHitDirectly,
+    priorityMusclesHitIndirectly,
+    priorityMusclesMissing,
+    underservedMusclesAddressed,
+    underservedMusclesNotAddressed,
+    overloadedMusclesHitDirectly,
+    overloadedMusclesHitIndirectly,
+    expectedRoleInPlan,
+    interpretation,
+  };
+}
+
+function buildWarnings(params: {
+  logs: WorkoutLog[];
+  dataQuality: AiDebugDataQuality;
+  latestWorkoutEvaluationContext: AiDebugLatestWorkoutEvaluationContext;
+  progressionDiagnostics: AiDebugProgressionDiagnostic[];
+  weeklyStructure: WeeklyWorkoutStructure;
+  settings: SettingsLike | null;
+  generatedWorkouts: LatestWorkoutCandidate[];
+  planRiskDiagnostics: ReturnType<typeof buildPlanRiskDiagnostics>;
+  adherenceDiagnostics: AiDebugAdherenceDiagnostics;
+}) {
+  const warnings: string[] = [];
+
+  if (params.logs.length === 0) {
+    warnings.push("Inga genomförda pass hittades. Historikdelen blir tunn.");
+  }
+
+  if (params.generatedWorkouts.length === 0) {
+    warnings.push("Inga lokalt sparade AI-genererade pass hittades ännu.");
+  }
+  if (params.latestWorkoutEvaluationContext.source === "missing") {
+    warnings.push("Inget senaste AI-genererat pass hittades. Exporten kan inte användas för full passanalys.");
+  }
+  if (params.latestWorkoutEvaluationContext.source === "fallback_from_history") {
+    warnings.push("Senaste pass hämtades från fallback-historik och kan avvika från senaste generering.");
+  }
+
+  if (!params.settings?.training_goal) {
+    warnings.push("Användaren saknar sparat träningsmål i inställningarna.");
+  }
+
+  if (params.dataQuality.veryShortWorkoutCount28d >= 2) {
+    // Många korta pass tenderar att skapa brus i både rytm- och progressionsanalys.
+    warnings.push("Historiken innehåller flera mycket korta pass som bör tolkas försiktigt.");
+  }
+
+  if (params.dataQuality.emptyWorkoutCount28d > 0) {
+    warnings.push("Minst ett completed-pass saknar övningar och bör inte väga tungt i analysen.");
+  }
+
+  const totalCompletedSets = params.logs
+    .filter((log) => log.status === "completed")
+    .reduce((sum, log) => sum + countCompletedWorkingSetsInLog(log), 0);
+
+  if (totalCompletedSets > 0 && params.dataQuality.missingEffortCount28d / totalCompletedSets > 0.6) {
+    warnings.push("Majoriteten av seten saknar effort/RIR, vilket gör progression svårare att bedöma.");
+  }
+
+  if (params.latestWorkoutEvaluationContext.priorityMusclesMissing.length) {
+    warnings.push(
+      `Senaste pass saknar direkt träff för prioriterade muskler: ${params.latestWorkoutEvaluationContext.priorityMusclesMissing
+        .map((group) => MUSCLE_LABELS[group].toLowerCase())
+        .join(", ")}.`,
+    );
+  }
+
+  if (
+    params.progressionDiagnostics.some(
+      (item) =>
+        item.progressionSeemsAggressive &&
+        item.missingDataWarnings.some((warning) => warning.includes("effort/RIR")),
+    )
+  ) {
+    warnings.push("Minst en progression ser offensiv ut trots att effort/RIR saknas.");
+  }
+
+  if (
+    params.weeklyStructure.trainingGap.thirtyDayEffect?.confidence === "low" ||
+    params.weeklyStructure.confidenceScore === "low"
+  ) {
+    warnings.push("Långsiktig plan bör tolkas försiktigt eftersom datatilliten är låg.");
+  }
+
+  if (params.planRiskDiagnostics.upcomingFocusRisks.some((risk) => risk.riskLevel === "high")) {
+    warnings.push("Kommande plan innehåller minst ett fokus med hög risk givet aktuell muskelbudget.");
+  }
+
+  if (params.adherenceDiagnostics.consistencyCheck.hasConflictingSignals) {
+    warnings.push(params.adherenceDiagnostics.consistencyCheck.notes.join(" | "));
+  }
+
+  return warnings;
 }
 
 export function buildAiDebugExport(
@@ -864,7 +2130,9 @@ export function buildAiDebugExport(
   const generatedWorkouts = params.options.includeGeneratedWorkouts
     ? getLatestGeneratedWorkouts({
         generatedWorkouts: params.generatedWorkouts,
+        generatedWorkout: params.generatedWorkout,
         draftWorkout: params.draftWorkout,
+        logs: params.logs,
         limit: params.options.exportType === "full" ? 5 : 3,
       })
     : [];
@@ -877,32 +2145,65 @@ export function buildAiDebugExport(
         limit: params.options.exportType === "full" ? 24 : 12,
       })
     : [];
-  const warnings: string[] = [];
-
-  if (params.logs.length === 0) {
-    warnings.push("Inga genomförda pass hittades. Historikdelen blir tunn.");
+  const dataQuality = buildDataQuality(params.logs);
+  const adherenceDiagnostics = buildAdherenceDiagnostics({
+    logs: params.logs,
+    weeklyStructure,
+  });
+  const planRiskDiagnostics = buildPlanRiskDiagnostics(weeklyStructure);
+  const latestWorkoutEvaluationContext = buildLatestWorkoutEvaluationContext({
+    latestGeneratedWorkout,
+    weeklyStructure,
+    settings: params.settings,
+  });
+  const exerciseSelectionDiagnostics = buildExerciseSelectionDiagnostics({
+    latestGeneratedWorkout,
+    weeklyStructure,
+    settings: params.settings,
+    limit: params.options.exportType === "full" ? 20 : 10,
+  });
+  const analysisAvailability = buildAnalysisAvailability({
+    latestWorkoutEvaluationContext,
+    progressionDiagnostics,
+    exerciseSelectionDiagnostics,
+  });
+  const equipmentContext = buildEquipmentContext({
+    gyms: params.gyms,
+    latestGeneratedWorkout,
+    logs: params.logs,
+  });
+  const plannedDurationByWorkoutName = new Map<string, number>();
+  for (const candidate of generatedWorkouts) {
+    const name = candidate.snapshot.normalizedWorkout?.name?.trim();
+    const duration = candidate.snapshot.requestedDurationMinutes ?? candidate.snapshot.normalizedWorkout?.duration ?? null;
+    if (name && duration && !plannedDurationByWorkoutName.has(name)) {
+      plannedDurationByWorkoutName.set(name, duration);
+    }
   }
-
-  if (generatedWorkouts.length === 0) {
-    warnings.push("Inga lokalt sparade AI-genererade pass hittades ännu.");
-  }
-
-  if (Object.keys(params.progressionSnapshots).length === 0) {
-    warnings.push("Ingen lokal progressionshistorik hittades för övningarna.");
-  }
-
-  if (!params.settings?.training_goal) {
-    warnings.push("Användaren saknar sparat träningsmål i inställningarna.");
-  }
-
-  const evaluationQuestions = [
-    "Är övningsvalen rimliga för målet?",
-    "Är fördelningen mellan muskelgrupper rimlig?",
-    "Får prioriterade muskler tillräckligt genomslag?",
-    "Är progressionen rimlig utifrån historiken?",
-    "Finns tecken på att modellen överdriver benfokus eller annan bias?",
-    "Är passet väl anpassat till utrustning och passlängd?",
-  ];
+  const warnings = buildWarnings({
+    logs: params.logs,
+    dataQuality,
+    latestWorkoutEvaluationContext,
+    progressionDiagnostics,
+    weeklyStructure,
+    settings: params.settings,
+    generatedWorkouts,
+    planRiskDiagnostics,
+    adherenceDiagnostics,
+  });
+  const debugPurpose = {
+    description:
+      "Detta underlag är avsett för extern AI-utvärdering av träningsappens passförslag, veckoplanering och långsiktiga målstyrning.",
+    primaryQuestions: [
+      "Är senaste föreslagna pass rimligt utifrån mål, utrustning, historik och prioriterade muskler?",
+      "Är passet rimligt som nästa steg i den längre planen?",
+      "Får prioriterade muskelgrupper tillräcklig återkommande volym?",
+      "Finns bias i modellen, t.ex. för stort benfokus, för mycket core/axlar eller för lite armar?",
+      "Är progressionen rimlig och försiktig nog utifrån användarens nivå och faktisk historik?",
+      "Är datakvaliteten tillräcklig för att dra slutsatser?",
+    ],
+    intendedAiRole: "Agera som kritisk träningscoach och modellgranskare, inte som passgenerator.",
+  };
 
   return {
     meta: {
@@ -910,11 +2211,13 @@ export function buildAiDebugExport(
       appVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? null,
       commitHash: process.env.NEXT_PUBLIC_COMMIT_SHA ?? null,
       exportType: params.options.exportType,
-      schemaVersion: "ai-debug-export.v1",
+      schemaVersion: "ai-debug-export.v2",
       source: "analysis-debug-export",
     },
+    debugPurpose,
     userContext: {
       trainingGoal: params.settings?.training_goal ?? null,
+      sportFocus: normalizeSportFocus(params.settings?.sport_focus),
       sex: params.settings?.sex ?? null,
       age: typeof params.settings?.age === "number" ? params.settings.age : null,
       heightCm:
@@ -924,44 +2227,84 @@ export function buildAiDebugExport(
       experienceLevel: params.settings?.experience_level ?? null,
       priorityMuscles: getPriorityMuscles(params.settings),
       selectedGym: getSelectedGym({
-        latestGeneratedWorkout,
+        latestGeneratedWorkout: latestGeneratedWorkout?.snapshot ?? null,
         gyms: params.gyms,
         anonymize: params.options.anonymize,
       }),
-      availableEquipment: getAvailableEquipment({
-        latestGeneratedWorkout,
-        gyms: params.gyms,
-      }),
+      availableEquipment: equipmentContext.equipmentForNextGeneration,
     },
+    effortScaleLegend: {
+      scaleType: "app_internal_effort",
+      values: [
+        { value: 0, label: "mycket lätt", interpretation: "Användaren upplevde setet som mycket lätt." },
+        { value: 2, label: "lätt", interpretation: "Troligen flera repetitioner kvar i tanken." },
+        { value: 4, label: "lagom", interpretation: "Rimlig arbetsnivå för normal träning." },
+        { value: 6, label: "tungt", interpretation: "Hög ansträngning; progression bör vara försiktig." },
+      ],
+      note: "Exakt skala används som coachingstöd och ska inte tolkas som exakt RIR om appen inte uttryckligen registrerar RIR.",
+    },
+    equipmentContext,
+    dataQuality,
+    currentPlanSnapshot: buildCurrentPlanSnapshot({
+      weeklyStructure,
+      settings: params.settings,
+    }),
+    adherenceDiagnostics,
+    analysisAvailability,
     muscleBudgetSnapshot: buildMuscleBudgetSnapshot({
       weeklyStructure,
       settings: params.settings,
+    }),
+    longTermMuscleTrends: buildLongTermMuscleTrends({
+      weeklyStructure,
     }),
     recentCompletedWorkouts: params.options.includeCompletedWorkouts
       ? buildCompletedWorkouts({
           logs: filteredLogs,
           settings: params.settings,
-          limit: params.options.exportType === "full" ? 10 : 7,
+          plannedDurationByWorkoutName,
+          limit: params.options.exportType === "full" ? 10 : 5,
         })
       : [],
-    recentGeneratedWorkouts: generatedWorkouts.map((snapshot) =>
-      buildGeneratedWorkoutSummary(snapshot, params.options.anonymize),
+    recentGeneratedWorkouts: generatedWorkouts.map((candidate) =>
+      buildGeneratedWorkoutSummary(
+        candidate,
+        params.options.anonymize,
+        normalizeSportFocus(params.settings?.sport_focus),
+      ),
     ),
+    latestWorkoutEvaluationContext,
+    planRiskDiagnostics,
     progressionDiagnostics,
     plannerDiagnostics: params.options.includePlannerDiagnostics
       ? buildPlannerDiagnostics({
           weeklyStructure,
           settings: params.settings,
-          latestGeneratedWorkout,
+          latestGeneratedWorkout: latestGeneratedWorkout?.snapshot ?? null,
         })
       : null,
-    exerciseSelectionDiagnostics: buildExerciseSelectionDiagnostics({
-      workouts: generatedWorkouts,
-      weeklyStructure,
-      settings: params.settings,
-      limit: params.options.exportType === "full" ? 20 : 10,
-    }),
-    evaluationQuestions,
+    exerciseSelectionDiagnostics,
+    aiEvaluationInstructions: {
+      description:
+        "Analysera både senaste passet och den längre planeringen. Skilj på fysiologiska problem, planeringsproblem och datakvalitetsproblem.",
+      analysisPriorities: [
+        "Skilj mellan brister i senaste passet och brister i den långsiktiga planen.",
+        "Var särskilt uppmärksam på korta eller tomma pass i historiken.",
+        "Bedöm om prioriterade muskler får direkt volym, inte bara indirekt träff.",
+        "Bedöm om planens kommande steg verkar kunna täcka kvarvarande budget.",
+      ],
+      responseTemplate: [
+        "1. Kort slutsats",
+        "2. Senaste passet",
+        "3. Långsiktig plan",
+        "4. Prioriterade muskler",
+        "5. Progression",
+        "6. Historik och datakvalitet",
+        "7. Bias/systematiska fel",
+        "8. Rekommenderade modelländringar",
+      ],
+    },
+    evaluationQuestions: [...debugPurpose.primaryQuestions],
     warnings,
   };
 }

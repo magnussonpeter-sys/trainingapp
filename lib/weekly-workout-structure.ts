@@ -5,6 +5,7 @@ import {
   type MuscleBudgetEntry,
   type MuscleBudgetGroup,
 } from "@/lib/planning/muscle-budget";
+import type { SportFocus } from "@/types/training-profile";
 import {
   buildGoalTrajectory,
   type GoalTrajectory,
@@ -30,6 +31,7 @@ type WeeklyPlanningGoal =
 type WeeklyPlanningSettings = {
   experience_level?: string | null;
   training_goal?: WeeklyPlanningGoal | null;
+  sport_focus?: SportFocus | null;
   primary_priority_muscle?: MuscleBudgetGroup | null;
   secondary_priority_muscle?: MuscleBudgetGroup | null;
   tertiary_priority_muscle?: MuscleBudgetGroup | null;
@@ -688,6 +690,7 @@ export function buildWeeklyWorkoutStructure(params: {
     logs: params.logs,
     now,
     priorityMuscles: configuredPriorityMuscles,
+    sportFocus: params.settings?.sport_focus ?? null,
   }).entries;
   const currentWeekFocuses = recentCompletedLogs.map((log) => detectWorkoutFocus(log));
   const passCount = getGoalPassCount(goal);
@@ -758,6 +761,7 @@ export function buildWeeklyWorkoutStructure(params: {
     passCount,
     patternPreferredFocus,
     confidenceScore,
+    sportFocus: params.settings?.sport_focus ?? null,
   });
   const coachSuggestedFocus = coachDecision.suggestedFocus;
   const coachSuggestedFocusScore = coachSuggestedFocus

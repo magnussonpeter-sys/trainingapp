@@ -1,16 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { saveCachedHomeSettings } from "@/lib/home-settings-cache";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
+import type {
+  SportFocus,
+  TrainingGoal,
+} from "@/types/training-profile";
 
 type Sex = "male" | "female" | "other" | "na";
 type Experience = "beginner" | "novice" | "intermediate" | "advanced";
-type Goal = "strength" | "hypertrophy" | "health" | "body_composition";
 type SupersetPreference = "allowed" | "avoid_all_dumbbell" | "avoid_all";
 type PriorityMuscle =
   | "chest"
@@ -40,7 +44,8 @@ type UserSettingsResponse = {
     weight_kg?: number | null;
     height_cm?: number | null;
     experience_level?: Experience | null;
-    training_goal?: Goal | null;
+    training_goal?: TrainingGoal | null;
+    sport_focus?: SportFocus | null;
     avoid_supersets?: boolean | null;
     superset_preference?: SupersetPreference | null;
     primary_priority_muscle?: PriorityMuscle | null;
@@ -66,6 +71,71 @@ const PRIORITY_MUSCLE_OPTIONS: Array<{
   { value: "core", label: "Bål", shortLabel: "Bål" },
 ];
 
+const SPORT_FOCUS_OPTIONS: Array<{
+  value: SportFocus;
+  title: string;
+  description: string;
+}> = [
+  {
+    value: "none",
+    title: "Ingen särskild inriktning",
+    description: "Ingen extra sportjustering. Huvudmålet styr som vanligt.",
+  },
+  {
+    value: "running",
+    title: "Löpning",
+    description:
+      "Fokus på höftstabilitet, vader, säte, hamstrings och bål utan onödig tung benvolym.",
+  },
+  {
+    value: "cross_country_skiing",
+    title: "Längdskidor",
+    description:
+      "Fokus på båluthållighet, dragstyrka, rygg/lats och höftdriv.",
+  },
+  {
+    value: "alpine_skiing",
+    title: "Utförsåkning",
+    description:
+      "Fokus på benstyrka, framsida lår, säte, enbenskontroll och bålstabilitet.",
+  },
+  {
+    value: "cycling",
+    title: "Cykling",
+    description:
+      "Fokus på säte, framsida lår, hamstrings och positionstålig bål.",
+  },
+  {
+    value: "ball_sports",
+    title: "Bollsport / lagidrott",
+    description:
+      "Fokus på acceleration, riktningsförändring, hamstrings, adduktorer och enbensstyrka.",
+  },
+  {
+    value: "swimming",
+    title: "Simning",
+    description:
+      "Fokus på dragstyrka, skulderkontroll, rotatorcuff och bål.",
+  },
+  {
+    value: "golf",
+    title: "Golf",
+    description:
+      "Fokus på rotation, antirotation, höftkontroll och ryggstyrka.",
+  },
+  {
+    value: "surf_sports",
+    title: "Surfsporter",
+    description:
+      "Fokus på grepp, dragstyrka, skulderstabilitet, bål och balans.",
+  },
+  {
+    value: "general_athletic",
+    title: "Allmän idrott",
+    description: "Balanserad helkroppsstyrka och basrörelser.",
+  },
+];
+
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -89,6 +159,7 @@ export default function SettingsPage() {
   const [height, setHeight] = useState("");
   const [experience, setExperience] = useState("");
   const [goal, setGoal] = useState("");
+  const [sportFocus, setSportFocus] = useState<SportFocus>("none");
   const [supersetPreference, setSupersetPreference] =
     useState<SupersetPreference>("allowed");
   const [priorityMuscles, setPriorityMuscles] = useState<PriorityMuscle[]>([]);
@@ -177,6 +248,7 @@ export default function SettingsPage() {
           setHeight(s.height_cm?.toString() ?? "");
           setExperience(s.experience_level ?? "");
           setGoal(s.training_goal ?? "");
+          setSportFocus(s.sport_focus ?? "none");
           setSupersetPreference(
             s.superset_preference === "allowed" ||
               s.superset_preference === "avoid_all" ||
@@ -292,6 +364,7 @@ export default function SettingsPage() {
           height_cm: height ? Number(height) : null,
           experience_level: experience || null,
           training_goal: goal || null,
+          sport_focus: sportFocus,
           avoid_supersets: supersetPreference === "avoid_all",
           superset_preference: supersetPreference,
           primary_priority_muscle: primaryPriorityMuscle,
@@ -307,7 +380,8 @@ export default function SettingsPage() {
       }
 
       saveCachedHomeSettings(userId, {
-        training_goal: (goal || null) as Goal | null,
+        training_goal: (goal || null) as TrainingGoal | null,
+        sport_focus: sportFocus,
         avoid_supersets: supersetPreference === "avoid_all",
         superset_preference: supersetPreference,
         primary_priority_muscle: primaryPriorityMuscle,
@@ -451,25 +525,25 @@ export default function SettingsPage() {
             <div className="grid gap-3">
               {[
                 {
-                  value: "strength",
+                  value: "strength" as TrainingGoal,
                   title: "Bli starkare",
                   description:
                     "Fokuserar på styrkeutveckling i större lyft med mer vila och tydligare toppset.",
                 },
                 {
-                  value: "hypertrophy",
+                  value: "hypertrophy" as TrainingGoal,
                   title: "Bygga muskler",
                   description:
                     "Mer träningsvolym och fler effektiva arbetsset för att stimulera muskelmassa.",
                 },
                 {
-                  value: "health",
+                  value: "health" as TrainingGoal,
                   title: "Hälsa och funktion",
                   description:
                     "Helkroppsträning för vardagsstyrka, hållbarhet och låg tröskel att genomföra.",
                 },
                 {
-                  value: "body_composition",
+                  value: "body_composition" as TrainingGoal,
                   title: "Kroppssammansättning",
                   description:
                     "Kombinerar styrka och täthet för att behålla muskler och förbättra kroppssammansättningen.",
@@ -482,6 +556,44 @@ export default function SettingsPage() {
                     key={option.value}
                     type="button"
                     onClick={() => setGoal(option.value)}
+                    className={cn(
+                      "rounded-[24px] border p-4 text-left transition",
+                      selected
+                        ? "border-lime-500 bg-lime-100 shadow-sm"
+                        : "border-slate-200 bg-white hover:bg-slate-50",
+                    )}
+                  >
+                    <div className="font-semibold text-slate-950">{option.title}</div>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {option.description}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">
+                Träningsinriktning
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Valfritt. Påverkar övningsval, belastning och hur AI prioriterar träningen.
+              </p>
+            </div>
+
+            <div className="grid gap-3">
+              {SPORT_FOCUS_OPTIONS.map((option) => {
+                const selected = sportFocus === option.value;
+
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setSportFocus(option.value)}
                     className={cn(
                       "rounded-[24px] border p-4 text-left transition",
                       selected
@@ -704,6 +816,15 @@ export default function SettingsPage() {
             </div>
           </div>
         </section>
+
+        <div className="px-1">
+          <Link
+            href="/analysis/debug"
+            className="inline-flex text-sm text-slate-500 underline-offset-4 transition hover:text-slate-700 hover:underline"
+          >
+            Öppna debug-sidan
+          </Link>
+        </div>
 
         <div className="flex items-center gap-3 pb-4">
           <button

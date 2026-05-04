@@ -3,6 +3,7 @@ import type {
   MuscleBudgetEntry,
   MuscleBudgetGroup,
 } from "@/lib/planning/muscle-budget";
+import type { SportFocus } from "@/types/training-profile";
 import type { WorkoutFocus } from "@/types/workout";
 
 export type CoachStatus =
@@ -28,6 +29,21 @@ const FOCUS_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
 };
 
 const PRIORITY_MULTIPLIERS = [1.75, 1.5, 1.35] as const;
+const SPORT_FOCUS_BONUS_BY_FOCUS: Record<
+  SportFocus,
+  Partial<Record<WorkoutFocus, number>>
+> = {
+  none: {},
+  running: { core: 0.35, upper_body: 0.1 },
+  cross_country_skiing: { upper_body: 0.45, full_body: 0.25 },
+  alpine_skiing: { lower_body: 0.35, core: 0.15 },
+  cycling: { lower_body: 0.25, core: 0.15 },
+  ball_sports: { lower_body: 0.35, core: 0.2 },
+  swimming: { upper_body: 0.45, core: 0.2 },
+  golf: { core: 0.45, full_body: 0.2 },
+  surf_sports: { upper_body: 0.4, core: 0.3 },
+  general_athletic: { full_body: 0.35, upper_body: 0.1, lower_body: 0.1 },
+};
 
 function formatWorkoutFocusLabel(focus: WorkoutFocus) {
   if (focus === "upper_body") {
@@ -115,6 +131,7 @@ function getFocusUrgencyScore(params: {
   entries: MuscleBudgetEntry[];
   configuredPriorityMuscles: MuscleBudgetGroup[];
   patternPreferredFocus: WorkoutFocus;
+  sportFocus?: SportFocus | null;
 }) {
   const focusEntries = params.entries.filter((entry) =>
     FOCUS_GROUPS[params.focus].includes(entry.group),
@@ -152,6 +169,9 @@ function getFocusUrgencyScore(params: {
     score += 0.5;
   }
 
+  // Sportfokus ska bara fungera som en liten tie-breaker.
+  score += SPORT_FOCUS_BONUS_BY_FOCUS[params.sportFocus ?? "none"][params.focus] ?? 0;
+
   return {
     focus: params.focus,
     score,
@@ -167,6 +187,7 @@ export function buildCoachDecision(params: {
   passCount: number;
   patternPreferredFocus: WorkoutFocus;
   confidenceScore: ConfidenceScore;
+  sportFocus?: SportFocus | null;
 }): CoachDecision {
   const priorityGroups = buildPriorityGroups(
     params.entries,
@@ -200,6 +221,7 @@ export function buildCoachDecision(params: {
         entries: params.entries,
         configuredPriorityMuscles: params.configuredPriorityMuscles,
         patternPreferredFocus: params.patternPreferredFocus,
+        sportFocus: params.sportFocus,
       }),
     )
     .sort((left, right) => right.score - left.score);

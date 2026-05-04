@@ -8,6 +8,7 @@ import { normalizeEquipmentIdList } from "@/lib/equipment";
 import {
   getAvailableExercises,
   getAvailableProgressionTracks,
+  getSportRelevanceHint,
 } from "@/lib/exercise-catalog";
 import { buildWorkoutPerformanceSummary } from "@/lib/workout-performance-analysis";
 import { getWorkoutLogsByUser } from "@/lib/workout-log-repository";
@@ -22,6 +23,10 @@ import type {
   MuscleBudgetEntry,
 } from "@/lib/planning/muscle-budget";
 import type { TrainingGap } from "@/lib/planning/training-gap";
+import {
+  normalizeSportFocus,
+  type SportFocus,
+} from "@/types/training-profile";
 import type { CompletedExercise, CompletedSet } from "@/lib/workout-log-storage";
 import type { WorkoutFocus } from "@/types/workout";
 
@@ -72,6 +77,7 @@ type UserSettingsSummary = {
   height_cm?: number | null;
   experience_level?: string | null;
   training_goal?: string | null;
+  sport_focus?: SportFocus | null;
   avoid_supersets?: boolean | null;
   superset_preference?: "allowed" | "avoid_all" | "avoid_all_dumbbell" | null;
   primary_priority_muscle?: string | null;
@@ -228,6 +234,7 @@ async function getUserSettingsSummary(userId: string) {
         height_cm,
         experience_level,
         training_goal,
+        sport_focus,
         avoid_supersets,
         superset_preference,
         primary_priority_muscle,
@@ -241,6 +248,36 @@ async function getUserSettingsSummary(userId: string) {
   );
 
   return result.rows[0] ?? null;
+}
+
+function buildSportFocusPromptInstruction(
+  sportFocus: SportFocus,
+  trainingGoal: string,
+) {
+  return `
+Användarens träningsinriktning är: ${sportFocus}.
+Huvudmålet är: ${trainingGoal}.
+
+Sportinriktningen är sekundär och får inte ta över passet.
+
+Justera träningen enligt:
+- running: höft, vader, säte, enbensstyrka, undvik onödig tung ben-DOMS
+- cross_country_skiing: bål, dragstyrka, lats, uthållighet, höftdriv
+- alpine_skiing: benstyrka, excentrisk kontroll, enbensstyrka, bål
+- cycling: säte, lår, bål, undvik överdriven benvolym
+- ball_sports: acceleration, riktningsförändring, hamstrings, adduktorer
+- swimming: dragstyrka, skulderkontroll, rotatorcuff, undvik tung press vid trötta axlar
+- golf: rotation, antirotation, höftkontroll, bål
+- surf_sports: grepp, dragstyrka, bål, balans, undvik för mycket press
+- general_athletic: balanserad helkropp
+- none: ingen justering
+
+Respektera alltid:
+- utrustning
+- passlängd
+- historik
+- överbelastning
+`.trim();
 }
 
 function buildRecentWorkoutSummary(logs: unknown[]) {
@@ -456,6 +493,7 @@ function buildRecentExercisePreferences(logs: unknown[]) {
 
 function buildAvailableExercisePrompt(
   availableExercises: ReturnType<typeof getAvailableExercises>,
+  sportFocus?: SportFocus | null,
 ) {
   return availableExercises
     .map((exercise) => {
@@ -463,9 +501,10 @@ function buildAvailableExercisePrompt(
         typeof exercise.defaultDuration === "number" && !exercise.defaultReps
           ? `${exercise.defaultSets} x ${exercise.defaultDuration}s`
           : `${exercise.defaultSets} x ${exercise.defaultReps ?? 10}`;
+      const sportRelevanceHint = getSportRelevanceHint(exercise, sportFocus);
 
       // Muskelmetadata skickas med så AI kan matcha fokusmuskler och veckobudget mot katalogen.
-      return [
+      const promptParts = [
         `- id: ${exercise.id}`,
         `namn: ${exercise.name}`,
         `mönster: ${exercise.movementPattern}`,
@@ -475,7 +514,13 @@ function buildAvailableExercisePrompt(
         `variantgrupp: ${exercise.variantGroup}`,
         `standard: ${dose}`,
         `vila: ${exercise.defaultRest}s`,
-      ].join(" | ");
+      ];
+
+      if (sportFocus && sportFocus !== "none" && sportRelevanceHint > 0) {
+        promptParts.push(`sportRelevanceHint: ${sportRelevanceHint}`);
+      }
+
+      return promptParts.join(" | ");
     })
     .join("\n");
 }
@@ -587,6 +632,11 @@ function buildGenerationPrompt(params: {
     params.focusMuscles && params.focusMuscles.length > 0
       ? params.focusMuscles.join(", ")
       : "inga uttryckligt valda fokusmuskler";
+  const sportFocus = normalizeSportFocus(params.settings?.sport_focus);
+  const sportFocusInstruction = buildSportFocusPromptInstruction(
+    sportFocus,
+    params.goal,
+  );
 
   return `
 Skapa ett evidensbaserat träningspass som strikt JSON.
@@ -601,6 +651,7 @@ Kontext:
 - tillgänglig utrustning: ${equipmentText}
 - registrerade vikter/utrustningsdetaljer i gymmet: ${gymEquipmentDetailText}
 - användarinställningar: ${settingsText}
+- träningsinriktning (sekundär till huvudmålet): ${sportFocus}
 - senaste passhistorik: ${recentWorkoutText}
 - faktisk prestation i senaste pass jämfört med plan: ${recentPerformanceText}
 - senaste övnings-id:n: ${recentExerciseIdsText}
@@ -618,6 +669,15 @@ Kontext:
       ? params.lessOftenExerciseIds.join(", ")
       : "inga uttryckliga negativa preferenser"
   }
+
+Sportinriktning:
+${sportFocusInstruction}
+
+${
+  sportFocus !== "none"
+    ? "Vissa övningar har sportRelevanceHint. Använd detta som en svag positiv signal när flera övningar annars är lika bra. Det är inte ett krav. Välj fortfarande efter huvudmål, utrustning, muskelbudget, historik, överbelastning, risknivå och passlängd."
+    : ""
+}
 
 Tillgängliga övningar från katalogen:
 ${params.availableExercisePrompt}
@@ -891,7 +951,10 @@ export async function POST(req: Request) {
         ? "avoid_all"
         : "allowed");
     const avoidSupersets = supersetPreference === "avoid_all";
-    const availableExercisePrompt = buildAvailableExercisePrompt(availableExercises);
+    const availableExercisePrompt = buildAvailableExercisePrompt(
+      availableExercises,
+      settings?.sport_focus ?? null,
+    );
     const prompt = buildGenerationPrompt({
       availableExercisePrompt,
       durationMinutes,

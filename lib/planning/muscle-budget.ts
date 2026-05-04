@@ -4,6 +4,7 @@ import type {
   CompletedSet,
   WorkoutLog,
 } from "@/lib/workout-log-storage";
+import type { SportFocus } from "@/types/training-profile";
 import type { WorkoutFocus } from "@/types/workout";
 
 type PlanningGoal =
@@ -27,6 +28,8 @@ export type MuscleBudgetGroup =
   | "core";
 
 type PriorityRank = 1 | 2 | 3;
+
+type SportFocusTargetAdjustments = Partial<Record<MuscleBudgetGroup, number>>;
 
 export type MuscleBudgetEntry = {
   group: MuscleBudgetGroup;
@@ -73,6 +76,70 @@ const FOCUS_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
   upper_body: ["chest", "back", "shoulders", "biceps", "triceps"],
   lower_body: ["quads", "hamstrings", "glutes", "calves", "core"],
   core: ["core", "glutes"],
+};
+
+const SPORT_FOCUS_TARGET_ADJUSTMENTS: Record<SportFocus, SportFocusTargetAdjustments> = {
+  none: {},
+  running: {
+    glutes: 1,
+    hamstrings: 1,
+    calves: 1,
+    core: 1,
+    quads: -1,
+  },
+  cross_country_skiing: {
+    back: 1.5,
+    core: 1,
+    hamstrings: 0.5,
+    glutes: 0.5,
+  },
+  alpine_skiing: {
+    quads: 1.5,
+    glutes: 1,
+    hamstrings: 0.5,
+    calves: 0.5,
+    core: 1,
+  },
+  cycling: {
+    glutes: 1,
+    quads: 0.5,
+    hamstrings: 0.5,
+    core: 1,
+  },
+  ball_sports: {
+    hamstrings: 1,
+    glutes: 0.5,
+    calves: 0.5,
+    core: 0.5,
+    quads: 0.5,
+  },
+  swimming: {
+    back: 1.5,
+    shoulders: 1,
+    core: 1,
+    chest: -0.5,
+    triceps: -0.5,
+  },
+  golf: {
+    core: 1.5,
+    glutes: 0.5,
+    back: 0.5,
+  },
+  surf_sports: {
+    back: 1,
+    shoulders: 0.5,
+    biceps: 0.5,
+    core: 1,
+    chest: -0.5,
+    triceps: -0.5,
+  },
+  general_athletic: {
+    back: 0.5,
+    quads: 0.5,
+    glutes: 0.5,
+    core: 0.5,
+    chest: 0.5,
+  },
 };
 
 const RAW_MUSCLE_TO_BUDGET_GROUP: Record<string, MuscleBudgetGroup | null> = {
@@ -218,6 +285,14 @@ function getGoalPriorities(
     calves: "low",
     core: "medium",
   };
+}
+
+function getSportFocusTargetAdjustment(
+  sportFocus: SportFocus | undefined | null,
+  group: MuscleBudgetGroup,
+) {
+  const adjustments = SPORT_FOCUS_TARGET_ADJUSTMENTS[sportFocus ?? "none"];
+  return adjustments[group] ?? 0;
 }
 
 function createEmptyTotals() {
@@ -582,6 +657,7 @@ export function buildMuscleBudget(params: {
   logs: WorkoutLog[];
   now?: Date;
   priorityMuscles?: MuscleBudgetGroup[];
+  sportFocus?: SportFocus | null;
 }) {
   const now = params.now ?? new Date();
   const completedLast7Days = filterLogsWithinDays(params.logs, now, 7);
@@ -623,10 +699,19 @@ export function buildMuscleBudget(params: {
         : priority === "medium"
           ? baseTargets.medium
           : baseTargets.low;
+    // Sportfokus får bara justera lite ovanpå huvudmålets grunddos.
+    const sportFocusAdjustment = getSportFocusTargetAdjustment(
+      params.sportFocus,
+      group,
+    );
     const priorityTargetAdjustment =
       priorityRank === 1 ? 2 : priorityRank === 2 ? 1 : priorityRank === 3 ? 0.5 : 0;
     const targetSets = clamp(
-      baseTarget + experienceAdjustment + confidenceAdjustment + priorityTargetAdjustment,
+      baseTarget +
+        experienceAdjustment +
+        confidenceAdjustment +
+        priorityTargetAdjustment +
+        sportFocusAdjustment,
       2,
       18,
     );

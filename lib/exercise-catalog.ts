@@ -3,6 +3,7 @@ import {
   normalizeEquipmentIdList,
   type EquipmentId,
 } from "@/lib/equipment";
+import type { SportFocus } from "@/types/training-profile";
 import type { Exercise } from "@/types/workout";
 
 export type { EquipmentId } from "@/lib/equipment";
@@ -33,6 +34,9 @@ export type ExerciseCatalogItem = {
   primaryMuscles: string[];
   secondaryMuscles?: string[];
   variantGroup: string;
+  // Sportrelevans är bara en svag signal till AI och ev. framtida rankning.
+  // Den får aldrig fungera som krav eller filter.
+  sportsRelevance?: Partial<Record<Exclude<SportFocus, "none">, number>>;
   riskLevel: "low" | "medium" | "high";
   primaryGoalTags?: string[];
 };
@@ -61,6 +65,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["chest", "triceps", "front_delts"],
     secondaryMuscles: ["core"],
     variantGroup: "push_up",
+    sportsRelevance: { general_athletic: 0.75 },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
   },
@@ -143,6 +148,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["core"],
     variantGroup: "squat",
+    sportsRelevance: {
+      alpine_skiing: 0.75,
+      cycling: 0.75,
+      general_athletic: 0.75,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "uthållighet"],
   },
@@ -160,6 +170,12 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["hamstrings", "core"],
     variantGroup: "lunge",
+    sportsRelevance: {
+      running: 1.25,
+      alpine_skiing: 1.25,
+      ball_sports: 1.25,
+      general_athletic: 1,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "styrka"],
   },
@@ -177,6 +193,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["hamstrings", "core"],
     variantGroup: "lunge",
+    sportsRelevance: {
+      running: 1,
+      alpine_skiing: 1,
+      ball_sports: 1,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "hypertrofi"],
   },
@@ -194,6 +215,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["core", "adductors"],
     variantGroup: "single_leg_squat",
+    sportsRelevance: {
+      alpine_skiing: 1.25,
+      ball_sports: 1.25,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "allmän hälsa"],
   },
@@ -210,6 +235,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["glutes", "hamstrings"],
     secondaryMuscles: ["core"],
     variantGroup: "hip_bridge",
+    sportsRelevance: {
+      cycling: 1,
+      golf: 0.75,
+      general_athletic: 0.75,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "hypertrofi"],
   },
@@ -227,6 +257,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["glutes", "hamstrings"],
     secondaryMuscles: ["core"],
     variantGroup: "hip_bridge",
+    sportsRelevance: {
+      running: 1.25,
+      cycling: 1,
+      golf: 1,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "allmän hälsa"],
   },
@@ -244,6 +279,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["core"],
     variantGroup: "step_up",
+    sportsRelevance: {
+      running: 1.25,
+      alpine_skiing: 1.25,
+      ball_sports: 1,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "hypertrofi"],
   },
@@ -260,6 +300,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["core"],
     secondaryMuscles: ["glutes", "shoulders"],
     variantGroup: "plank",
+    sportsRelevance: {
+      cycling: 0.75,
+      swimming: 0.75,
+      general_athletic: 0.75,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "uthållighet"],
   },
@@ -277,6 +322,14 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["obliques", "core"],
     secondaryMuscles: ["glutes"],
     variantGroup: "side_plank",
+    sportsRelevance: {
+      running: 1,
+      alpine_skiing: 1,
+      ball_sports: 1,
+      golf: 1.25,
+      surf_sports: 1.25,
+      general_athletic: 0.75,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "uthållighet"],
   },
@@ -295,6 +348,13 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["core"],
     secondaryMuscles: ["hip_flexors"],
     variantGroup: "dead_bug",
+    sportsRelevance: {
+      running: 0.75,
+      cross_country_skiing: 1,
+      cycling: 0.75,
+      swimming: 0.75,
+      general_athletic: 0.75,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "uthållighet"],
   },
@@ -312,6 +372,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["core"],
     secondaryMuscles: ["glutes", "lower_back"],
     variantGroup: "bird_dog",
+    sportsRelevance: { golf: 1 },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "rehab"],
   },
@@ -344,6 +405,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["obliques", "core"],
     secondaryMuscles: ["hip_flexors"],
     variantGroup: "rotation",
+    sportsRelevance: { golf: 1 },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "uthållighet"],
   },
@@ -360,6 +422,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["core"],
     secondaryMuscles: ["hip_flexors"],
     variantGroup: "anti_extension",
+    sportsRelevance: {
+      cross_country_skiing: 1,
+      swimming: 1,
+      surf_sports: 1,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "allmän hälsa"],
   },
@@ -376,6 +443,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["core", "obliques"],
     secondaryMuscles: ["shoulders", "glutes"],
     variantGroup: "anti_rotation",
+    sportsRelevance: {
+      ball_sports: 1,
+      golf: 1,
+      surf_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "styrka"],
   },
@@ -421,6 +493,12 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["lats", "upper_back", "biceps"],
     secondaryMuscles: ["rear_delts", "core", "forearms"],
     variantGroup: "row",
+    sportsRelevance: {
+      cross_country_skiing: 1.25,
+      swimming: 1.25,
+      surf_sports: 1.25,
+      general_athletic: 0.75,
+    },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
   },
@@ -546,6 +624,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["shoulders", "triceps", "core"],
     secondaryMuscles: ["chest", "forearms"],
     variantGroup: "ring_support",
+    sportsRelevance: { surf_sports: 1 },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "allmän hälsa"],
   },
@@ -571,6 +650,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["lats", "upper_back", "biceps"],
     secondaryMuscles: ["forearms", "core"],
     variantGroup: "pull_up",
+    sportsRelevance: {
+      cross_country_skiing: 1.25,
+      swimming: 1.25,
+      surf_sports: 1.25,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka"],
   },
@@ -596,6 +680,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["biceps", "lats"],
     secondaryMuscles: ["upper_back", "forearms", "core"],
     variantGroup: "pull_up",
+    sportsRelevance: {
+      cross_country_skiing: 1,
+      swimming: 1,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka"],
   },
@@ -621,6 +709,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["core"],
     secondaryMuscles: ["shoulders", "lats", "triceps"],
     variantGroup: "anti_extension",
+    sportsRelevance: {
+      cross_country_skiing: 1.25,
+      swimming: 1,
+      surf_sports: 1.25,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "allmän hälsa"],
   },
@@ -696,6 +789,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["rear_delts", "upper_back"],
     secondaryMuscles: ["traps", "biceps"],
     variantGroup: "rear_delt",
+    sportsRelevance: {
+      swimming: 1.5,
+      surf_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "hypertrofi"],
   },
@@ -716,6 +813,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes", "core"],
     secondaryMuscles: ["adductors"],
     variantGroup: "squat",
+    sportsRelevance: {
+      alpine_skiing: 1.25,
+      cycling: 1,
+      general_athletic: 1,
+    },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
   },
@@ -781,6 +883,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["lats", "upper_back", "rear_delts"],
     secondaryMuscles: ["biceps"],
     variantGroup: "row",
+    sportsRelevance: {
+      cross_country_skiing: 1.25,
+      swimming: 1.25,
+      surf_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
   },
@@ -797,6 +904,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["upper_back", "lats", "rear_delts"],
     secondaryMuscles: ["biceps"],
     variantGroup: "row",
+    sportsRelevance: {
+      cross_country_skiing: 1.25,
+      swimming: 1.25,
+      surf_sports: 1,
+    },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -814,6 +926,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["hamstrings", "core"],
     variantGroup: "lunge",
+    sportsRelevance: {
+      running: 1.25,
+      alpine_skiing: 1.5,
+      ball_sports: 1.5,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -831,6 +948,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["hamstrings", "core"],
     variantGroup: "lunge",
+    sportsRelevance: {
+      running: 1.25,
+      alpine_skiing: 1.25,
+      ball_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "hypertrofi", "allmän hälsa"],
   },
@@ -848,6 +970,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["hamstrings", "core"],
     variantGroup: "lunge",
+    sportsRelevance: {
+      alpine_skiing: 1.25,
+      ball_sports: 1.25,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -864,6 +990,14 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["hamstrings", "glutes"],
     secondaryMuscles: ["lower_back"],
     variantGroup: "romanian_deadlift",
+    sportsRelevance: {
+      running: 1.25,
+      cross_country_skiing: 1,
+      cycling: 1,
+      ball_sports: 1.25,
+      golf: 1,
+      general_athletic: 1,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -880,6 +1014,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["glutes"],
     secondaryMuscles: ["hamstrings", "core"],
     variantGroup: "hip_thrust",
+    sportsRelevance: {
+      running: 1,
+      cycling: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["hypertrofi", "styrka", "allmän hälsa"],
   },
@@ -944,6 +1082,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["rear_delts", "upper_back"],
     secondaryMuscles: ["traps"],
     variantGroup: "rear_delt",
+    sportsRelevance: { swimming: 1.25 },
     riskLevel: "low",
     primaryGoalTags: ["hypertrofi", "allmän hälsa"],
   },
@@ -977,6 +1116,12 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["core", "hamstrings"],
     variantGroup: "step_up",
+    sportsRelevance: {
+      running: 1.25,
+      alpine_skiing: 1.25,
+      cycling: 1,
+      ball_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -994,6 +1139,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["lats", "upper_back", "core"],
     secondaryMuscles: ["rear_delts", "glutes"],
     variantGroup: "row",
+    sportsRelevance: {
+      swimming: 1.25,
+      golf: 1,
+      surf_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "styrka"],
   },
@@ -1026,6 +1176,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["biceps", "forearms"],
     secondaryMuscles: ["brachialis"],
     variantGroup: "biceps_curl",
+    sportsRelevance: { surf_sports: 0.75 },
     riskLevel: "low",
     primaryGoalTags: ["hypertrofi"],
   },
@@ -1074,6 +1225,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["calves"],
     secondaryMuscles: ["feet"],
     variantGroup: "calf_raise",
+    sportsRelevance: {
+      running: 1.5,
+      alpine_skiing: 1,
+      ball_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["hypertrofi", "allmän hälsa"],
   },
@@ -1090,6 +1246,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["forearms", "traps", "core"],
     secondaryMuscles: ["glutes"],
     variantGroup: "carry",
+    sportsRelevance: {
+      cross_country_skiing: 1,
+      surf_sports: 1.5,
+      general_athletic: 1,
+    },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "allmän hälsa"],
   },
@@ -1107,6 +1268,12 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["core", "obliques"],
     secondaryMuscles: ["forearms", "traps", "glutes"],
     variantGroup: "carry",
+    sportsRelevance: {
+      ball_sports: 1,
+      golf: 1.25,
+      surf_sports: 1.5,
+      general_athletic: 1,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "styrka"],
   },
@@ -1159,6 +1326,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes", "core"],
     secondaryMuscles: ["adductors"],
     variantGroup: "squat",
+    sportsRelevance: { alpine_skiing: 1 },
     riskLevel: "high",
     primaryGoalTags: ["styrka"],
   },
@@ -1175,6 +1343,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes", "core"],
     secondaryMuscles: ["adductors"],
     variantGroup: "squat",
+    sportsRelevance: { alpine_skiing: 1.25 },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "allmän hälsa"],
   },
@@ -1191,6 +1360,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "core"],
     secondaryMuscles: ["glutes", "upper_back"],
     variantGroup: "squat",
+    sportsRelevance: { alpine_skiing: 1 },
     riskLevel: "high",
     primaryGoalTags: ["styrka"],
   },
@@ -1207,6 +1377,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["lats", "upper_back", "rear_delts"],
     secondaryMuscles: ["biceps", "forearms"],
     variantGroup: "row",
+    sportsRelevance: { cross_country_skiing: 1.25 },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -1223,6 +1394,12 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["hamstrings", "glutes"],
     secondaryMuscles: ["lower_back"],
     variantGroup: "romanian_deadlift",
+    sportsRelevance: {
+      running: 1.25,
+      cycling: 1,
+      ball_sports: 1.25,
+      golf: 1,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -1271,6 +1448,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["glutes"],
     secondaryMuscles: ["hamstrings", "core"],
     variantGroup: "hip_thrust",
+    sportsRelevance: {
+      running: 1,
+      cycling: 1.25,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["hypertrofi", "styrka"],
   },
@@ -1288,6 +1469,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["quads", "glutes"],
     secondaryMuscles: ["core", "hamstrings"],
     variantGroup: "lunge",
+    sportsRelevance: {
+      alpine_skiing: 1.25,
+      ball_sports: 1.25,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -1308,6 +1493,12 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["lats", "biceps", "upper_back"],
     secondaryMuscles: ["forearms", "core"],
     variantGroup: "pull_up",
+    sportsRelevance: {
+      cross_country_skiing: 1.25,
+      swimming: 1.25,
+      surf_sports: 1.25,
+      general_athletic: 0.75,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka"],
   },
@@ -1340,6 +1531,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["upper_back", "lats"],
     secondaryMuscles: ["core", "forearms"],
     variantGroup: "pull_up",
+    sportsRelevance: {
+      swimming: 1.25,
+      surf_sports: 1,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "rehab", "styrka"],
   },
@@ -1356,6 +1551,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["biceps", "lats"],
     secondaryMuscles: ["upper_back", "forearms"],
     variantGroup: "pull_up",
+    sportsRelevance: {
+      cross_country_skiing: 1,
+      swimming: 1,
+    },
     riskLevel: "medium",
     primaryGoalTags: ["styrka"],
   },
@@ -1392,6 +1591,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["lats", "upper_back"],
     secondaryMuscles: ["biceps"],
     variantGroup: "lat_pulldown",
+    sportsRelevance: {
+      cross_country_skiing: 1.25,
+      swimming: 1.25,
+      surf_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -1408,6 +1612,11 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["lats", "upper_back"],
     secondaryMuscles: ["biceps", "rear_delts"],
     variantGroup: "row",
+    sportsRelevance: {
+      cross_country_skiing: 1.25,
+      swimming: 1.25,
+      surf_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["styrka", "hypertrofi"],
   },
@@ -1456,6 +1665,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["rear_delts", "upper_back"],
     secondaryMuscles: ["traps", "external_rotators"],
     variantGroup: "rear_delt",
+    sportsRelevance: {
+      swimming: 1.5,
+      surf_sports: 1.25,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "hypertrofi"],
   },
@@ -1537,6 +1750,13 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["core", "obliques"],
     secondaryMuscles: ["glutes"],
     variantGroup: "anti_rotation",
+    sportsRelevance: {
+      alpine_skiing: 1,
+      ball_sports: 1.25,
+      golf: 1.5,
+      surf_sports: 1.25,
+      general_athletic: 1,
+    },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "rehab"],
   },
@@ -1554,6 +1774,7 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     primaryMuscles: ["obliques", "core"],
     secondaryMuscles: ["shoulders", "glutes"],
     variantGroup: "rotation",
+    sportsRelevance: { golf: 1.5 },
     riskLevel: "low",
     primaryGoalTags: ["allmän hälsa", "hypertrofi"],
   },
@@ -1678,6 +1899,18 @@ export function getAvailableExercises(
 
 export function getExerciseById(exerciseId: string) {
   return EXERCISE_CATALOG.find((exercise) => exercise.id === exerciseId) ?? null;
+}
+
+export function getSportRelevanceHint(
+  exercise: ExerciseCatalogItem,
+  sportFocus?: SportFocus | null,
+) {
+  if (!sportFocus || sportFocus === "none") {
+    return 0;
+  }
+
+  // 0 betyder bara att övningen saknar särskild sportmarkering.
+  return exercise.sportsRelevance?.[sportFocus] ?? 0;
 }
 
 export function getProgressionTrackForExercise(exerciseId: string) {

@@ -477,14 +477,13 @@ function getWeeklyAdjustmentSummary(
 function HomeHeroCard(props: {
   name: string;
   wisdomText: string;
-  coachMessage: string;
   onLogout: () => void;
   isLoggingOut: boolean;
   pendingCount: number;
 }) {
   return (
     <section className={cn(uiCardClasses.section, "overflow-hidden border-slate-200/80")}>
-      <div className="bg-[radial-gradient(circle_at_top,_rgba(217,249,157,0.75),_rgba(236,253,245,0.98)_42%,_rgba(255,255,255,1)_82%)] px-5 py-6 sm:px-6">
+      <div className="bg-[radial-gradient(circle_at_top,_rgba(217,249,157,0.72),_rgba(236,253,245,0.96)_42%,_rgba(255,255,255,1)_82%)] px-5 py-6 sm:px-6">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
@@ -497,7 +496,7 @@ function HomeHeroCard(props: {
               <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
                 Dagens visdom
               </p>
-              <p className="mt-2 text-base italic leading-7 text-slate-700">
+              <p className="mt-2 text-[15px] italic leading-7 text-slate-700">
                 {props.wisdomText}
               </p>
             </div>
@@ -513,13 +512,6 @@ function HomeHeroCard(props: {
           </button>
         </div>
 
-        <div className="mt-5 rounded-[24px] border border-emerald-200/80 bg-white/85 px-4 py-4 shadow-sm backdrop-blur">
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-700">
-            AI-coach
-          </p>
-          <p className="mt-2 text-sm leading-6 text-slate-800">{props.coachMessage}</p>
-        </div>
-
         {props.pendingCount > 0 ? (
           <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
             {props.pendingCount} pass väntar på synk. Du kan fortsätta träna som vanligt.
@@ -533,100 +525,113 @@ function HomeHeroCard(props: {
 function TodayFocusCard(props: {
   focus: WorkoutFocus;
   muscleGroups: MuscleBudgetGroup[];
-  summaryText: string;
+  coachText: string;
   gymLabel: string;
+  recommendedDurationMinutes: number;
   onAction: () => void;
   isGenerating: boolean;
   hasActiveWorkout: boolean;
   activeWorkoutName?: string | null;
+  hasCompletedTrainingToday: boolean;
+  completedTodayMessage: string;
 }) {
+  const showCompletedTodayState =
+    props.hasCompletedTrainingToday && !props.hasActiveWorkout;
+
   return (
-    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
-      <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-        Dagens fokus
+    <section className={cn(uiCardClasses.base, "p-6 shadow-[0_20px_48px_rgba(15,23,42,0.07)]")}>
+      <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-emerald-700">
+        Dagens pass
       </p>
-      <div className="mt-2 flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
-            {formatWorkoutFocus(props.focus)}
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">{props.summaryText}</p>
+      {showCompletedTodayState ? (
+        <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+          {/* Startsidan ska kunna visa ett lugnt klart-för-idag-läge när inget mer pass väntar. */}
+          <p className="text-base font-medium text-emerald-950">
+            {props.completedTodayMessage}
+          </p>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="mt-2 flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-[clamp(1.9rem,7vw,2.5rem)] font-semibold tracking-tight text-slate-950">
+                {formatWorkoutFocus(props.focus)}
+              </h2>
+              <p className="mt-3 text-base leading-7 text-slate-700">{props.coachText}</p>
+            </div>
+          </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700">
-          Gym: {props.gymLabel}
-        </span>
-        {props.hasActiveWorkout ? (
-          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">
-            Pågående pass
-          </span>
-        ) : null}
-        {props.muscleGroups.length > 0 ? (
-          props.muscleGroups.map((group) => (
-            <span
-              key={group}
-              className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
-            >
-              {formatMuscleGroup(group)}
+          <div className="mt-5 flex flex-wrap gap-2.5">
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900">
+              {props.recommendedDurationMinutes} min
             </span>
-          ))
-        ) : (
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">
-            Balans över hela kroppen
-          </span>
-        )}
-      </div>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700">
+              Gym: {props.gymLabel}
+            </span>
+            {props.hasActiveWorkout ? (
+              <span className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-emerald-800">
+                Pågående pass
+              </span>
+            ) : null}
+            {props.muscleGroups.length > 0 ? (
+              props.muscleGroups.map((group) => (
+                <span
+                  key={group}
+                  className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700"
+                >
+                  {formatMuscleGroup(group)}
+                </span>
+              ))
+            ) : (
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-600">
+                Balans över hela kroppen
+              </span>
+            )}
+          </div>
 
-      {props.hasActiveWorkout ? (
-        <p className="mt-3 text-sm leading-6 text-emerald-800">
-          {props.activeWorkoutName?.trim()
-            ? `${props.activeWorkoutName.trim()} väntar på dig.`
-            : "Du har ett pågående pass som väntar på dig."}
-        </p>
-      ) : null}
+          {props.hasActiveWorkout ? (
+            <p className="mt-4 text-base leading-7 text-emerald-800">
+              {props.activeWorkoutName?.trim()
+                ? `${props.activeWorkoutName.trim()} väntar på dig.`
+                : "Du har ett pågående pass som väntar på dig."}
+            </p>
+          ) : null}
 
-      <button
-        type="button"
-        onClick={props.onAction}
-        disabled={props.isGenerating}
-        className={cn(
-          props.hasActiveWorkout
-            ? "mt-4 min-h-11 w-full justify-center rounded-2xl bg-emerald-200 px-4 py-3 text-sm font-semibold text-emerald-950 shadow-sm transition hover:bg-emerald-300 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
-            : uiButtonClasses.secondary,
-          !props.hasActiveWorkout && "mt-4 w-full justify-center",
-        )}
-      >
-        {props.isGenerating
-          ? "Skapar..."
-          : props.hasActiveWorkout
-            ? "Fortsätt dagens pass"
-            : "Snabbstarta dagens pass"}
-      </button>
+          <button
+            type="button"
+            onClick={props.onAction}
+            disabled={props.isGenerating}
+            className={cn(
+              props.hasActiveWorkout
+                ? "mt-5 min-h-[52px] w-full justify-center rounded-2xl bg-emerald-200 px-4 py-3 text-base font-semibold text-emerald-950 shadow-sm transition hover:bg-emerald-300 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+                : cn(uiButtonClasses.primary, "mt-5 min-h-[52px] w-full justify-center text-base"),
+            )}
+          >
+            {props.isGenerating
+              ? "Skapar..."
+              : props.hasActiveWorkout
+                ? "Fortsätt dagens pass"
+                : "Starta dagens pass"}
+          </button>
+        </>
+      )}
     </section>
   );
 }
 
 function TrainingGapCard(props: {
   trainingGap: TrainingGap;
+  onShowDetails: () => void;
 }) {
   const progressPercent = Math.round(props.trainingGap.completionRatio * 100);
   const tone = formatTrainingGapStatusTone(props.trainingGap.status);
-  const thirtyDayEffect = props.trainingGap.thirtyDayEffect;
-  const thirtyDayVolumePercent = Math.round(
-    ((thirtyDayEffect?.setCompletionRatio ?? 0) * 100),
-  );
-  const lowestCoverageMuscles = [...(thirtyDayEffect?.muscleEstimates ?? [])]
-    .sort((left, right) => left.completionRatio - right.completionRatio)
-    .slice(0, 3);
 
   return (
     <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-            Mot veckans mål
+            Veckomål
           </p>
           <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
             {progressPercent}% på plats
@@ -681,7 +686,7 @@ function TrainingGapCard(props: {
         </div>
       </div>
 
-      <p className="mt-4 text-sm text-slate-700">
+      <p className="mt-4 text-base text-slate-700">
         Främst:{" "}
         <span className="font-medium text-slate-900">
           {props.trainingGap.missingMuscles.length > 0
@@ -690,94 +695,13 @@ function TrainingGapCard(props: {
         </span>
       </p>
 
-      {props.trainingGap.suggestedCatchUpOptions.length > 0 ? (
-        <div className="mt-4 space-y-2">
-          {props.trainingGap.suggestedCatchUpOptions.map((option) => (
-            <div
-              key={option.id}
-              className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-slate-900">{option.label}</p>
-                <span className="text-xs font-medium text-slate-500">
-                  {option.sessions > 0
-                    ? `${option.sessions} × ${option.minutesPerSession} min`
-                    : "Ingen extra tid"}
-                </span>
-              </div>
-              <p className="mt-1 text-sm leading-6 text-slate-600">{option.description}</p>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {thirtyDayEffect ? (
-        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-            Senaste 30 dagarna
-          </p>
-          <p className="mt-2 text-base font-semibold text-slate-950">
-            {thirtyDayEffect.estimatedEffectLabel}
-          </p>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            {thirtyDayEffect.estimatedEffectMessage}
-          </p>
-
-          <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-sky-500 to-emerald-500"
-              style={{ width: `${Math.max(8, Math.min(100, thirtyDayVolumePercent))}%` }}
-            />
-          </div>
-
-          <p className="mt-3 text-sm leading-6 text-slate-700">
-            Du har genomfört cirka <span className="font-medium text-slate-900">{thirtyDayVolumePercent}%</span>{" "}
-            av planerad träningsvolym.
-          </p>
-
-          <div className="mt-4 grid grid-cols-3 gap-3">
-            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                Pass
-              </p>
-              <p className="mt-1 text-base font-semibold text-slate-950">
-                {thirtyDayEffect.completedSessions} / {Math.round(thirtyDayEffect.plannedSessions)}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                Minuter
-              </p>
-              <p className="mt-1 text-base font-semibold text-slate-950">
-                {Math.round(thirtyDayEffect.completedMinutes)} / {Math.round(thirtyDayEffect.plannedMinutes)}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                Arbetsset
-              </p>
-              <p className="mt-1 text-base font-semibold text-slate-950">
-                {Math.round(thirtyDayEffect.completedSets)} / {Math.round(thirtyDayEffect.plannedSets)}
-              </p>
-            </div>
-          </div>
-
-          {lowestCoverageMuscles.length > 0 ? (
-            <p className="mt-4 text-sm leading-6 text-slate-700">
-              Minst täckning:{" "}
-              <span className="font-medium text-slate-900">
-                {lowestCoverageMuscles
-                  .map((estimate) => {
-                    return `${formatMuscleGroup(estimate.muscle)} ${Math.round(
-                      estimate.completionRatio * 100,
-                    )}%`;
-                  })
-                  .join(", ")}
-              </span>
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+      <button
+        type="button"
+        onClick={props.onShowDetails}
+        className={cn(uiButtonClasses.secondary, "mt-4 w-full justify-center")}
+      >
+        Visa detaljer
+      </button>
     </section>
   );
 }
@@ -802,13 +726,13 @@ function QuickStartCard(props: {
   return (
     <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
       <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-        Starta snabbt
+        Skapa AI-pass
       </p>
       <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
-        Skapa pass
+        Skapa nästa pass
       </h2>
-      <p className="mt-2 text-sm leading-6 text-slate-600">
-        Välj gym och längd. Sedan kan du starta direkt med AI eller bygga ett eget pass.
+      <p className="mt-2 text-base leading-7 text-slate-700">
+        Välj gym och längd. AI bygger ett pass utifrån mål, historik och utrustning.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -860,7 +784,7 @@ function QuickStartCard(props: {
         </div>
       </div>
 
-      <p className="mt-3 text-xs text-slate-500">Vald passlängd: {props.durationMinutes} min</p>
+      <p className="mt-3 text-sm text-slate-600">Vald passlängd: {props.durationMinutes} min</p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <button
@@ -869,7 +793,7 @@ function QuickStartCard(props: {
           disabled={props.isGenerating || !props.userId}
           className={cn(uiButtonClasses.primary, "w-full justify-center")}
         >
-          {props.isGenerating ? "Skapar AI-pass..." : "AI-pass"}
+          {props.isGenerating ? "Skapar AI-pass..." : "Skapa AI-pass"}
         </button>
 
         <button
@@ -889,51 +813,10 @@ function QuickStartCard(props: {
   );
 }
 
-function RecentWorkoutCard(props: {
-  latestWorkout: WorkoutLog | null;
-  logsSource: string;
-  onHistory: () => void;
-  onRepeat: () => void;
-  isGenerating: boolean;
-}) {
-  return (
-    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-            Senaste aktivitet
-          </p>
-          {props.latestWorkout ? (
-            <>
-              <h2 className="mt-1 truncate text-xl font-semibold tracking-tight text-slate-950">
-                {props.latestWorkout.workoutName}
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                Senast genomfört {new Date(props.latestWorkout.completedAt).toLocaleDateString("sv-SE")} ·{" "}
-                {props.logsSource === "api" ? "synkad historik" : "lokal historik"}
-              </p>
-            </>
-          ) : (
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              Ingen träningshistorik ännu. Ditt första pass bygger momentum direkt.
-            </p>
-          )}
-        </div>
-
-        <button
-          type="button"
-          onClick={props.onHistory}
-          className={cn(uiButtonClasses.secondary, "shrink-0 px-3")}
-        >
-          Historik
-        </button>
-      </div>
-
-    </section>
-  );
-}
-
 function SecondaryActionsCard(props: {
+  onHistory: () => void;
+  onToggleInsights: () => void;
+  showWeeklyInsights: boolean;
   onGyms: () => void;
   onSettings: () => void;
 }) {
@@ -943,6 +826,16 @@ function SecondaryActionsCard(props: {
         Mer
       </p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <button type="button" onClick={props.onHistory} className={uiButtonClasses.secondary}>
+          Historik
+        </button>
+        <button
+          type="button"
+          onClick={props.onToggleInsights}
+          className={uiButtonClasses.secondary}
+        >
+          {props.showWeeklyInsights ? "Dölj detaljer" : "Veckoplan & analys"}
+        </button>
         <button type="button" onClick={props.onGyms} className={uiButtonClasses.secondary}>
           Gym & utrustning
         </button>
@@ -981,8 +874,48 @@ function WeeklyInsightsPanel(props: {
 
       {props.showWeeklyInsights ? (
         <div className="mt-5 space-y-6">
+          {props.weeklyStructure.trainingGap.thirtyDayEffect ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                Senaste 30 dagarna
+              </p>
+              <p className="mt-2 text-lg font-semibold tracking-tight text-slate-950">
+                {props.weeklyStructure.trainingGap.thirtyDayEffect.estimatedEffectLabel}
+              </p>
+              <p className="mt-2 text-base leading-7 text-slate-700">
+                {props.weeklyStructure.trainingGap.thirtyDayEffect.estimatedEffectMessage}
+              </p>
+              <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-sky-500 to-emerald-500"
+                  style={{
+                    width: `${Math.max(
+                      8,
+                      Math.min(
+                        100,
+                        Math.round(
+                          props.weeklyStructure.trainingGap.thirtyDayEffect.setCompletionRatio * 100,
+                        ),
+                      ),
+                    )}%`,
+                  }}
+                />
+              </div>
+              <p className="mt-3 text-base leading-7 text-slate-700">
+                Du har genomfört cirka{" "}
+                <span className="font-medium text-slate-900">
+                  {Math.round(
+                    props.weeklyStructure.trainingGap.thirtyDayEffect.setCompletionRatio * 100,
+                  )}
+                  %
+                </span>{" "}
+                av planerad träningsvolym.
+              </p>
+            </div>
+          ) : null}
+
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <p className="text-sm leading-6 text-slate-700">
+            <p className="text-base leading-7 text-slate-700">
               {getWeeklyAdjustmentSummary(props.weeklyStructure)}
             </p>
           </div>
@@ -1185,7 +1118,6 @@ export default function HomePage() {
     gyms,
     settings,
     workoutLogs,
-    logsSource,
     isLoadingGyms,
     gymError,
     pageError,
@@ -1229,7 +1161,6 @@ export default function HomePage() {
     return clampDuration(Number(selectedDurationPreset));
   }, [customDurationInput, selectedDurationPreset]);
 
-  const latestWorkout = workoutLogs?.[0] ?? null;
   const weeklyStructure = useMemo(() => {
     return buildWeeklyWorkoutStructure({
       logs: workoutLogs,
@@ -1271,6 +1202,13 @@ export default function HomePage() {
     });
   }, [durationMinutes, weeklyStructure.completedLast7Days, weeklyStructure.nextFocus, workoutLogs]);
   const dailyWisdom = useMemo(() => getDailyHomeWisdom(), []);
+  const todayPlanDay = useMemo(
+    () => weeklyPlanDays.find((day) => day.isToday) ?? null,
+    [weeklyPlanDays],
+  );
+  // Home visar ett klart-för-idag-läge när dagens planerade slot redan är genomförd.
+  const hasCompletedTrainingToday = Boolean(todayPlanDay?.completedSummary);
+  const completedTodayMessage = "Bra jobbat! Du har ingen mer planerad träning idag.";
 
   useEffect(() => {
     hasAppliedInitialGymRef.current = false;
@@ -1600,7 +1538,6 @@ export default function HomePage() {
         <HomeHeroCard
           name={getDisplayName(authUser)}
           wisdomText={dailyWisdom.text}
-          coachMessage={coachMessage}
           onLogout={handleLogout}
           isLoggingOut={isLoggingOut}
           pendingCount={pendingCount}
@@ -1609,15 +1546,16 @@ export default function HomePage() {
         <TodayFocusCard
           focus={weeklyStructure.nextFocus}
           muscleGroups={weeklyStructure.nextFocusMuscleGroups}
-          summaryText={weeklyStructure.optimalPlanText}
+          coachText={coachMessage}
           gymLabel={selectedGym?.name ?? "Kroppsvikt / utan gym"}
+          recommendedDurationMinutes={durationMinutes}
           onAction={handleQuickStartTodayWorkout}
           isGenerating={isGenerating}
           hasActiveWorkout={Boolean(activeWorkout)}
           activeWorkoutName={activeWorkout?.name ?? null}
+          hasCompletedTrainingToday={hasCompletedTrainingToday}
+          completedTodayMessage={completedTodayMessage}
         />
-
-        <TrainingGapCard trainingGap={weeklyStructure.trainingGap} />
 
         <QuickStartCard
           gymOptions={gymOptions}
@@ -1637,24 +1575,26 @@ export default function HomePage() {
           pageError={pageError}
         />
 
-        <RecentWorkoutCard
-          latestWorkout={latestWorkout}
-          logsSource={logsSource}
-          onHistory={() => router.push("/history")}
-          onRepeat={handleReviewAiWorkout}
-          isGenerating={isGenerating}
+        <TrainingGapCard
+          trainingGap={weeklyStructure.trainingGap}
+          onShowDetails={() => setShowWeeklyInsights(true)}
         />
 
-        <WeeklyInsightsPanel
-          showWeeklyInsights={showWeeklyInsights}
-          onToggle={() => setShowWeeklyInsights((previous) => !previous)}
-          weeklyStructure={weeklyStructure}
-          weeklyPlanDays={weeklyPlanDays}
-          onOpenHistoryDay={handleOpenHistoryDay}
-          onStartWorkout={handleReviewAiWorkout}
-        />
+        {showWeeklyInsights ? (
+          <WeeklyInsightsPanel
+            showWeeklyInsights={showWeeklyInsights}
+            onToggle={() => setShowWeeklyInsights((previous) => !previous)}
+            weeklyStructure={weeklyStructure}
+            weeklyPlanDays={weeklyPlanDays}
+            onOpenHistoryDay={handleOpenHistoryDay}
+            onStartWorkout={handleReviewAiWorkout}
+          />
+        ) : null}
 
         <SecondaryActionsCard
+          onHistory={() => router.push("/history")}
+          onToggleInsights={() => setShowWeeklyInsights((previous) => !previous)}
+          showWeeklyInsights={showWeeklyInsights}
           onGyms={() => router.push("/gyms")}
           onSettings={() => router.push("/settings")}
         />

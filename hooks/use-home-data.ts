@@ -16,6 +16,10 @@ import { getCachedHomeSettings, saveCachedHomeSettings } from "@/lib/home-settin
 import {
   syncPendingWorkoutQueue,
 } from "@/lib/workout-flow/pending-sync-service";
+import type {
+  SportFocus,
+  TrainingGoal,
+} from "@/types/training-profile";
 
 export type HomeAuthUser = {
   id: number | string;
@@ -41,12 +45,6 @@ export type HomeGym = {
   equipment?: HomeGymEquipmentItem[];
 };
 
-export type HomeGoal =
-  | "strength"
-  | "hypertrophy"
-  | "health"
-  | "body_composition";
-
 export type HomePriorityMuscle =
   | "chest"
   | "back"
@@ -61,7 +59,8 @@ export type HomePriorityMuscle =
 
 export type HomeUserSettings = {
   experience_level?: "beginner" | "novice" | "intermediate" | "advanced" | null;
-  training_goal?: HomeGoal | null;
+  training_goal?: TrainingGoal | null;
+  sport_focus?: SportFocus | null;
   avoid_supersets?: boolean | null;
   superset_preference?: "allowed" | "avoid_all" | "avoid_all_dumbbell" | null;
   primary_priority_muscle?: HomePriorityMuscle | null;
@@ -260,6 +259,7 @@ export function useHomeData({ router }: UseHomeDataParams) {
           if (nextSettings) {
             saveCachedHomeSettings(userId, {
               training_goal: nextSettings.training_goal ?? null,
+              sport_focus: nextSettings.sport_focus ?? null,
               avoid_supersets:
                 typeof nextSettings.avoid_supersets === "boolean"
                   ? nextSettings.avoid_supersets

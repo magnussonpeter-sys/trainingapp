@@ -37,6 +37,7 @@ type AuthUser = {
 
 type UserSettingsResponse = {
   training_goal?: string | null;
+  sport_focus?: string | null;
   sex?: string | null;
   age?: number | null;
   height_cm?: number | null;
@@ -124,6 +125,7 @@ export default function AnalysisDebugPage() {
   const [gyms, setGyms] = useState<GymResponse[]>([]);
   const [generatedHistory, setGeneratedHistory] = useState<StoredAiGeneratedWorkoutSnapshot[]>([]);
   const [draftWorkout, setDraftWorkout] = useState<Workout | null>(null);
+  const [generatedWorkout, setGeneratedWorkout] = useState<Workout | null>(null);
   const [progressionSnapshots, setProgressionSnapshots] = useState<
     Record<string, ReturnType<typeof getAllExerciseProgression>[string]>
   >({});
@@ -199,7 +201,8 @@ export default function AnalysisDebugPage() {
             : [],
         );
         setGeneratedHistory(localHistory);
-        setDraftWorkout(localDraft ?? generatedWorkout ?? null);
+        setDraftWorkout(localDraft ?? null);
+        setGeneratedWorkout(generatedWorkout ?? null);
         setProgressionSnapshots(progression);
       } catch (loadError) {
         console.error("Failed to load analysis debug page", loadError);
@@ -227,11 +230,12 @@ export default function AnalysisDebugPage() {
       logs,
       gyms,
       generatedWorkouts: generatedHistory,
+      generatedWorkout,
       draftWorkout,
       progressionSnapshots,
       options,
     });
-  }, [draftWorkout, generatedHistory, gyms, logs, options, progressionSnapshots, settings]);
+  }, [draftWorkout, generatedHistory, generatedWorkout, gyms, logs, options, progressionSnapshots, settings]);
 
   const jsonPreview = useMemo(() => {
     return JSON.stringify(exportData, null, 2);
@@ -254,6 +258,18 @@ export default function AnalysisDebugPage() {
       approxSize: formatApproxSize(jsonPreview),
     };
   }, [exportData, jsonPreview]);
+  const latestSportRelevantExercises = useMemo(() => {
+    const latestWorkout = exportData.recentGeneratedWorkouts[0];
+
+    if (!latestWorkout) {
+      return [];
+    }
+
+    return latestWorkout.chosenExercises
+      .filter((exercise) => exercise.sportRelevanceHint > 0)
+      .sort((left, right) => right.sportRelevanceHint - left.sportRelevanceHint)
+      .slice(0, 6);
+  }, [exportData.recentGeneratedWorkouts]);
 
   async function copyToClipboard(value: string, successMessage: string) {
     try {
@@ -426,6 +442,41 @@ export default function AnalysisDebugPage() {
               </p>
             </div>
           </div>
+
+          {exportData.userContext.sportFocus &&
+          exportData.userContext.sportFocus !== "none" ? (
+            <div className={cn(uiCardClasses.soft, "mt-4 space-y-3")}>
+              <div>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                  Sportrelevans
+                </p>
+                <p className="mt-2 text-base font-semibold text-slate-950">
+                  Aktiv inriktning: {exportData.userContext.sportFocus}
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Visar vilka övningar i senaste AI-pass som hade en positiv
+                  sportrelevanssignal.
+                </p>
+              </div>
+
+              {latestSportRelevantExercises.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {latestSportRelevantExercises.map((exercise) => (
+                    <span
+                      key={exercise.exerciseId}
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900"
+                    >
+                      {exercise.exerciseName} · {exercise.sportRelevanceHint}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-600">
+                  Inga övningar i senaste passet hade särskild sportrelevanssignal.
+                </p>
+              )}
+            </div>
+          ) : null}
         </section>
 
         <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>

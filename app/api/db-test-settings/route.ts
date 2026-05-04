@@ -20,6 +20,7 @@ export async function GET() {
         height_cm NUMERIC,
         experience_level TEXT,
         training_goal TEXT,
+        sport_focus TEXT NOT NULL DEFAULT 'none',
         updated_at TIMESTAMP DEFAULT NOW()
       );
     `);
@@ -31,7 +32,30 @@ export async function GET() {
       ADD COLUMN IF NOT EXISTS superset_preference TEXT,
       ADD COLUMN IF NOT EXISTS primary_priority_muscle TEXT,
       ADD COLUMN IF NOT EXISTS secondary_priority_muscle TEXT,
-      ADD COLUMN IF NOT EXISTS tertiary_priority_muscle TEXT;
+      ADD COLUMN IF NOT EXISTS tertiary_priority_muscle TEXT,
+      ADD COLUMN IF NOT EXISTS sport_focus TEXT NOT NULL DEFAULT 'none';
+    `);
+
+    // Äldre skiing-värde normaliseras till utförsåkning.
+    await client.query(`
+      UPDATE user_settings
+      SET sport_focus = CASE
+        WHEN sport_focus = 'skiing' THEN 'alpine_skiing'
+        WHEN sport_focus IS NULL THEN 'none'
+        WHEN sport_focus NOT IN (
+          'none',
+          'running',
+          'cross_country_skiing',
+          'alpine_skiing',
+          'cycling',
+          'ball_sports',
+          'swimming',
+          'golf',
+          'surf_sports',
+          'general_athletic'
+        ) THEN 'none'
+        ELSE sport_focus
+      END;
     `);
 
     // 2. Index (bra att ha även om PK finns)
@@ -83,6 +107,32 @@ export async function GET() {
           CHECK (
             training_goal IS NULL OR
             training_goal IN ('strength','hypertrophy','health','body_composition')
+          );
+        END IF;
+      END$$;
+    `);
+
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'user_settings_sport_focus_check'
+        ) THEN
+          ALTER TABLE user_settings
+          ADD CONSTRAINT user_settings_sport_focus_check
+          CHECK (
+            sport_focus IN (
+              'none',
+              'running',
+              'cross_country_skiing',
+              'alpine_skiing',
+              'cycling',
+              'ball_sports',
+              'swimming',
+              'golf',
+              'surf_sports',
+              'general_athletic'
+            )
           );
         END IF;
       END$$;

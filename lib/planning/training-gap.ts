@@ -61,6 +61,9 @@ export type ThirtyDayTrainingEffect = {
 
 export type TrainingGap = {
   status: TrainingGapStatus;
+  windowType?: "current_week" | "rolling_7_days" | "current_plan_window" | "custom";
+  windowStart?: string;
+  windowEnd?: string;
   completionRatio: number;
   plannedSessions: number;
   completedSessions: number;
@@ -519,11 +522,19 @@ export function buildTrainingGap(params: {
     targetMinutesPerWeek: params.targetMinutesPerWeek,
     now,
   });
+  const weekStart = getStartOfWeek(now);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  const windowStart = weekStart.toISOString().slice(0, 10);
+  const windowEnd = weekEnd.toISOString().slice(0, 10);
 
   // För lite historik ska ge mjuk vägledning, inte falsk precision.
   if (completedHistory.length < 2) {
     return {
       status: "insufficient_data",
+      windowType: "current_week",
+      windowStart,
+      windowEnd,
       completionRatio,
       plannedSessions,
       completedSessions,
@@ -542,6 +553,9 @@ export function buildTrainingGap(params: {
   if (hasHighRisk) {
     return {
       status: "recovery_first",
+      windowType: "current_week",
+      windowStart,
+      windowEnd,
       completionRatio,
       plannedSessions,
       completedSessions,
@@ -614,6 +628,9 @@ export function buildTrainingGap(params: {
 
   return {
     status,
+    windowType: "current_week",
+    windowStart,
+    windowEnd,
     completionRatio,
     plannedSessions,
     completedSessions,
