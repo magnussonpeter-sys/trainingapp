@@ -21,8 +21,11 @@ import { getCurrentUser } from "@/lib/server-auth";
 import type {
   ConfidenceScore,
   MuscleBudgetEntry,
+  MuscleBudgetGroup,
 } from "@/lib/planning/muscle-budget";
 import type { TrainingGap } from "@/lib/planning/training-gap";
+import type { WeeklyPlanContext } from "@/lib/planning/weekly-plan";
+import type { PlannedTrainingMode } from "@/lib/weekly-workout-structure";
 import {
   normalizeSportFocus,
   type SportFocus,
@@ -110,6 +113,7 @@ type WeeklyBudgetPromptItem = Pick<
   | "effectiveSets"
   | "remainingSets"
   | "recent4WeekAvgSets"
+  | "loadStatus"
 >;
 
 type WeeklyBudgetValidationItem = Pick<
@@ -134,6 +138,9 @@ type TrainingGapPromptItem = Pick<
   | "suggestedCatchUpOptions"
   | "thirtyDayEffect"
 >;
+
+type PlanModePromptItem = PlannedTrainingMode;
+type WeeklyPlanContextPromptItem = WeeklyPlanContext;
 
 type FocusMuscle =
   | "chest"
@@ -576,7 +583,13 @@ function buildGenerationPrompt(params: {
   supersetPreference: SupersetPreference;
   weeklyBudget: WeeklyBudgetPromptItem[];
   weeklyPlan: WeeklyPlanPromptItem[];
+  selectedPlanMode: PlanModePromptItem | null;
+  focusIntent: string | null;
+  targetMuscles: MuscleBudgetGroup[];
+  avoidMuscles: MuscleBudgetGroup[];
+  limitedMuscles: MuscleBudgetGroup[];
   trainingGap: TrainingGapPromptItem | null;
+  weeklyPlanContext: WeeklyPlanContextPromptItem | null;
   lessOftenExerciseIds?: string[];
   focusMuscles?: FocusMuscle[];
 }) {
@@ -615,9 +628,28 @@ function buildGenerationPrompt(params: {
     params.weeklyBudget.length > 0
       ? JSON.stringify(params.weeklyBudget, null, 2)
       : "[]";
+  const underservedMusclesText = params.weeklyBudget
+    .filter((entry) => entry.remainingSets > 0)
+    .sort((left, right) => right.remainingSets - left.remainingSets)
+    .slice(0, 5)
+    .map((entry) => entry.group)
+    .join(", ") || "inga tydliga";
+  const overloadedMusclesText = params.weeklyBudget
+    .filter((entry) => entry.loadStatus === "high_risk" || entry.loadStatus === "over")
+    .map((entry) => entry.group)
+    .join(", ") || "inga tydliga";
   const trainingGapText = params.trainingGap
     ? JSON.stringify(params.trainingGap, null, 2)
     : "null";
+  const weeklyPlanContextText = params.weeklyPlanContext
+    ? JSON.stringify(params.weeklyPlanContext, null, 2)
+    : "null";
+  const targetMusclesText =
+    params.targetMuscles.length > 0 ? params.targetMuscles.join(", ") : "inga";
+  const avoidMusclesText =
+    params.avoidMuscles.length > 0 ? params.avoidMuscles.join(", ") : "inga";
+  const limitedMusclesText =
+    params.limitedMuscles.length > 0 ? params.limitedMuscles.join(", ") : "inga";
   const nextFocusText = params.nextFocus ?? "full_body";
   const confidenceText = params.confidenceScore ?? "medium";
   const splitStyleText = params.splitStyle ?? "adaptive";
@@ -661,7 +693,15 @@ Kontext:
 - föreslagen split-stil denna vecka: ${splitStyleText}
 - veckans muskelbudget och återstående set: ${weeklyBudgetText}
 - enkel veckoplan för kommande 7 dagar: ${weeklyPlanText}
+- användarjusterbar veckoplan för denna vecka: ${weeklyPlanContextText}
 - regelbaserat träningsgap för veckan: ${trainingGapText}
+- planläge från lokala coachmotorn: ${params.selectedPlanMode ?? "normal_training"}
+- planens fokusavsikt: ${params.focusIntent ?? "ingen extra fokusavsikt"}
+- targetMuscles: ${targetMusclesText}
+- avoidMuscles: ${avoidMusclesText}
+- limitedMuscles: ${limitedMusclesText}
+- muscles som fortfarande behöver volym: ${underservedMusclesText}
+- muscles som är överbelastade eller bör skyddas: ${overloadedMusclesText}
 - uttryckligt valda fokusmuskler för detta builder-pass: ${requestedFocusMusclesText}
 - superset-preferens: ${supersetPreferenceText}
 - övningar användaren vill ha mindre av: ${
@@ -677,6 +717,16 @@ ${
   sportFocus !== "none"
     ? "Vissa övningar har sportRelevanceHint. Använd detta som en svag positiv signal när flera övningar annars är lika bra. Det är inte ett krav. Välj fortfarande efter huvudmål, utrustning, muskelbudget, historik, överbelastning, risknivå och passlängd."
     : ""
+}
+
+${
+  params.selectedPlanMode === "selective_priority_accessory"
+    ? "Skapa ett lätt och selektivt pass. Välj i första hand övningar som direkt träffar targetMuscles. Undvik övningar där avoidMuscles är primära. Undvik också övningar där avoidMuscles får stor indirekt volym. Håll totalvolym och intensitet låg."
+    : params.selectedPlanMode === "light_accessory"
+      ? "Skapa ett lätt tillbehörspass. Håll systemisk belastning låg och prioritera låg-risk-volym framför tung progression."
+      : params.selectedPlanMode === "recovery_mobility"
+        ? "Återhämtning rekommenderas. Om du ändå måste generera ett pass ska det vara mycket lätt, kort och utan tydlig volymdrivning för already overloaded muscles."
+        : ""
 }
 
 Tillgängliga övningar från katalogen:
@@ -695,6 +745,9 @@ Viktförslag:
 - Om du är osäker mellan två nivåer, välj den lättare och säkrare nivån.
 - Use thirtyDayEffect only as coaching context. Do not claim measured muscle growth.
 - Phrase long-term adaptations as likely training stimulus, not exact outcomes.
+- Följ användarens uttryckliga längdval om en sådan finns i requesten. Om längden känns osäker, använd veckoplanens suggestedNextDurationMinutes som mjuk riktning.
+- Kompensera inte missade pass aggressivt. Välj hellre ett genomförbart pass än ett långt kompensationspass.
+- Om användaren spontant har tränat extra denna vecka ska du undvika att överbelasta samma muskler igen.
 
 För korta pass ska du tänka i denna ordning:
 1. välj blockstruktur
@@ -855,6 +908,12 @@ export async function POST(req: Request) {
       splitStyle?: string | null;
       weeklyBudget?: WeeklyBudgetPromptItem[];
       weeklyPlan?: WeeklyPlanPromptItem[];
+      selectedPlanMode?: PlanModePromptItem | null;
+      focusIntent?: string | null;
+      targetMuscles?: MuscleBudgetGroup[];
+      avoidMuscles?: MuscleBudgetGroup[];
+      limitedMuscles?: MuscleBudgetGroup[];
+      weeklyPlanContext?: WeeklyPlanContextPromptItem | null;
       trainingGap?: TrainingGapPromptItem | null;
       lessOftenExerciseIds?: string[];
       focusMuscles?: FocusMuscle[];
@@ -926,6 +985,10 @@ export async function POST(req: Request) {
     const weeklyPlan = Array.isArray(body.weeklyPlan) ? body.weeklyPlan : [];
     const trainingGap =
       body.trainingGap && typeof body.trainingGap === "object" ? body.trainingGap : null;
+    const weeklyPlanContext =
+      body.weeklyPlanContext && typeof body.weeklyPlanContext === "object"
+        ? (body.weeklyPlanContext as WeeklyPlanContextPromptItem)
+        : null;
     const lessOftenExerciseIds = Array.isArray(body.lessOftenExerciseIds)
       ? body.lessOftenExerciseIds.filter(
           (value): value is string =>
@@ -933,6 +996,21 @@ export async function POST(req: Request) {
         )
       : [];
     const focusMuscles = normalizeFocusMuscles(body.focusMuscles);
+    const selectedPlanMode =
+      body.selectedPlanMode === "normal_training" ||
+      body.selectedPlanMode === "recovery" ||
+      body.selectedPlanMode === "recovery_mobility" ||
+      body.selectedPlanMode === "light_accessory" ||
+      body.selectedPlanMode === "selective_priority_accessory"
+        ? body.selectedPlanMode
+        : null;
+    const targetMuscles = normalizeFocusMuscles(body.targetMuscles);
+    const avoidMuscles = normalizeFocusMuscles(body.avoidMuscles);
+    const limitedMuscles = normalizeFocusMuscles(body.limitedMuscles);
+    const focusIntent =
+      typeof body.focusIntent === "string" && body.focusIntent.trim()
+        ? body.focusIntent.trim()
+        : null;
 
     const availableExercises = getAvailableExercises(equipment);
     const [settings, recentLogs] = userId
@@ -974,6 +1052,12 @@ export async function POST(req: Request) {
       supersetPreference,
       weeklyBudget,
       weeklyPlan,
+      selectedPlanMode,
+      focusIntent,
+      targetMuscles,
+      avoidMuscles,
+      limitedMuscles,
+      weeklyPlanContext,
       trainingGap,
       lessOftenExerciseIds,
       focusMuscles,

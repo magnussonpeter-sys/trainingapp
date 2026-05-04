@@ -41,6 +41,12 @@ export type CompletedExercise = {
   sets: CompletedSet[];
 };
 
+export type WorkoutAnalysisExclusionReason =
+  | "test"
+  | "mistake"
+  | "aborted"
+  | "manual";
+
 export type WorkoutLog = {
   id: string;
   userId: string;
@@ -54,6 +60,11 @@ export type WorkoutLog = {
   durationSeconds: number;
   status: "completed" | "aborted";
   exercises: CompletedExercise[];
+  context?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  // Analys-exkludering ska inte ta bort passet ur historiken, bara ur coachmotorn.
+  excludeFromAnalysis?: boolean;
+  analysisExclusionReason?: WorkoutAnalysisExclusionReason | null;
 };
 
 const STORAGE_KEY = "workout_logs";
@@ -120,6 +131,23 @@ export function clearWorkoutLogs(userId: string) {
   replaceWorkoutLogs(userId, []);
 }
 
+export function isWorkoutLogExcludedFromAnalysis(log: WorkoutLog) {
+  if (log.excludeFromAnalysis === true) {
+    return true;
+  }
+
+  return log.metadata?.excludeFromAnalysis === true;
+}
+
+export function getWorkoutLogAnalysisExclusionReason(log: WorkoutLog) {
+  if (log.analysisExclusionReason) {
+    return log.analysisExclusionReason;
+  }
+
+  const metadataReason = log.metadata?.analysisExclusionReason;
+  return typeof metadataReason === "string" ? metadataReason : null;
+}
+
 export function createEmptyExerciseLog(
   exercise: Exercise,
   isNewExercise: boolean
@@ -144,6 +172,8 @@ export function createWorkoutLog(params: {
   startedAt: string;
   exercises: CompletedExercise[];
   status?: "completed" | "aborted";
+  excludeFromAnalysis?: boolean;
+  analysisExclusionReason?: WorkoutAnalysisExclusionReason | null;
 }): WorkoutLog {
   const completedAt = new Date().toISOString();
 
@@ -170,5 +200,7 @@ export function createWorkoutLog(params: {
     ),
     status: params.status ?? "completed",
     exercises: params.exercises,
+    excludeFromAnalysis: params.excludeFromAnalysis ?? false,
+    analysisExclusionReason: params.analysisExclusionReason ?? null,
   };
 }

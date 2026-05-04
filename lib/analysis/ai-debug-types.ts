@@ -1,5 +1,6 @@
 import type {
   AdaptiveFocusScore,
+  PlannedTrainingMode,
   WeeklyPlanDay,
   WeeklyPlanStep,
 } from "@/lib/weekly-workout-structure";
@@ -106,6 +107,8 @@ export type AiDebugDataQuality = {
   validWorkoutCount28d: number;
   veryShortWorkoutCount28d: number;
   emptyWorkoutCount28d: number;
+  excludedWorkoutCount28d: number;
+  excludedWorkoutReasons: string[];
   missingEffortCount28d: number;
   missingWeightCount28d: number;
   notes: string[];
@@ -234,6 +237,11 @@ export type AiDebugProgressionDiagnostic = {
   recommendedAiInterpretation: string;
   missingDataWarnings: string[];
   bodyweightProgressionSuggestion: string | null;
+  budgetAwareProgressionRecommendation:
+    | "progress"
+    | "maintain"
+    | "deload"
+    | "avoid_for_now";
 };
 
 export type AiDebugPlannerDiagnostic = {
@@ -257,6 +265,15 @@ export type AiDebugPlannerDiagnostic = {
   whyNotFullBody?: string;
   whyNotPriorityOnly?: string;
   selectedFocusTradeoffs: string[];
+  selectedPlanMode?: PlannedTrainingMode;
+  targetMuscles?: MuscleBudgetGroup[];
+  avoidMuscles?: MuscleBudgetGroup[];
+  limitedMuscles?: MuscleBudgetGroup[];
+  focusIntent?: string | null;
+  recoveryOverrideApplied?: boolean;
+  recoveryOverrideReason?: string | null;
+  stimulusCreditModelVersion?: string;
+  capsPerMuscleGroupApplied?: boolean;
 };
 
 export type AiDebugExerciseSelectionDiagnostic = {
@@ -287,6 +304,13 @@ export type AiDebugCurrentPlanSnapshot = {
   experienceLevel: string | null;
   splitStyle: string | null;
   selectedWeeklyFocus: WorkoutFocus | null;
+  selectedPlanMode: PlannedTrainingMode;
+  targetMuscles: MuscleBudgetGroup[];
+  avoidMuscles: MuscleBudgetGroup[];
+  limitedMuscles: MuscleBudgetGroup[];
+  focusIntent: string;
+  recoveryOverrideApplied: boolean;
+  recoveryOverrideReason: string | null;
   patternPreferredFocus: WorkoutFocus | null;
   reasonForSelectedFocus: string | null;
   coachDecision: CoachDecision;
@@ -413,6 +437,7 @@ export type AiDebugPlanRiskDiagnostics = {
 
 export type AiDebugAnalysisAvailability = {
   canEvaluateLatestGeneratedWorkout: boolean;
+  canEvaluateFallbackWorkout: boolean;
   canEvaluateExerciseSelection: boolean;
   canEvaluateProgression: boolean;
   canEvaluateLongTermPlan: boolean;

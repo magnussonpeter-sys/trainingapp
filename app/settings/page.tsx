@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import PageNavActions from "@/components/shared/page-nav-actions";
 import { saveCachedHomeSettings } from "@/lib/home-settings-cache";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
@@ -405,13 +406,10 @@ export default function SettingsPage() {
   return (
     <main className={uiPageShellClasses.page}>
       <div className={cn(uiPageShellClasses.content, uiPageShellClasses.stack)}>
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className={uiButtonClasses.ghost}
-        >
-          ← Tillbaka
-        </button>
+        <PageNavActions
+          backAction={{ label: "Till hem", href: "/home" }}
+          cancelAction={{ label: "Avbryt", href: "/home" }}
+        />
 
         <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
           <div className="space-y-2">
@@ -817,7 +815,13 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <div className="px-1">
+        <div className="flex flex-wrap items-center gap-4 px-1">
+          <Link
+            href="/home/plan"
+            className="inline-flex text-sm text-slate-500 underline-offset-4 transition hover:text-slate-700 hover:underline"
+          >
+            Öppna veckoplanen
+          </Link>
           <Link
             href="/analysis/debug"
             className="inline-flex text-sm text-slate-500 underline-offset-4 transition hover:text-slate-700 hover:underline"
@@ -835,13 +839,9 @@ export default function SettingsPage() {
           >
             {saving ? "Sparar..." : "Spara inställningar"}
           </button>
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className={uiButtonClasses.secondary}
-          >
+          <Link href="/home" className={uiButtonClasses.secondary}>
             Avbryt
-          </button>
+          </Link>
         </div>
       </div>
     </main>

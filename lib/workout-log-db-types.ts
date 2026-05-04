@@ -35,6 +35,8 @@ export type CreateWorkoutLogInput = {
   durationSeconds: number;
   status: "completed" | "aborted";
   exercises: DbCompletedExerciseInput[];
+  excludeFromAnalysis?: boolean;
+  analysisExclusionReason?: "test" | "mistake" | "aborted" | "manual" | null;
   context?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   events?: Array<{

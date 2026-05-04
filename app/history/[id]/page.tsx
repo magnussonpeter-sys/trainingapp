@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import StickyActionBar from "@/components/app-shell/sticky-action-bar";
+import PageNavActions from "@/components/shared/page-nav-actions";
 import { getFavoriteWorkoutIds, toggleWorkoutFavorite } from "@/lib/history-favorites-storage";
 import { getWorkoutLogs, type WorkoutLog } from "@/lib/workout-log-storage";
 import { saveActiveWorkout } from "@/lib/workout-storage";
@@ -277,7 +278,9 @@ export default function HistoryWorkoutDetailPage() {
   if (errorMessage || !workout) {
     return (
       <main className={uiPageShellClasses.page}>
-        <div className={cn(uiPageShellClasses.content, "py-12")}>
+        <div className={cn(uiPageShellClasses.content, uiPageShellClasses.stack, "py-12")}>
+          <PageNavActions backAction={{ label: "Till historik", href: "/history" }} />
+
           <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
               Historik
@@ -315,13 +318,7 @@ export default function HistoryWorkoutDetailPage() {
     <main className={uiPageShellClasses.page}>
       <div className={cn(uiPageShellClasses.content, "pb-32")}>
         <div className="space-y-5">
-          <button
-            type="button"
-            onClick={() => router.push("/history")}
-            className="text-sm font-medium text-slate-600 transition hover:text-slate-950"
-          >
-            ← Tillbaka till historik
-          </button>
+          <PageNavActions backAction={{ label: "Till historik", href: "/history" }} />
 
           <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
             <div className="flex items-start justify-between gap-3">

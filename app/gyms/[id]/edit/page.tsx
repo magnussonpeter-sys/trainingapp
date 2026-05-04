@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import ConfirmSheet from "@/components/shared/confirm-sheet";
+import PageNavActions from "@/components/shared/page-nav-actions";
 import type { AuthUser, Gym } from "@/lib/gyms";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
@@ -30,24 +31,6 @@ export default function EditGymPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function fetchGym(userId: string) {
-    const response = await fetch(`/api/gyms/${gymId}?userId=${userId}`, {
-      cache: "no-store",
-      credentials: "include",
-    });
-    const data = await response.json();
-
-    if (!response.ok || !data?.ok || !data?.gym) {
-      throw new Error(data?.error || "Kunde inte hämta gymmet.");
-    }
-
-    const nextGym = data.gym as Gym;
-    setGym(nextGym);
-    setName(nextGym.name);
-    setDescription(nextGym.description ?? "");
-    setIsShared(Boolean(nextGym.is_shared));
-  }
-
   useEffect(() => {
     let isMounted = true;
 
@@ -71,7 +54,26 @@ export default function EditGymPage() {
         const nextUser = data.user as AuthUser;
         setAuthUser(nextUser);
         setAuthChecked(true);
-        await fetchGym(String(nextUser.id));
+
+        const gymResponse = await fetch(`/api/gyms/${gymId}?userId=${String(nextUser.id)}`, {
+          cache: "no-store",
+          credentials: "include",
+        });
+        const gymData = await gymResponse.json();
+
+        if (!gymResponse.ok || !gymData?.ok || !gymData?.gym) {
+          throw new Error(gymData?.error || "Kunde inte hämta gymmet.");
+        }
+
+        if (!isMounted) {
+          return;
+        }
+
+        const nextGym = gymData.gym as Gym;
+        setGym(nextGym);
+        setName(nextGym.name);
+        setDescription(nextGym.description ?? "");
+        setIsShared(Boolean(nextGym.is_shared));
       } catch (authError) {
         console.error("Auth check failed on /gyms/[id]/edit:", authError);
         if (isMounted) {
@@ -193,6 +195,11 @@ export default function EditGymPage() {
   return (
     <main className={uiPageShellClasses.page}>
       <div className={cn(uiPageShellClasses.content, uiPageShellClasses.stack)}>
+        <PageNavActions
+          backAction={{ label: "Till gym", href: `/gyms/${gymId}` }}
+          cancelAction={{ label: "Avbryt", href: `/gyms/${gymId}` }}
+        />
+
         <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -203,10 +210,6 @@ export default function EditGymPage() {
                 {gym?.name ?? "Gym"}
               </h1>
             </div>
-
-            <Link href={`/gyms/${gymId}`} className={uiButtonClasses.ghostDark}>
-              Avbryt
-            </Link>
           </div>
 
           <div className="mt-5 space-y-4">
@@ -289,4 +292,3 @@ export default function EditGymPage() {
     </main>
   );
 }
-

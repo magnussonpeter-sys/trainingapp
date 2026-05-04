@@ -32,6 +32,15 @@ async function findWorkoutLogByClientSyncId(
   return result.rows[0] ?? null;
 }
 
+function buildWorkoutLogMetadata(input: CreateWorkoutLogInput) {
+  return {
+    ...(input.metadata ?? {}),
+    // Exkludering sparas i metadata för att undvika ny DB-migrering i detta steg.
+    excludeFromAnalysis: input.excludeFromAnalysis ?? false,
+    analysisExclusionReason: input.analysisExclusionReason ?? null,
+  };
+}
+
 export async function insertWorkoutLog(input: CreateWorkoutLogInput) {
   const client = await pool.connect();
 
@@ -103,7 +112,7 @@ export async function insertWorkoutLog(input: CreateWorkoutLogInput) {
         input.durationSeconds,
         input.status,
         JSON.stringify(input.context ?? {}),
-        JSON.stringify(input.metadata ?? {}),
+        JSON.stringify(buildWorkoutLogMetadata(input)),
       ],
     );
 
@@ -233,6 +242,8 @@ export async function getWorkoutLogsByUser(userId: string, limit = 20) {
         wl.completed_at as "completedAt",
         wl.duration_seconds as "durationSeconds",
         wl.status,
+        coalesce((wl.metadata->>'excludeFromAnalysis')::boolean, false) as "excludeFromAnalysis",
+        nullif(wl.metadata->>'analysisExclusionReason', '') as "analysisExclusionReason",
         wl.context,
         wl.metadata,
         coalesce(

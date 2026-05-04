@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import PageNavActions from "@/components/shared/page-nav-actions";
 import {
   getAiDebugGeneratedWorkoutHistory,
 } from "@/lib/analysis/ai-debug-generated-history";
@@ -305,7 +306,9 @@ export default function AnalysisDebugPage() {
   if (error) {
     return (
       <main className={uiPageShellClasses.page}>
-        <div className={uiPageShellClasses.content}>
+        <div className={cn(uiPageShellClasses.content, uiPageShellClasses.stack)}>
+          <PageNavActions backAction={{ label: "Till analys", href: "/analysis" }} />
+
           <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
             <h1 className="text-2xl font-semibold tracking-tight text-slate-950">
               Kunde inte visa debug-exporten
@@ -327,6 +330,8 @@ export default function AnalysisDebugPage() {
   return (
     <main className={uiPageShellClasses.page}>
       <div className={cn(uiPageShellClasses.content, "space-y-5 pb-8")}>
+        <PageNavActions backAction={{ label: "Till analys", href: "/analysis" }} />
+
         <section className={cn(uiCardClasses.base, uiCardClasses.padded)}>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
             Analysdebug

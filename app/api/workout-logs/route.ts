@@ -5,6 +5,7 @@ import {
   getWorkoutLogsByUser,
   insertWorkoutLog,
 } from "@/lib/workout-log-repository";
+import { reconcileWorkoutLogWithWeeklyPlan } from "@/lib/planning/weekly-plan-repository";
 import { requireAuthorizedUserId } from "@/lib/server-auth";
 
 // ===== Scheman =====
@@ -51,6 +52,16 @@ const createWorkoutLogSchema = z.object({
   durationSeconds: z.number().int(),
   status: z.union([z.literal("completed"), z.literal("aborted")]),
   exercises: z.array(completedExerciseSchema),
+  excludeFromAnalysis: z.boolean().optional(),
+  analysisExclusionReason: z
+    .union([
+      z.literal("test"),
+      z.literal("mistake"),
+      z.literal("aborted"),
+      z.literal("manual"),
+    ])
+    .nullable()
+    .optional(),
   context: z.record(z.string(), z.unknown()).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   events: z
@@ -78,6 +89,19 @@ export async function POST(request: Request) {
       ...parsed,
       userId: user.id,
     });
+
+    if (parsed.status === "completed" && parsed.excludeFromAnalysis !== true) {
+      try {
+        // Veckoplanen ska bara räkna riktiga genomförda pass, inte avbrutna/testpass.
+        await reconcileWorkoutLogWithWeeklyPlan(user.id, {
+          id: result.id,
+          completedAt: parsed.completedAt,
+          status: parsed.status,
+        });
+      } catch (weeklyPlanError) {
+        console.error("Kunde inte synka passet mot veckoplanen:", weeklyPlanError);
+      }
+    }
 
     return NextResponse.json(
       {

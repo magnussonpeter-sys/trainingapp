@@ -21,6 +21,7 @@ export function formatAiDebugPrompt(exportData: AiDebugExport) {
     "- Skilj på träningsfysiologiska problem och debug-/datakvalitetsproblem.",
     "- Innan du analyserar senaste passet: kontrollera analysisAvailability och latestWorkoutEvaluationContext.",
     "- Om senaste AI-pass saknas ska du inte låtsas bedöma övningsval, utan tydligt säga att bara plan/historik kan analyseras.",
+    "- Om senaste pass bara finns som fallback_from_history ska du beskriva det som en osäker fallback, inte som säkert senaste AI-genererade pass.",
     "- Var särskilt uppmärksam på korta eller tomma pass i historiken.",
     "- Bedöm om prioriterade muskler får direkt volym, inte bara indirekt träff.",
     "- Bedöm om planens kommande steg verkar kunna täcka kvarvarande budget.",

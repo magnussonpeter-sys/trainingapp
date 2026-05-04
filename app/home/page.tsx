@@ -13,10 +13,25 @@ import AppToast from "@/components/shared/app-toast";
 import { useHomeData } from "@/hooks/use-home-data";
 import { getDailyHomeWisdom } from "@/lib/get-daily-home-wisdom";
 import {
+  getActiveWorkoutSessionDraft,
+  isDraftForWorkout,
+} from "@/lib/active-workout-session-storage";
+import {
   buildWeeklyWorkoutStructure,
   detectWorkoutFocus,
   formatWorkoutFocus,
 } from "@/lib/weekly-workout-structure";
+import {
+  buildInitialWeeklyPlan,
+  buildWeeklyPlanContext,
+  deriveWeeklyPlanState,
+  getDefaultWeeklyPlanSettings,
+  getWeekStartDate,
+  type PlannedSession,
+  type WeeklyPlanSettings,
+  type WeeklyPlanState,
+} from "@/lib/planning/weekly-plan";
+import { getLocalWeeklyPlanSettings } from "@/lib/planning/weekly-plan-local-store";
 import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
 import type { TrainingGap } from "@/lib/planning/training-gap";
 import { generateWorkout } from "@/lib/workout-generator";
@@ -32,6 +47,7 @@ import {
 import { getExercisePreferences } from "@/lib/exercise-preference-storage";
 import { saveAiDebugGeneratedWorkoutSnapshot } from "@/lib/analysis/ai-debug-generated-history";
 import { getStoredHomeGymId, storeHomeGymId } from "@/hooks/use-home-preferences";
+import { getSessionDraft } from "@/lib/workout-flow/session-draft-store";
 import type { Workout, WorkoutFocus } from "@/types/workout";
 import type { WorkoutLog } from "@/lib/workout-log-storage";
 
@@ -131,6 +147,16 @@ function clampDuration(value: number) {
   return Math.min(Math.max(Math.round(value), 5), 180);
 }
 
+function getDurationPresetFromMinutes(value: number) {
+  const normalized = clampDuration(value);
+
+  if ([15, 20, 30, 45, 60].includes(normalized)) {
+    return String(normalized);
+  }
+
+  return "custom";
+}
+
 function getLastUsedGymId(userId: string, gymOptions: Array<{ id: string | number }>) {
   // Explicit sparat gymval ska vara sann källa för startsidan.
   const storedGymId = getStoredHomeGymId(userId);
@@ -139,6 +165,28 @@ function getLastUsedGymId(userId: string, gymOptions: Array<{ id: string | numbe
   }
 
   return null;
+}
+
+function hasResumeStateForWorkout(userId: string, workout: Workout | null) {
+  if (!userId || !workout) {
+    return false;
+  }
+
+  const activeSessionDraft = getActiveWorkoutSessionDraft(userId);
+  if (isDraftForWorkout(activeSessionDraft, workout)) {
+    return true;
+  }
+
+  const sessionDraft = getSessionDraft(userId);
+  if (!sessionDraft || sessionDraft.status !== "active") {
+    return false;
+  }
+
+  if (sessionDraft.workoutId && workout.id) {
+    return sessionDraft.workoutId === workout.id;
+  }
+
+  return sessionDraft.workoutName.trim() === workout.name.trim();
 }
 
 function getCoachMessage(params: {
@@ -527,6 +575,9 @@ function TodayFocusCard(props: {
   muscleGroups: MuscleBudgetGroup[];
   coachText: string;
   gymLabel: string;
+  gymOptions: Array<{ id: string | number; name: string }>;
+  selectedGymId: string;
+  onSelectGym: (value: string) => void;
   recommendedDurationMinutes: number;
   onAction: () => void;
   isGenerating: boolean;
@@ -537,6 +588,7 @@ function TodayFocusCard(props: {
 }) {
   const showCompletedTodayState =
     props.hasCompletedTrainingToday && !props.hasActiveWorkout;
+  const [showGymPicker, setShowGymPicker] = useState(false);
 
   return (
     <section className={cn(uiCardClasses.base, "p-6 shadow-[0_20px_48px_rgba(15,23,42,0.07)]")}>
@@ -565,9 +617,13 @@ function TodayFocusCard(props: {
             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900">
               {props.recommendedDurationMinutes} min
             </span>
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700">
+            <button
+              type="button"
+              onClick={() => setShowGymPicker((previous) => !previous)}
+              className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-900"
+            >
               Gym: {props.gymLabel}
-            </span>
+            </button>
             {props.hasActiveWorkout ? (
               <span className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-emerald-800">
                 Pågående pass
@@ -588,6 +644,31 @@ function TodayFocusCard(props: {
               </span>
             )}
           </div>
+
+          {showGymPicker ? (
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              {/* Dagens pass återanvänder samma gymval som AI-genereringen för att hålla flödet konsekvent. */}
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-slate-700">
+                  Välj gym för dagens pass
+                </span>
+                <select
+                  value={props.selectedGymId}
+                  onChange={(event) => {
+                    props.onSelectGym(event.target.value);
+                    setShowGymPicker(false);
+                  }}
+                  className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                >
+                  {props.gymOptions.map((gym) => (
+                    <option key={String(gym.id)} value={String(gym.id)}>
+                      {gym.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
 
           {props.hasActiveWorkout ? (
             <p className="mt-4 text-base leading-7 text-emerald-800">
@@ -702,6 +783,50 @@ function TrainingGapCard(props: {
       >
         Visa detaljer
       </button>
+    </section>
+  );
+}
+
+function WeeklyPlanSummaryCard(props: {
+  state: WeeklyPlanState;
+  onCreateWorkout: () => void;
+  onOpenPlan: () => void;
+}) {
+  const completedSessions = props.state.completedWorkoutLogIds.length;
+  const targetSessions = props.state.settings.sessionsPerWeek;
+
+  return (
+    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
+      <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+        Veckan
+      </p>
+      <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
+        {completedSessions} av {targetSessions} pass genomförda
+      </h2>
+      <p className="mt-2 text-base leading-7 text-slate-700">
+        Nästa rekommenderade pass: {props.state.remainingTrainingNeed.suggestedNextDurationMinutes} min{" "}
+        {props.state.remainingTrainingNeed.suggestedNextFocus === "full_body"
+          ? "helkropp"
+          : props.state.remainingTrainingNeed.suggestedNextFocus === "upper"
+            ? "överkropp"
+            : props.state.remainingTrainingNeed.suggestedNextFocus === "lower"
+              ? "ben"
+              : props.state.remainingTrainingNeed.suggestedNextFocus === "push"
+                ? "press"
+                : props.state.remainingTrainingNeed.suggestedNextFocus === "pull"
+                  ? "drag"
+                  : props.state.remainingTrainingNeed.suggestedNextFocus === "core"
+                    ? "bål"
+                    : "rörlighet"}
+      </p>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+        <button type="button" onClick={props.onCreateWorkout} className={uiButtonClasses.primary}>
+          Skapa AI-pass
+        </button>
+        <button type="button" onClick={props.onOpenPlan} className={uiButtonClasses.secondary}>
+          Ändra veckoplan
+        </button>
+      </div>
     </section>
   );
 }
@@ -1127,6 +1252,7 @@ export default function HomePage() {
   const [selectedGymId, setSelectedGymId] = useState<string>("bodyweight");
   const [selectedDurationPreset, setSelectedDurationPreset] = useState<string>("30");
   const [customDurationInput, setCustomDurationInput] = useState<string>("");
+  const [hasManualDurationChoice, setHasManualDurationChoice] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
@@ -1134,6 +1260,8 @@ export default function HomePage() {
   const [showWeeklyInsights, setShowWeeklyInsights] = useState(false);
   const [homeNotice, setHomeNotice] = useState<string | null>(null);
   const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
+  const [weeklyPlanSettings, setWeeklyPlanSettings] = useState<WeeklyPlanSettings | null>(null);
+  const [weeklyPlanSessions, setWeeklyPlanSessions] = useState<PlannedSession[]>([]);
   const hasAppliedInitialGymRef = useRef(false);
 
   const gymOptions = useMemo(() => {
@@ -1174,6 +1302,77 @@ export default function HomePage() {
       weeklyStructure,
     });
   }, [weeklyStructure, workoutLogs]);
+  const weeklyPlanState = useMemo(() => {
+    if (!userId || !weeklyPlanSettings) {
+      return null;
+    }
+
+    return deriveWeeklyPlanState({
+      settings: weeklyPlanSettings,
+      plannedSessions: weeklyPlanSessions,
+      workoutLogs,
+      now: new Date(),
+    });
+  }, [userId, weeklyPlanSessions, weeklyPlanSettings, workoutLogs]);
+  const weeklyPlanContext = useMemo(
+    () => (weeklyPlanState ? buildWeeklyPlanContext(weeklyPlanState) : null),
+    [weeklyPlanState],
+  );
+
+  useEffect(() => {
+    if (!userId) {
+      setWeeklyPlanSettings(null);
+      setWeeklyPlanSessions([]);
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadWeeklyPlanSummary() {
+      try {
+        const response = await fetch(`/api/weekly-plan?userId=${encodeURIComponent(userId)}`, {
+          cache: "no-store",
+          credentials: "include",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              ok?: boolean;
+              settings?: WeeklyPlanSettings;
+              plannedSessions?: PlannedSession[];
+              error?: string;
+            }
+          | null;
+
+        if (!response.ok || !payload?.ok || !payload.settings) {
+          throw new Error(payload?.error || "Kunde inte läsa veckoplanen");
+        }
+
+        if (!isMounted) {
+          return;
+        }
+
+        setWeeklyPlanSettings(payload.settings);
+        setWeeklyPlanSessions(payload.plannedSessions ?? []);
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+
+        const fallbackSettings =
+          getLocalWeeklyPlanSettings(userId) ?? getDefaultWeeklyPlanSettings(userId);
+        setWeeklyPlanSettings(fallbackSettings);
+        setWeeklyPlanSessions(
+          buildInitialWeeklyPlan(fallbackSettings, getWeekStartDate(new Date())),
+        );
+      }
+    }
+
+    void loadWeeklyPlanSummary();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [userId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1193,22 +1392,57 @@ export default function HomePage() {
     window.history.replaceState({}, "", nextUrl);
   }, []);
 
-  const coachMessage = useMemo(() => {
-    return getCoachMessage({
-      logs: workoutLogs,
-      nextFocus: weeklyStructure.nextFocus,
-      completedLast7Days: weeklyStructure.completedLast7Days,
-      durationMinutes,
-    });
-  }, [durationMinutes, weeklyStructure.completedLast7Days, weeklyStructure.nextFocus, workoutLogs]);
   const dailyWisdom = useMemo(() => getDailyHomeWisdom(), []);
   const todayPlanDay = useMemo(
     () => weeklyPlanDays.find((day) => day.isToday) ?? null,
     [weeklyPlanDays],
   );
+  const todaysRecommendedDurationMinutes = todayPlanDay?.recommendedMinutes ?? null;
+  const weeklyPlanSuggestedDurationMinutes =
+    weeklyPlanState?.remainingTrainingNeed.suggestedNextDurationMinutes ?? null;
+  const todaysRecommendedFocus = todayPlanDay?.plannedDay?.focus ?? weeklyStructure.nextFocus;
+  const todaysRecommendedMuscles =
+    todayPlanDay?.plannedStep?.muscleGroups?.length
+      ? todayPlanDay.plannedStep.muscleGroups
+      : weeklyStructure.nextFocusMuscleGroups;
+  const coachMessage = useMemo(() => {
+    return getCoachMessage({
+      logs: workoutLogs,
+      nextFocus: todaysRecommendedFocus,
+      completedLast7Days: weeklyStructure.completedLast7Days,
+      durationMinutes: todaysRecommendedDurationMinutes ?? durationMinutes,
+    });
+  }, [
+    durationMinutes,
+    todaysRecommendedDurationMinutes,
+    todaysRecommendedFocus,
+    weeklyStructure.completedLast7Days,
+    workoutLogs,
+  ]);
   // Home visar ett klart-för-idag-läge när dagens planerade slot redan är genomförd.
   const hasCompletedTrainingToday = Boolean(todayPlanDay?.completedSummary);
   const completedTodayMessage = "Bra jobbat! Du har ingen mer planerad träning idag.";
+
+  useEffect(() => {
+    if (hasManualDurationChoice) {
+      return;
+    }
+
+    const suggestedDuration = todaysRecommendedDurationMinutes ?? weeklyPlanSuggestedDurationMinutes;
+    if (!suggestedDuration) {
+      return;
+    }
+
+    const nextPreset = getDurationPresetFromMinutes(suggestedDuration);
+    if (nextPreset === "custom") {
+      setSelectedDurationPreset("custom");
+      setCustomDurationInput(String(suggestedDuration));
+      return;
+    }
+
+    setSelectedDurationPreset(nextPreset);
+    setCustomDurationInput("");
+  }, [hasManualDurationChoice, todaysRecommendedDurationMinutes, weeklyPlanSuggestedDurationMinutes]);
 
   useEffect(() => {
     hasAppliedInitialGymRef.current = false;
@@ -1270,8 +1504,13 @@ export default function HomePage() {
     }
 
     try {
-      // Startsidan ska kunna visa om ett pass väntar i run-flödet.
-      setActiveWorkout(getActiveWorkout(userId));
+      // Ett gammalt active_workout utan riktig sessionsdraft ska inte visas som pågående pass.
+      const storedActiveWorkout = getActiveWorkout(userId);
+      setActiveWorkout(
+        hasResumeStateForWorkout(userId, storedActiveWorkout)
+          ? storedActiveWorkout
+          : null,
+      );
     } catch {
       setActiveWorkout(null);
     }
@@ -1306,7 +1545,7 @@ export default function HomePage() {
         gymLabel,
         gymEquipmentDetails: selectedGym?.equipment ?? [],
         confidenceScore: weeklyStructure.confidenceScore,
-        nextFocus: weeklyStructure.nextFocus,
+        nextFocus: todaysRecommendedFocus,
         splitStyle: weeklyStructure.splitStyle,
         weeklyBudget: weeklyStructure.muscleBudget.map((entry) => ({
           group: entry.group,
@@ -1317,8 +1556,15 @@ export default function HomePage() {
           effectiveSets: entry.effectiveSets,
           remainingSets: entry.remainingSets,
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
+          loadStatus: entry.loadStatus,
         })),
         weeklyPlan: weeklyStructure.upcomingDays,
+        selectedPlanMode: weeklyStructure.selectedPlanMode,
+        focusIntent: weeklyStructure.focusIntent,
+        targetMuscles: weeklyStructure.targetMuscles,
+        avoidMuscles: weeklyStructure.avoidMuscles,
+        limitedMuscles: weeklyStructure.limitedMuscles,
+        weeklyPlanContext,
         trainingGap: weeklyStructure.trainingGap,
         lessOftenExerciseIds,
         avoidSupersets: settings?.avoid_supersets ?? null,
@@ -1331,7 +1577,7 @@ export default function HomePage() {
         goal,
         selectedGym: gymLabel,
         equipmentSeed: equipment,
-        workoutFocusTag: weeklyStructure.nextFocus,
+        workoutFocusTag: todaysRecommendedFocus,
         request: {
           goal,
           durationMinutes,
@@ -1339,7 +1585,13 @@ export default function HomePage() {
           gym: gymId,
           gymLabel,
           confidenceScore: weeklyStructure.confidenceScore,
-          nextFocus: weeklyStructure.nextFocus,
+          nextFocus: todaysRecommendedFocus,
+          selectedPlanMode: weeklyStructure.selectedPlanMode,
+          focusIntent: weeklyStructure.focusIntent,
+          targetMuscles: weeklyStructure.targetMuscles,
+          avoidMuscles: weeklyStructure.avoidMuscles,
+          limitedMuscles: weeklyStructure.limitedMuscles,
+          weeklyPlanContext,
           splitStyle: weeklyStructure.splitStyle,
           supersetPreference: settings?.superset_preference ?? null,
         },
@@ -1352,6 +1604,7 @@ export default function HomePage() {
           effectiveSets: entry.effectiveSets,
           remainingSets: entry.remainingSets,
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
+          loadStatus: entry.loadStatus,
         })),
         weeklyPlan: weeklyStructure.upcomingDays,
         normalizedWorkout: workout,
@@ -1418,7 +1671,7 @@ export default function HomePage() {
         gymLabel,
         gymEquipmentDetails: selectedGym?.equipment ?? [],
         confidenceScore: weeklyStructure.confidenceScore,
-        nextFocus: weeklyStructure.nextFocus,
+        nextFocus: todaysRecommendedFocus,
         splitStyle: weeklyStructure.splitStyle,
         weeklyBudget: weeklyStructure.muscleBudget.map((entry) => ({
           group: entry.group,
@@ -1429,8 +1682,15 @@ export default function HomePage() {
           effectiveSets: entry.effectiveSets,
           remainingSets: entry.remainingSets,
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
+          loadStatus: entry.loadStatus,
         })),
         weeklyPlan: weeklyStructure.upcomingDays,
+        selectedPlanMode: weeklyStructure.selectedPlanMode,
+        focusIntent: weeklyStructure.focusIntent,
+        targetMuscles: weeklyStructure.targetMuscles,
+        avoidMuscles: weeklyStructure.avoidMuscles,
+        limitedMuscles: weeklyStructure.limitedMuscles,
+        weeklyPlanContext,
         trainingGap: weeklyStructure.trainingGap,
         lessOftenExerciseIds,
         avoidSupersets: settings?.avoid_supersets ?? null,
@@ -1443,7 +1703,7 @@ export default function HomePage() {
         goal,
         selectedGym: gymLabel,
         equipmentSeed: equipment,
-        workoutFocusTag: weeklyStructure.nextFocus,
+        workoutFocusTag: todaysRecommendedFocus,
         request: {
           goal,
           durationMinutes: quickDuration,
@@ -1451,7 +1711,13 @@ export default function HomePage() {
           gym: gymId,
           gymLabel,
           confidenceScore: weeklyStructure.confidenceScore,
-          nextFocus: weeklyStructure.nextFocus,
+          nextFocus: todaysRecommendedFocus,
+          selectedPlanMode: weeklyStructure.selectedPlanMode,
+          focusIntent: weeklyStructure.focusIntent,
+          targetMuscles: weeklyStructure.targetMuscles,
+          avoidMuscles: weeklyStructure.avoidMuscles,
+          limitedMuscles: weeklyStructure.limitedMuscles,
+          weeklyPlanContext,
           splitStyle: weeklyStructure.splitStyle,
           supersetPreference: settings?.superset_preference ?? null,
         },
@@ -1464,6 +1730,7 @@ export default function HomePage() {
           effectiveSets: entry.effectiveSets,
           remainingSets: entry.remainingSets,
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
+          loadStatus: entry.loadStatus,
         })),
         weeklyPlan: weeklyStructure.upcomingDays,
         normalizedWorkout: workout,
@@ -1477,7 +1744,7 @@ export default function HomePage() {
         gym: gymId,
         gymLabel,
         availableEquipment: equipment,
-        plannedFocus: weeklyStructure.nextFocus,
+        plannedFocus: todaysRecommendedFocus,
       });
 
       router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);
@@ -1544,11 +1811,14 @@ export default function HomePage() {
         />
 
         <TodayFocusCard
-          focus={weeklyStructure.nextFocus}
-          muscleGroups={weeklyStructure.nextFocusMuscleGroups}
+          focus={todaysRecommendedFocus}
+          muscleGroups={todaysRecommendedMuscles}
           coachText={coachMessage}
           gymLabel={selectedGym?.name ?? "Kroppsvikt / utan gym"}
-          recommendedDurationMinutes={durationMinutes}
+          gymOptions={gymOptions.map((gym) => ({ id: gym.id, name: gym.name }))}
+          selectedGymId={selectedGymId}
+          onSelectGym={handleSelectedGymChange}
+          recommendedDurationMinutes={todaysRecommendedDurationMinutes ?? durationMinutes}
           onAction={handleQuickStartTodayWorkout}
           isGenerating={isGenerating}
           hasActiveWorkout={Boolean(activeWorkout)}
@@ -1557,14 +1827,28 @@ export default function HomePage() {
           completedTodayMessage={completedTodayMessage}
         />
 
+        {weeklyPlanState ? (
+          <WeeklyPlanSummaryCard
+            state={weeklyPlanState}
+            onCreateWorkout={handleReviewAiWorkout}
+            onOpenPlan={() => router.push("/home/plan")}
+          />
+        ) : null}
+
         <QuickStartCard
           gymOptions={gymOptions}
           selectedGymId={selectedGymId}
           setSelectedGymId={handleSelectedGymChange}
           selectedDurationPreset={selectedDurationPreset}
-          setSelectedDurationPreset={setSelectedDurationPreset}
+          setSelectedDurationPreset={(value) => {
+            setHasManualDurationChoice(true);
+            setSelectedDurationPreset(value);
+          }}
           customDurationInput={customDurationInput}
-          setCustomDurationInput={setCustomDurationInput}
+          setCustomDurationInput={(value) => {
+            setHasManualDurationChoice(true);
+            setCustomDurationInput(value);
+          }}
           durationMinutes={durationMinutes}
           onAiPass={handleReviewAiWorkout}
           onCustomWorkout={handleCustomWorkout}

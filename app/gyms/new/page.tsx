@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import PageNavActions from "@/components/shared/page-nav-actions";
 import type { AuthUser } from "@/lib/gyms";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
@@ -120,6 +121,11 @@ export default function NewGymPage() {
   return (
     <main className={uiPageShellClasses.page}>
       <div className={cn(uiPageShellClasses.content, uiPageShellClasses.stack)}>
+        <PageNavActions
+          backAction={{ label: "Till gym", href: "/gyms" }}
+          cancelAction={{ label: "Avbryt", href: "/gyms" }}
+        />
+
         <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -130,10 +136,6 @@ export default function NewGymPage() {
                 Lägg till gym
               </h1>
             </div>
-
-            <Link href="/gyms" className={uiButtonClasses.ghostDark}>
-              Avbryt
-            </Link>
           </div>
 
           <div className="mt-5 space-y-4">
@@ -201,4 +203,3 @@ export default function NewGymPage() {
     </main>
   );
 }
-

@@ -19,7 +19,10 @@ import {
   type CoachDecision,
 } from "@/lib/planning/coach-decision";
 import { getExerciseById } from "@/lib/exercise-catalog";
-import type { WorkoutLog } from "@/lib/workout-log-storage";
+import {
+  isWorkoutLogExcludedFromAnalysis,
+  type WorkoutLog,
+} from "@/lib/workout-log-storage";
 import type { WorkoutFocus } from "@/types/workout";
 
 type WeeklyPlanningGoal =
@@ -61,6 +64,13 @@ export type WeeklyWorkoutStructure = {
   muscleBudget: MuscleBudgetEntry[];
   nextFocus: WorkoutFocus;
   nextFocusMuscleGroups: MuscleBudgetGroup[];
+  selectedPlanMode: PlannedTrainingMode;
+  targetMuscles: MuscleBudgetGroup[];
+  avoidMuscles: MuscleBudgetGroup[];
+  limitedMuscles: MuscleBudgetGroup[];
+  focusIntent: string;
+  recoveryOverrideApplied: boolean;
+  recoveryOverrideReason: string | null;
   passCount: number;
   priorityMuscles: MuscleBudgetGroup[];
   optimalPlanText: string;
@@ -70,6 +80,13 @@ export type WeeklyWorkoutStructure = {
   upcomingDays: WeeklyPlanDay[];
   upcomingSteps: WeeklyPlanStep[];
 };
+
+export type PlannedTrainingMode =
+  | "normal_training"
+  | "recovery"
+  | "recovery_mobility"
+  | "light_accessory"
+  | "selective_priority_accessory";
 
 export type AdaptiveFocusScore = {
   focus: WorkoutFocus;
@@ -94,8 +111,8 @@ const CORE_PATTERNS = new Set(["core"]);
 const FOCUS_TO_BUDGET_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
   full_body: ["quads", "glutes", "back", "chest", "core"],
   upper_body: ["chest", "back", "shoulders", "biceps", "triceps"],
-  lower_body: ["quads", "hamstrings", "glutes", "calves", "core"],
-  core: ["core", "glutes"],
+  lower_body: ["quads", "hamstrings", "glutes", "calves"],
+  core: ["core"],
 };
 
 const PRIORITY_MULTIPLIERS = [1.75, 1.5, 1.35] as const;
@@ -104,6 +121,18 @@ const PRIORITY_BONUS_MUSCLES = new Set<MuscleBudgetGroup>([
   "triceps",
   "biceps",
 ]);
+const MUSCLE_LABELS: Record<MuscleBudgetGroup, string> = {
+  chest: "Bröst",
+  back: "Rygg",
+  quads: "Framsida lår",
+  hamstrings: "Baksida lår",
+  glutes: "Säte",
+  shoulders: "Axlar",
+  biceps: "Biceps",
+  triceps: "Triceps",
+  calves: "Vader",
+  core: "Bål",
+};
 
 function toIsoDate(value: Date) {
   return value.toISOString().slice(0, 10);
@@ -228,7 +257,9 @@ function getRecentCompletedLogs(logs: WorkoutLog[], now: Date) {
   const thresholdMs = 7 * 24 * 60 * 60 * 1000;
 
   return [...logs]
-    .filter((log) => log.status === "completed")
+    .filter(
+      (log) => log.status === "completed" && !isWorkoutLogExcludedFromAnalysis(log),
+    )
     .sort(
       (left, right) =>
         new Date(left.completedAt).getTime() - new Date(right.completedAt).getTime(),
@@ -243,7 +274,7 @@ function getCompletedLogsWithinDays(logs: WorkoutLog[], now: Date, days: number)
   const thresholdMs = days * 24 * 60 * 60 * 1000;
 
   return logs.filter((log) => {
-    if (log.status !== "completed") {
+    if (log.status !== "completed" || isWorkoutLogExcludedFromAnalysis(log)) {
       return false;
     }
 
@@ -278,6 +309,17 @@ function getLoadPenalty(entry: MuscleBudgetEntry) {
   }
 
   return 0;
+}
+
+function isHighRiskOrOver(entry: MuscleBudgetEntry) {
+  return entry.loadStatus === "high_risk" || entry.loadStatus === "over";
+}
+
+function getEntriesByGroups(
+  entries: MuscleBudgetEntry[],
+  groups: MuscleBudgetGroup[],
+) {
+  return entries.filter((entry) => groups.includes(entry.group));
 }
 
 function getFocusEntries(
@@ -510,7 +552,7 @@ function getDistinctTrainingWeeks(logs: WorkoutLog[]) {
   const weekKeys = new Set<string>();
 
   for (const log of logs) {
-    if (log.status !== "completed") {
+    if (log.status !== "completed" || isWorkoutLogExcludedFromAnalysis(log)) {
       continue;
     }
 
@@ -602,6 +644,92 @@ function buildPriorityMuscles(
   return result.slice(0, 4);
 }
 
+function getPlanModeFocusTarget(
+  targetMuscles: MuscleBudgetGroup[],
+  fallbackFocus: WorkoutFocus,
+): WorkoutFocus {
+  const upperCount = targetMuscles.filter((group) =>
+    ["chest", "back", "shoulders", "biceps", "triceps"].includes(group),
+  ).length;
+  const lowerCount = targetMuscles.filter((group) =>
+    ["quads", "hamstrings", "glutes", "calves"].includes(group),
+  ).length;
+
+  if (upperCount > lowerCount) {
+    return "upper_body";
+  }
+
+  if (lowerCount > upperCount) {
+    return "lower_body";
+  }
+
+  if (targetMuscles.length === 1 && targetMuscles[0] === "core") {
+    return "core";
+  }
+
+  return fallbackFocus;
+}
+
+function buildLowRiskTargetMuscles(params: {
+  entries: MuscleBudgetEntry[];
+  configuredPriorityMuscles: MuscleBudgetGroup[];
+  targetLimit: number;
+}) {
+  return [...params.entries]
+    .filter(
+      (entry) =>
+        entry.remainingSets > 0 &&
+        !isHighRiskOrOver(entry) &&
+        entry.group !== "core",
+    )
+    .sort((left, right) => {
+      const leftPriorityRank = getPriorityRank(
+        params.configuredPriorityMuscles,
+        left.group,
+      );
+      const rightPriorityRank = getPriorityRank(
+        params.configuredPriorityMuscles,
+        right.group,
+      );
+
+      if (leftPriorityRank !== rightPriorityRank) {
+        if (leftPriorityRank === null) return 1;
+        if (rightPriorityRank === null) return -1;
+        return leftPriorityRank - rightPriorityRank;
+      }
+
+      if (right.remainingSets !== left.remainingSets) {
+        return right.remainingSets - left.remainingSets;
+      }
+
+      return right.recent4WeekAvgSets - left.recent4WeekAvgSets;
+    })
+    .slice(0, params.targetLimit)
+    .map((entry) => entry.group);
+}
+
+function shouldIncludeOptionalCalvesAccessory(
+  entries: MuscleBudgetEntry[],
+  selectedPlanMode: PlannedTrainingMode,
+  nextFocus: WorkoutFocus,
+) {
+  const calves = entries.find((entry) => entry.group === "calves");
+
+  if (!calves || calves.remainingSets <= 0 || isHighRiskOrOver(calves)) {
+    return false;
+  }
+
+  if (
+    selectedPlanMode !== "light_accessory" &&
+    selectedPlanMode !== "selective_priority_accessory" &&
+    nextFocus !== "lower_body"
+  ) {
+    return false;
+  }
+
+  return calves.recent4WeekAvgSets <= 1;
+}
+
 function buildFocusSummaryText(params: {
   coachDecision: CoachDecision;
   currentWeekFocuses: WorkoutFocus[];
@@ -670,11 +798,14 @@ export function buildWeeklyWorkoutStructure(params: {
 }): WeeklyWorkoutStructure {
   const now = params.now ?? new Date();
   const goal = params.settings?.training_goal ?? null;
+  const analysisLogs = params.logs.filter(
+    (log) => !isWorkoutLogExcludedFromAnalysis(log),
+  );
   const pattern = getGoalPattern(goal);
-  const recentCompletedLogs = getRecentCompletedLogs(params.logs, now);
-  const recent28DayCompletedLogs = getCompletedLogsWithinDays(params.logs, now, 28);
+  const recentCompletedLogs = getRecentCompletedLogs(analysisLogs, now);
+  const recent28DayCompletedLogs = getCompletedLogsWithinDays(analysisLogs, now, 28);
   const confidenceScore = getConfidenceScore({
-    abortedCount: params.logs.filter((log) => log.status === "aborted").length,
+    abortedCount: analysisLogs.filter((log) => log.status === "aborted").length,
     completedLast28Days: recent28DayCompletedLogs.length,
     distinctTrainingWeeks: getDistinctTrainingWeeks(recent28DayCompletedLogs),
   });
@@ -687,7 +818,7 @@ export function buildWeeklyWorkoutStructure(params: {
     confidenceScore,
     experienceLevel: params.settings?.experience_level ?? null,
     goal,
-    logs: params.logs,
+    logs: analysisLogs,
     now,
     priorityMuscles: configuredPriorityMuscles,
     sportFocus: params.settings?.sport_focus ?? null,
@@ -695,7 +826,7 @@ export function buildWeeklyWorkoutStructure(params: {
   const currentWeekFocuses = recentCompletedLogs.map((log) => detectWorkoutFocus(log));
   const passCount = getGoalPassCount(goal);
   const goalTrajectory = buildGoalTrajectory({
-    logs: params.logs,
+    logs: analysisLogs,
     goal,
     experienceLevel: params.settings?.experience_level ?? null,
     muscleBudget,
@@ -704,7 +835,7 @@ export function buildWeeklyWorkoutStructure(params: {
     now,
   });
   const trainingGap = buildTrainingGap({
-    logs: params.logs,
+    logs: analysisLogs,
     muscleBudget,
     goal,
     experienceLevel: params.settings?.experience_level ?? null,
@@ -777,29 +908,168 @@ export function buildWeeklyWorkoutStructure(params: {
   const finalFocusScore = selectedFocusIsUsable
     ? coachSuggestedFocusScore
     : selectedFocusScore;
-  const nextFocus = finalFocusScore?.focus ?? patternPreferredFocus;
-  const nextFocusMuscleGroups = getFocusMuscleGroups(muscleBudget, nextFocus, {
+  const rawNextFocus = finalFocusScore?.focus ?? patternPreferredFocus;
+  const coreEntry = muscleBudget.find((entry) => entry.group === "core") ?? null;
+  const focusScoresExcludingCore = adaptiveFocusScores.filter(
+    (entry) => entry.focus !== "core",
+  );
+  const nextNonCoreFocus =
+    [...focusScoresExcludingCore].sort((left, right) => right.score - left.score)[0]
+      ?.focus ?? "full_body";
+  const nextFocus =
+    rawNextFocus === "core" &&
+    coreEntry &&
+    (isHighRiskOrOver(coreEntry) || coreEntry.remainingSets <= 0)
+      ? nextNonCoreFocus
+      : rawNextFocus;
+  const overloadedEntries = muscleBudget.filter((entry) => isHighRiskOrOver(entry));
+  const highRiskOrOverCount = overloadedEntries.length;
+  const lowRiskTargets = buildLowRiskTargetMuscles({
+    entries: muscleBudget,
+    configuredPriorityMuscles,
+    targetLimit: 3,
+  });
+  let selectedPlanMode: PlannedTrainingMode = "normal_training";
+  let targetMuscles = getFocusMuscleGroups(muscleBudget, nextFocus, {
     limit: 3,
     configuredPriorityMuscles,
     recommendedOnly: true,
   });
+  let avoidMuscles = overloadedEntries.map((entry) => entry.group);
+  let limitedMuscles: MuscleBudgetGroup[] = [];
+  let focusIntent = `Normalt ${formatWorkoutFocus(nextFocus).toLowerCase()}pass utifrån veckobudgeten.`;
+  let recoveryOverrideApplied = false;
+  let recoveryOverrideReason: string | null = null;
+  const selectedFocusRiskEntries = getEntriesByGroups(
+    muscleBudget,
+    FOCUS_TO_BUDGET_GROUPS[nextFocus],
+  ).filter((entry) => isHighRiskOrOver(entry) || entry.remainingSets <= 0);
+  const shouldApplyRecoveryOverride =
+    (coachDecision.status === "recovery_needed" ||
+      goalTrajectory.status === "too_aggressive") &&
+    (highRiskOrOverCount >= 3 ||
+      (finalFocusScore?.score ?? 0) <= 0 ||
+      selectedFocusRiskEntries.length >= Math.ceil(FOCUS_TO_BUDGET_GROUPS[nextFocus].length / 2));
+
+  if (shouldApplyRecoveryOverride) {
+    // När flera grupper redan är pressade ska modellen hellre välja selektivt/lätt än ett vanligt pass.
+    recoveryOverrideApplied = true;
+    recoveryOverrideReason =
+      coachDecision.status === "recovery_needed"
+        ? coachDecision.message
+        : goalTrajectory.message;
+
+    if (lowRiskTargets.length > 0) {
+      selectedPlanMode = "selective_priority_accessory";
+      targetMuscles = lowRiskTargets.slice(0, 3);
+      limitedMuscles = lowRiskTargets.slice(3, 5);
+      focusIntent = `Lätt selektivt pass med direkt volym för ${targetMuscles
+        .map((group) => MUSCLE_LABELS[group].toLowerCase())
+        .join(", ")}, utan att driva upp redan belastade muskler.`;
+    } else if (muscleBudget.some((entry) => entry.remainingSets > 0 && !isHighRiskOrOver(entry))) {
+      selectedPlanMode = "light_accessory";
+      targetMuscles = buildLowRiskTargetMuscles({
+        entries: muscleBudget,
+        configuredPriorityMuscles,
+        targetLimit: 2,
+      });
+      focusIntent =
+        "Lätt tillbehörspass rekommenderas om du tränar idag. Håll volym och intensitet tydligt lägre än vanligt.";
+    } else {
+      selectedPlanMode = "recovery_mobility";
+      targetMuscles = [];
+      avoidMuscles = overloadedEntries.map((entry) => entry.group);
+      focusIntent =
+        "Vila eller lätt rörlighet rekommenderas eftersom återhämtning väger tyngre än mer träningsfokus just nu.";
+    }
+  }
+
+  if (shouldIncludeOptionalCalvesAccessory(muscleBudget, selectedPlanMode, nextFocus)) {
+    if (!targetMuscles.includes("calves") && !limitedMuscles.includes("calves")) {
+      limitedMuscles = [...limitedMuscles, "calves"];
+    }
+  }
+
+  const effectiveFocus =
+    selectedPlanMode === "selective_priority_accessory" && targetMuscles.length > 0
+      ? getPlanModeFocusTarget(targetMuscles, nextFocus)
+      : nextFocus;
+  const nextFocusMuscleGroups = targetMuscles.length > 0 ? targetMuscles : getFocusMuscleGroups(
+    muscleBudget,
+    effectiveFocus,
+    {
+      limit: 3,
+      configuredPriorityMuscles,
+      recommendedOnly: true,
+    },
+  );
   const trainingDayIndexes = getTrainingDayIndexes(passCount);
-  const upcomingDays = Array.from({ length: 7 }, (_, index) => {
+  const resolveScheduledDay = (focus: WorkoutFocus | null, index: number): WeeklyPlanDay => {
     const date = addDays(now, index);
-    const slotIndex = trainingDayIndexes.indexOf(index);
-    const focus =
-      slotIndex === -1
-        ? null
-        : slotIndex === 0
-          ? nextFocus
-          : pattern[(nextPatternIndex + slotIndex) % pattern.length] ?? nextFocus;
+
+    if (index === 0 && selectedPlanMode === "recovery_mobility") {
+      return {
+        date: toIsoDate(date),
+        dayLabel: getDayLabel(date),
+        focus: null,
+        type: "recovery",
+      };
+    }
+
+    if (!focus) {
+      return {
+        date: toIsoDate(date),
+        dayLabel: getDayLabel(date),
+        focus: null,
+        type: "recovery",
+      };
+    }
+
+    const focusEntries = getEntriesByGroups(muscleBudget, FOCUS_TO_BUDGET_GROUPS[focus]);
+    const shouldReplaceCoreFocus =
+      focus === "core" &&
+      coreEntry &&
+      (isHighRiskOrOver(coreEntry) || coreEntry.remainingSets <= 0);
+
+    if (shouldReplaceCoreFocus) {
+      return {
+        date: toIsoDate(date),
+        dayLabel: getDayLabel(date),
+        focus: null,
+        type: "recovery",
+      };
+    }
+
+    if (
+      index > 0 &&
+      focusEntries.length > 0 &&
+      focusEntries.every((entry) => isHighRiskOrOver(entry) || entry.remainingSets <= 0)
+    ) {
+      return {
+        date: toIsoDate(date),
+        dayLabel: getDayLabel(date),
+        focus: null,
+        type: "recovery",
+      };
+    }
 
     return {
       date: toIsoDate(date),
       dayLabel: getDayLabel(date),
       focus,
-      type: focus ? "training" : "recovery",
-    } satisfies WeeklyPlanDay;
+      type: "training",
+    };
+  };
+  const upcomingDays = Array.from({ length: 7 }, (_, index) => {
+    const slotIndex = trainingDayIndexes.indexOf(index);
+    const focus =
+      slotIndex === -1
+        ? null
+        : slotIndex === 0
+          ? effectiveFocus
+          : pattern[(nextPatternIndex + slotIndex) % pattern.length] ?? effectiveFocus;
+
+    return resolveScheduledDay(focus, index);
   });
   let trainingStepCount = 0;
   let recoveryStepCount = 0;
@@ -810,9 +1080,12 @@ export function buildWeeklyWorkoutStructure(params: {
         label: `Pass ${trainingStepCount}`,
         focus: day.focus,
         type: day.type,
-        muscleGroups: getFocusMuscleGroups(muscleBudget, day.focus, {
-          configuredPriorityMuscles,
-        }),
+        muscleGroups:
+          trainingStepCount === 1 && targetMuscles.length > 0
+            ? targetMuscles
+            : getFocusMuscleGroups(muscleBudget, day.focus, {
+                configuredPriorityMuscles,
+              }),
       } satisfies WeeklyPlanStep;
     }
 
@@ -829,26 +1102,52 @@ export function buildWeeklyWorkoutStructure(params: {
     configuredPriorityMuscles,
     coachDecision.priorityGroups,
   );
+  const effectiveFocusScore =
+    adaptiveFocusScores.find((entry) => entry.focus === effectiveFocus) ??
+    getAdaptiveFocusScore({
+      focus: effectiveFocus,
+      entries: muscleBudget,
+      configuredPriorityMuscles,
+      patternPreferredFocus,
+    });
   const summaryText = buildFocusSummaryText({
     coachDecision,
     currentWeekFocuses,
     goalTrajectory,
-    nextFocus,
-    nextFocusScore:
-      finalFocusScore ??
-      getAdaptiveFocusScore({
-        focus: nextFocus,
-        entries: muscleBudget,
-        configuredPriorityMuscles,
-        patternPreferredFocus,
-      }),
+    nextFocus: effectiveFocus,
+    nextFocusScore: effectiveFocusScore,
     patternPreferredFocus,
   });
-  const optimalPlanText = buildOptimalPlanText({
+  const defaultOptimalPlanText = buildOptimalPlanText({
     coachDecision,
     goalTrajectory,
     passCount,
   });
+  const summaryOverride =
+    selectedPlanMode === "recovery_mobility"
+        ? `${buildFocusSummaryText({
+          coachDecision,
+          currentWeekFocuses,
+          goalTrajectory,
+          nextFocus: effectiveFocus,
+          nextFocusScore: effectiveFocusScore,
+          patternPreferredFocus,
+        })} Vila eller lätt rörlighet väger tyngre än mer träningsvolym idag.`
+      : selectedPlanMode === "selective_priority_accessory"
+        ? `Nästa träningsfönster bör vara selektivt. Sikta på direkt volym för ${targetMuscles
+            .map((group) => MUSCLE_LABELS[group].toLowerCase())
+            .join(", ")} och undvik extra belastning på ${avoidMuscles
+            .map((group) => MUSCLE_LABELS[group].toLowerCase())
+            .join(", ")}.`
+        : summaryText;
+  const optimalPlanText =
+    selectedPlanMode === "recovery_mobility"
+      ? "Återhämtning rekommenderas just nu. Om du ändå tränar idag bör det vara mycket lätt rörlighet eller låg belastning."
+      : selectedPlanMode === "selective_priority_accessory"
+        ? `${defaultOptimalPlanText} Håll passet kort och selektivt med direkt volym för ${targetMuscles
+            .map((group) => MUSCLE_LABELS[group].toLowerCase())
+            .join(", ")}.`
+        : defaultOptimalPlanText;
 
   return {
     coachDecision,
@@ -858,13 +1157,20 @@ export function buildWeeklyWorkoutStructure(params: {
     currentWeekFocuses,
     goalTrajectory,
     muscleBudget,
-    nextFocus,
+    nextFocus: effectiveFocus,
     nextFocusMuscleGroups,
+    selectedPlanMode,
+    targetMuscles,
+    avoidMuscles,
+    limitedMuscles,
+    focusIntent,
+    recoveryOverrideApplied,
+    recoveryOverrideReason,
     passCount,
     priorityMuscles,
     optimalPlanText,
     splitStyle: getSplitStyle(passCount),
-    summaryText,
+    summaryText: summaryOverride,
     trainingGap,
     upcomingDays,
     upcomingSteps,

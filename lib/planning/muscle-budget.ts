@@ -1,8 +1,9 @@
 import { getExerciseById } from "@/lib/exercise-catalog";
-import type {
-  CompletedExercise,
-  CompletedSet,
-  WorkoutLog,
+import {
+  isWorkoutLogExcludedFromAnalysis,
+  type CompletedExercise,
+  type CompletedSet,
+  type WorkoutLog,
 } from "@/lib/workout-log-storage";
 import type { SportFocus } from "@/types/training-profile";
 import type { WorkoutFocus } from "@/types/workout";
@@ -74,8 +75,8 @@ const MUSCLE_LABELS: Record<MuscleBudgetGroup, string> = {
 const FOCUS_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
   full_body: ["quads", "glutes", "back", "chest", "core"],
   upper_body: ["chest", "back", "shoulders", "biceps", "triceps"],
-  lower_body: ["quads", "hamstrings", "glutes", "calves", "core"],
-  core: ["core", "glutes"],
+  lower_body: ["quads", "hamstrings", "glutes", "calves"],
+  core: ["core"],
 };
 
 const SPORT_FOCUS_TARGET_ADJUSTMENTS: Record<SportFocus, SportFocusTargetAdjustments> = {
@@ -167,6 +168,13 @@ const RAW_MUSCLE_TO_BUDGET_GROUP: Record<string, MuscleBudgetGroup | null> = {
   forearms: null,
   feet: null,
 };
+
+const PRIMARY_SET_CREDIT = 1;
+const DEFAULT_SECONDARY_SET_CREDIT = 0.35;
+const CORE_STABILIZER_SET_CREDIT = 0.2;
+const SHOULDER_SECONDARY_SET_CREDIT = 0.35;
+const BACK_SECONDARY_SET_CREDIT = 0.35;
+// TODO: På sikt bör hypertrofi-, stabiliserings- och trötthetskredit separeras helt.
 
 type MuscleTotals = {
   completed: Record<MuscleBudgetGroup, number>;
@@ -332,25 +340,6 @@ function createEmptyMuscleTotals(): MuscleTotals {
   };
 }
 
-function addStimulus(
-  totals: Record<MuscleBudgetGroup, number>,
-  muscles: string[] | undefined,
-  setCount: number,
-  weight: number,
-) {
-  if (!Array.isArray(muscles) || setCount <= 0 || weight <= 0) {
-    return;
-  }
-
-  for (const rawMuscle of muscles) {
-    const group = RAW_MUSCLE_TO_BUDGET_GROUP[rawMuscle] ?? null;
-
-    if (group) {
-      totals[group] += setCount * weight;
-    }
-  }
-}
-
 function getMappedMuscleGroups(muscles: string[] | undefined) {
   if (!Array.isArray(muscles)) {
     return [];
@@ -367,6 +356,42 @@ function getMappedMuscleGroups(muscles: string[] | undefined) {
   }
 
   return Array.from(groups);
+}
+
+function getSecondarySetCredit(group: MuscleBudgetGroup) {
+  // Sekundär kredit hålls lägre än hypertrofivolym för att inte överskatta stabilisatorer.
+  if (group === "core") {
+    return CORE_STABILIZER_SET_CREDIT;
+  }
+
+  if (group === "shoulders") {
+    return SHOULDER_SECONDARY_SET_CREDIT;
+  }
+
+  if (group === "back") {
+    return BACK_SECONDARY_SET_CREDIT;
+  }
+
+  return DEFAULT_SECONDARY_SET_CREDIT;
+}
+
+function addGroupStimulus(
+  totals: Record<MuscleBudgetGroup, number>,
+  groups: MuscleBudgetGroup[],
+  setCount: number,
+  getPerSetCredit: (group: MuscleBudgetGroup) => number,
+) {
+  if (groups.length === 0 || setCount <= 0) {
+    return;
+  }
+
+  for (const group of groups) {
+    const credit = getPerSetCredit(group);
+
+    if (credit > 0) {
+      totals[group] += setCount * credit;
+    }
+  }
 }
 
 function getSetCountForExercise(logExercise: WorkoutLog["exercises"][number]) {
@@ -467,17 +492,22 @@ function summarizeLogsByMuscle(logs: WorkoutLog[]) {
       const qualityWeight = getExerciseQualityWeight(exercise);
       const performanceSignal = getExercisePerformanceSignal(exercise);
       const primaryGroups = getMappedMuscleGroups(catalogExercise.primaryMuscles);
-      const secondaryGroups = getMappedMuscleGroups(catalogExercise.secondaryMuscles);
-
-      addStimulus(totals.completed, catalogExercise.primaryMuscles, setCount, 1);
-      addStimulus(totals.completed, catalogExercise.secondaryMuscles, setCount, 0.5);
-      addStimulus(totals.direct, catalogExercise.primaryMuscles, setCount, 1);
-      addStimulus(totals.effective, catalogExercise.primaryMuscles, setCount, qualityWeight);
-      addStimulus(
-        totals.effective,
+      const secondaryGroups = getMappedMuscleGroups(
         catalogExercise.secondaryMuscles,
+      ).filter((group) => !primaryGroups.includes(group));
+
+      // Varje huvudmuskel får högst en kreditkälla per set för att undvika dubbelräkning.
+      addGroupStimulus(totals.completed, primaryGroups, setCount, () => PRIMARY_SET_CREDIT);
+      addGroupStimulus(totals.completed, secondaryGroups, setCount, (group) =>
+        getSecondarySetCredit(group),
+      );
+      addGroupStimulus(totals.direct, primaryGroups, setCount, () => PRIMARY_SET_CREDIT);
+      addGroupStimulus(totals.effective, primaryGroups, setCount, () => qualityWeight);
+      addGroupStimulus(
+        totals.effective,
+        secondaryGroups,
         setCount,
-        0.5 * qualityWeight,
+        (group) => getSecondarySetCredit(group) * qualityWeight,
       );
 
       for (const group of [...primaryGroups, ...secondaryGroups]) {
@@ -510,6 +540,10 @@ function filterLogsWithinDays(logs: WorkoutLog[], now: Date, days: number) {
 
   return logs.filter((log) => {
     if (log.status !== "completed") {
+      return false;
+    }
+
+    if (isWorkoutLogExcludedFromAnalysis(log)) {
       return false;
     }
 
