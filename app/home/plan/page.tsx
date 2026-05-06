@@ -228,8 +228,9 @@ export default function WeeklyPlanPage() {
       plannedSessions,
       workoutLogs,
       now: new Date(),
+      goal: settings?.training_goal ?? null,
     });
-  }, [planSettings, plannedSessions, userId, workoutLogs]);
+  }, [planSettings, plannedSessions, settings?.training_goal, userId, workoutLogs]);
 
   const weeklyPlanRecommendation = useMemo(() => {
     return buildWeeklyPlanRecommendation(settings?.training_goal ?? null);

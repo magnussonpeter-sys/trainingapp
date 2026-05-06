@@ -24,11 +24,14 @@ import {
 import {
   buildInitialWeeklyPlan,
   buildWeeklyPlanContext,
+  buildWeeklyPlanStatus,
   deriveWeeklyPlanState,
   formatWeekdayLabel,
   getDefaultWeeklyPlanSettings,
   getWeekStartDate,
+  mapPlannedFocusToWorkoutFocus,
   type PlannedSession,
+  type WeeklyPlanContext,
   type WeeklyPlanSettings,
   type WeeklyPlanState,
 } from "@/lib/planning/weekly-plan";
@@ -148,6 +151,21 @@ function clampDuration(value: number) {
   return Math.min(Math.max(Math.round(value), 5), 180);
 }
 
+type HomeWorkoutRecommendation = {
+  focus: WorkoutFocus;
+  plannedFocus: WorkoutFocus;
+  durationMinutes: number;
+  muscleGroups: MuscleBudgetGroup[];
+  source: "weekly_plan" | "adaptive_fallback";
+};
+
+const HOME_FOCUS_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
+  upper_body: ["chest", "back", "shoulders", "biceps", "triceps"],
+  lower_body: ["quads", "hamstrings", "glutes", "calves"],
+  full_body: ["chest", "back", "quads", "hamstrings", "glutes"],
+  core: ["core"],
+};
+
 function getDurationPresetFromMinutes(value: number) {
   const normalized = clampDuration(value);
 
@@ -156,6 +174,62 @@ function getDurationPresetFromMinutes(value: number) {
   }
 
   return "custom";
+}
+
+function buildHomeWorkoutRecommendation(params: {
+  weeklyPlanState: WeeklyPlanState | null;
+  weeklyPlanContext: WeeklyPlanContext | null;
+  weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+  fallbackDurationMinutes: number;
+}) {
+  if (params.weeklyPlanState && params.weeklyPlanContext) {
+    const weeklyPlanContext = params.weeklyPlanContext;
+    const weeklyPlanStatus = buildWeeklyPlanStatus(params.weeklyPlanState);
+    const plannedFocus = mapPlannedFocusToWorkoutFocus(
+      params.weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
+    );
+    const focus =
+      weeklyPlanStatus.suggestedNextWorkoutFocus === "recovery_strength"
+        ? plannedFocus
+        : weeklyPlanStatus.suggestedNextWorkoutFocus;
+    const allowedGroups = new Set(HOME_FOCUS_GROUPS[focus]);
+    const deficitSortedGroups = (Object.keys(
+      weeklyPlanContext.muscleSetDeficits,
+    ) as MuscleBudgetGroup[])
+      .filter(
+        (group) =>
+          allowedGroups.has(group) && weeklyPlanContext.muscleSetDeficits[group] > 0,
+      )
+      .sort(
+        (left, right) =>
+          weeklyPlanContext.muscleSetDeficits[right] -
+          weeklyPlanContext.muscleSetDeficits[left],
+      );
+    const prioritizedGroups = weeklyPlanContext.priorityMuscles.filter((group) =>
+      allowedGroups.has(group),
+    );
+    const muscleGroups = Array.from(
+      new Set([...prioritizedGroups, ...deficitSortedGroups, ...HOME_FOCUS_GROUPS[focus]]),
+    ).slice(0, 3);
+
+    return {
+      focus,
+      plannedFocus,
+      durationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
+      muscleGroups,
+      // Weekly plan ska vara primär synlig rekommendation när status finns.
+      source: "weekly_plan",
+    } satisfies HomeWorkoutRecommendation;
+  }
+
+  return {
+    focus: params.weeklyStructure.nextFocus,
+    plannedFocus: params.weeklyStructure.nextFocus,
+    durationMinutes: params.fallbackDurationMinutes,
+    muscleGroups: params.weeklyStructure.nextFocusMuscleGroups,
+    // Adaptive fallback används bara när veckoplanstatus saknas eller inte gick att läsa.
+    source: "adaptive_fallback",
+  } satisfies HomeWorkoutRecommendation;
 }
 
 function getLastUsedGymId(userId: string, gymOptions: Array<{ id: string | number }>) {
@@ -293,6 +367,11 @@ type WeeklyPlanDisplayDay = {
   completedSummary: CompletedWeekDaySummary | null;
   plannedDay: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingDays"][number] | null;
   plannedStep: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingSteps"][number] | null;
+  displayFocus: WorkoutFocus | null;
+  displayMuscleGroups: MuscleBudgetGroup[];
+  displayType: "training" | "recovery";
+  isPrimaryRecommendation: boolean;
+  plannedSessionStatus: PlannedSession["status"] | null;
   recommendedSets: number | null;
   recommendedMinutes: number | null;
 };
@@ -381,25 +460,27 @@ function buildCompletedWeekSummaries(logs: WorkoutLog[], now: Date) {
 function buildRecommendedVolumeByDate(params: {
   weeklyPlanDays: Array<{
     date: string;
-    plannedDay: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingDays"][number] | null;
-    plannedStep: ReturnType<typeof buildWeeklyWorkoutStructure>["upcomingSteps"][number] | null;
+    displayType: "training" | "recovery";
+    displayMuscleGroups: MuscleBudgetGroup[];
     completedSummary: CompletedWeekDaySummary | null;
+    isPrimaryRecommendation: boolean;
   }>;
   weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+  currentRecommendation: HomeWorkoutRecommendation | null;
 }) {
   const remainingEntries = new Map(
     params.weeklyStructure.muscleBudget.map((entry) => [entry.group, entry]),
   );
   const remainingTrainingDays = params.weeklyPlanDays.filter(
     (day) =>
-      day.plannedDay?.type === "training" &&
+      day.displayType === "training" &&
       !day.completedSummary &&
-      (day.plannedStep?.muscleGroups.length ?? 0) > 0,
+      day.displayMuscleGroups.length > 0,
   );
   const occurrencesByGroup = new Map<MuscleBudgetGroup, number>();
 
   for (const day of remainingTrainingDays) {
-    for (const group of day.plannedStep?.muscleGroups ?? []) {
+    for (const group of day.displayMuscleGroups) {
       occurrencesByGroup.set(group, (occurrencesByGroup.get(group) ?? 0) + 1);
     }
   }
@@ -410,7 +491,7 @@ function buildRecommendedVolumeByDate(params: {
   >();
 
   for (const day of remainingTrainingDays) {
-    const recommendedSetsRaw = (day.plannedStep?.muscleGroups ?? []).reduce(
+    const recommendedSetsRaw = day.displayMuscleGroups.reduce(
       (sum, group) => {
         const entry = remainingEntries.get(group);
         const occurrences = occurrencesByGroup.get(group) ?? 1;
@@ -427,9 +508,9 @@ function buildRecommendedVolumeByDate(params: {
     const recommendedSets = Math.round(
       clampNumber(recommendedSetsRaw || 8, 6, 18),
     );
-    const recommendedMinutes = Math.round(
-      clampNumber(recommendedSets * 2.5, 20, 55),
-    );
+    const recommendedMinutes = day.isPrimaryRecommendation && params.currentRecommendation
+      ? params.currentRecommendation.durationMinutes
+      : Math.round(clampNumber(recommendedSets * 2.5, 20, 55));
 
     recommendedByDate.set(day.date, {
       recommendedSets,
@@ -444,6 +525,8 @@ function buildWeeklyPlanDisplayDays(params: {
   now: Date;
   logs: WorkoutLog[];
   weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+  weeklyPlanState: WeeklyPlanState | null;
+  currentRecommendation: HomeWorkoutRecommendation | null;
 }) {
   // Bygger en enkel måndag-söndag-vy som blandar genomfört och återstående pass.
   const completedSummaries = buildCompletedWeekSummaries(params.logs, params.now);
@@ -461,11 +544,47 @@ function buildWeeklyPlanDisplayDays(params: {
       step: params.weeklyStructure.upcomingSteps[index] ?? null,
     });
   });
+  const plannedSessionsByDate = new Map<string, PlannedSession>();
+  const nextRecommendedSessionId =
+    params.weeklyPlanState?.plannedSessions.find(
+      (session) => session.status === "planned" || session.status === "moved",
+    )?.id ?? null;
+
+  params.weeklyPlanState?.plannedSessions.forEach((session) => {
+    if (!plannedSessionsByDate.has(session.plannedDate)) {
+      plannedSessionsByDate.set(session.plannedDate, session);
+    }
+  });
 
   const baseDays = Array.from({ length: 7 }, (_, index) => {
     const date = addDays(getStartOfWeek(params.now), index);
     const dateKey = toLocalIsoDate(date);
     const planned = plannedByDate.get(dateKey) ?? null;
+    const plannedSession = plannedSessionsByDate.get(dateKey) ?? null;
+    const weeklyPlanFocus =
+      plannedSession && plannedSession.focus !== "mobility"
+        ? mapPlannedFocusToWorkoutFocus(plannedSession.focus)
+        : null;
+    const isPrimaryRecommendation =
+      Boolean(plannedSession) &&
+      plannedSession?.id === nextRecommendedSessionId &&
+      (plannedSession.status === "planned" || plannedSession.status === "moved");
+    const displayFocus =
+      isPrimaryRecommendation && params.currentRecommendation
+        ? params.currentRecommendation.focus
+        : weeklyPlanFocus ?? planned?.day?.focus ?? null;
+    const displayMuscleGroups =
+      isPrimaryRecommendation && params.currentRecommendation
+        ? params.currentRecommendation.muscleGroups
+        : planned?.step?.muscleGroups?.length
+          ? planned.step.muscleGroups
+          : displayFocus
+            ? HOME_FOCUS_GROUPS[displayFocus].slice(0, 3)
+            : [];
+    const displayType =
+      displayFocus && (!plannedSession || plannedSession.focus !== "mobility")
+        ? "training"
+        : "recovery";
 
     return {
       date: dateKey,
@@ -474,6 +593,11 @@ function buildWeeklyPlanDisplayDays(params: {
       completedSummary: completedSummaries.get(dateKey) ?? null,
       plannedDay: planned?.day ?? null,
       plannedStep: planned?.step ?? null,
+      displayFocus,
+      displayMuscleGroups,
+      displayType,
+      isPrimaryRecommendation,
+      plannedSessionStatus: plannedSession?.status ?? null,
       recommendedSets: null,
       recommendedMinutes: null,
     } satisfies WeeklyPlanDisplayDay;
@@ -481,6 +605,7 @@ function buildWeeklyPlanDisplayDays(params: {
   const recommendedByDate = buildRecommendedVolumeByDate({
     weeklyPlanDays: baseDays,
     weeklyStructure: params.weeklyStructure,
+    currentRecommendation: params.currentRecommendation,
   });
 
   return baseDays.map((day) => {
@@ -792,8 +917,9 @@ function WeeklyPlanSummaryCard(props: {
   state: WeeklyPlanState;
   onOpenPlan: () => void;
 }) {
-  const completedSessions = props.state.completedWorkoutLogIds.length;
-  const targetSessions = props.state.settings.sessionsPerWeek;
+  const weeklyPlanStatus = buildWeeklyPlanStatus(props.state);
+  const completedSessions = weeklyPlanStatus.completedSessions;
+  const targetSessions = weeklyPlanStatus.plannedSessions;
   const nextPlannedSession = props.state.plannedSessions.find(
     (session) => session.status === "planned" || session.status === "moved",
   );
@@ -810,20 +936,16 @@ function WeeklyPlanSummaryCard(props: {
         {completedSessions} av {targetSessions} pass genomförda
       </h2>
       <p className="mt-2 text-base leading-7 text-slate-700">
-        Nästa rekommenderade pass: {props.state.remainingTrainingNeed.suggestedNextDurationMinutes} min{" "}
-        {props.state.remainingTrainingNeed.suggestedNextFocus === "full_body"
+        Nästa rekommenderade pass: {weeklyPlanStatus.suggestedNextDurationMinutes} min{" "}
+        {weeklyPlanStatus.suggestedNextWorkoutFocus === "full_body"
           ? "helkropp"
-          : props.state.remainingTrainingNeed.suggestedNextFocus === "upper"
+          : weeklyPlanStatus.suggestedNextWorkoutFocus === "upper_body"
             ? "överkropp"
-            : props.state.remainingTrainingNeed.suggestedNextFocus === "lower"
+            : weeklyPlanStatus.suggestedNextWorkoutFocus === "lower_body"
               ? "ben"
-              : props.state.remainingTrainingNeed.suggestedNextFocus === "push"
-                ? "press"
-                : props.state.remainingTrainingNeed.suggestedNextFocus === "pull"
-                  ? "drag"
-                : props.state.remainingTrainingNeed.suggestedNextFocus === "core"
+              : weeklyPlanStatus.suggestedNextWorkoutFocus === "core"
                     ? "bål"
-                    : "rörlighet"}
+                    : "återhämtande styrka"}
       </p>
       {nextPlannedDayLabel ? (
         <p className="mt-2 text-sm leading-6 text-slate-600">
@@ -984,6 +1106,7 @@ function WeeklyInsightsPanel(props: {
   showWeeklyInsights: boolean;
   onToggle: () => void;
   weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+  currentRecommendation: HomeWorkoutRecommendation;
   weeklyPlanDays: WeeklyPlanDisplayDay[];
   onOpenHistoryDay: (date: string) => void;
   onStartWorkout: () => void;
@@ -1056,7 +1179,7 @@ function WeeklyInsightsPanel(props: {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {props.weeklyPlanDays.map((day, index) => {
               const isCompleted = Boolean(day.completedSummary);
-              const isTraining = day.plannedDay?.type === "training";
+              const isTraining = day.displayType === "training";
               const actionLabel = isCompleted
                 ? "Visa historik"
                 : isTraining
@@ -1064,13 +1187,13 @@ function WeeklyInsightsPanel(props: {
                   : "Öppna historik";
               const focusLabel = isCompleted
                 ? day.completedSummary!.logs[0]?.workoutName ?? "Genomfört pass"
-                : day.plannedDay?.focus
-                  ? formatWorkoutFocus(day.plannedDay.focus)
+                : day.displayFocus
+                  ? formatWorkoutFocus(day.displayFocus)
                   : "Återhämtning";
               const summaryText = isCompleted
                 ? `${day.completedSummary!.logs.length} pass · ${day.completedSummary!.totalExercises} öv · ${day.completedSummary!.totalSets} set`
-                : isTraining && day.plannedStep?.muscleGroups.length
-                  ? day.plannedStep.muscleGroups
+                : isTraining && day.displayMuscleGroups.length
+                  ? day.displayMuscleGroups
                       .slice(0, 2)
                       .map((group) => formatMuscleGroup(group))
                       .join(" · ")
@@ -1114,8 +1237,20 @@ function WeeklyInsightsPanel(props: {
                     </div>
 
                     {day.isToday ? (
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="rounded-full border border-emerald-300 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                          Idag
+                        </span>
+                        {day.isPrimaryRecommendation ? (
+                          <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                            Rek. nu
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {!day.isToday && day.isPrimaryRecommendation ? (
                       <span className="rounded-full border border-emerald-300 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700">
-                        Idag
+                        Rek. nu
                       </span>
                     ) : null}
                   </div>
@@ -1174,7 +1309,7 @@ function WeeklyInsightsPanel(props: {
                 Dagens läge
               </p>
               <p className="mt-1 text-base font-semibold text-slate-950">
-                {formatWorkoutFocus(props.weeklyStructure.nextFocus)}
+                {formatWorkoutFocus(props.currentRecommendation.focus)}
               </p>
             </div>
           </div>
@@ -1303,13 +1438,6 @@ export default function HomePage() {
       settings,
     });
   }, [settings, workoutLogs]);
-  const weeklyPlanDays = useMemo(() => {
-    return buildWeeklyPlanDisplayDays({
-      now: new Date(),
-      logs: workoutLogs,
-      weeklyStructure,
-    });
-  }, [weeklyStructure, workoutLogs]);
   const weeklyPlanState = useMemo(() => {
     if (!userId || !weeklyPlanSettings) {
       return null;
@@ -1320,12 +1448,34 @@ export default function HomePage() {
       plannedSessions: weeklyPlanSessions,
       workoutLogs,
       now: new Date(),
+      goal: settings?.training_goal ?? null,
     });
-  }, [userId, weeklyPlanSessions, weeklyPlanSettings, workoutLogs]);
+  }, [settings?.training_goal, userId, weeklyPlanSessions, weeklyPlanSettings, workoutLogs]);
   const weeklyPlanContext = useMemo(
     () => (weeklyPlanState ? buildWeeklyPlanContext(weeklyPlanState) : null),
     [weeklyPlanState],
   );
+  const weeklyPlanStatus = useMemo(
+    () => (weeklyPlanState ? buildWeeklyPlanStatus(weeklyPlanState) : null),
+    [weeklyPlanState],
+  );
+  const homeRecommendation = useMemo(() => {
+    return buildHomeWorkoutRecommendation({
+      weeklyPlanState,
+      weeklyPlanContext,
+      weeklyStructure,
+      fallbackDurationMinutes: durationMinutes,
+    });
+  }, [durationMinutes, weeklyPlanContext, weeklyPlanState, weeklyStructure]);
+  const weeklyPlanDays = useMemo(() => {
+    return buildWeeklyPlanDisplayDays({
+      now: new Date(),
+      logs: workoutLogs,
+      weeklyStructure,
+      weeklyPlanState,
+      currentRecommendation: homeRecommendation,
+    });
+  }, [homeRecommendation, weeklyPlanState, weeklyStructure, workoutLogs]);
 
   useEffect(() => {
     if (!userId) {
@@ -1405,25 +1555,16 @@ export default function HomePage() {
     () => weeklyPlanDays.find((day) => day.isToday) ?? null,
     [weeklyPlanDays],
   );
-  const todaysRecommendedDurationMinutes = todayPlanDay?.recommendedMinutes ?? null;
-  const weeklyPlanSuggestedDurationMinutes =
-    weeklyPlanState?.remainingTrainingNeed.suggestedNextDurationMinutes ?? null;
-  const todaysRecommendedFocus = todayPlanDay?.plannedDay?.focus ?? weeklyStructure.nextFocus;
-  const todaysRecommendedMuscles =
-    todayPlanDay?.plannedStep?.muscleGroups?.length
-      ? todayPlanDay.plannedStep.muscleGroups
-      : weeklyStructure.nextFocusMuscleGroups;
   const coachMessage = useMemo(() => {
     return getCoachMessage({
       logs: workoutLogs,
-      nextFocus: todaysRecommendedFocus,
+      nextFocus: homeRecommendation.focus,
       completedLast7Days: weeklyStructure.completedLast7Days,
-      durationMinutes: todaysRecommendedDurationMinutes ?? durationMinutes,
+      durationMinutes: homeRecommendation.durationMinutes,
     });
   }, [
-    durationMinutes,
-    todaysRecommendedDurationMinutes,
-    todaysRecommendedFocus,
+    homeRecommendation.durationMinutes,
+    homeRecommendation.focus,
     weeklyStructure.completedLast7Days,
     workoutLogs,
   ]);
@@ -1436,7 +1577,7 @@ export default function HomePage() {
       return;
     }
 
-    const suggestedDuration = todaysRecommendedDurationMinutes ?? weeklyPlanSuggestedDurationMinutes;
+    const suggestedDuration = homeRecommendation.durationMinutes;
     if (!suggestedDuration) {
       return;
     }
@@ -1450,7 +1591,23 @@ export default function HomePage() {
 
     setSelectedDurationPreset(nextPreset);
     setCustomDurationInput("");
-  }, [hasManualDurationChoice, todaysRecommendedDurationMinutes, weeklyPlanSuggestedDurationMinutes]);
+  }, [hasManualDurationChoice, homeRecommendation.durationMinutes]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return;
+    }
+
+    console.debug("[homeRecommendation]", {
+      source: homeRecommendation.source,
+      focus: homeRecommendation.focus,
+      plannedFocus: homeRecommendation.plannedFocus,
+      durationMinutes: homeRecommendation.durationMinutes,
+      weeklyPlanSuggestedFocus: weeklyPlanState?.remainingTrainingNeed.suggestedNextFocus ?? null,
+      weeklyStructureNextFocus: weeklyStructure.nextFocus,
+      remainingTrainingNeed: weeklyPlanState?.remainingTrainingNeed ?? null,
+    });
+  }, [homeRecommendation, weeklyPlanState, weeklyStructure.nextFocus]);
 
   useEffect(() => {
     hasAppliedInitialGymRef.current = false;
@@ -1543,6 +1700,23 @@ export default function HomePage() {
       const lessOftenExerciseIds = getExercisePreferences(userId)
         .filter((entry) => entry.preference === "less_often")
         .map((entry) => entry.exerciseId);
+      const useAdaptivePlanHints =
+        homeRecommendation.source === "adaptive_fallback" ||
+        weeklyStructure.nextFocus === homeRecommendation.focus;
+      const effectiveSelectedPlanMode = useAdaptivePlanHints
+        ? weeklyStructure.selectedPlanMode
+        : weeklyPlanStatus?.suggestedNextWorkoutFocus === "recovery_strength"
+          ? "light_accessory"
+          : null;
+      const effectiveFocusIntent = useAdaptivePlanHints
+        ? weeklyStructure.focusIntent
+        : weeklyPlanContext?.coachText ?? null;
+      const effectiveTargetMuscles = useAdaptivePlanHints
+        ? weeklyStructure.targetMuscles
+        : homeRecommendation.muscleGroups;
+      const effectiveAvoidMuscles = useAdaptivePlanHints ? weeklyStructure.avoidMuscles : [];
+      const effectiveLimitedMuscles = useAdaptivePlanHints ? weeklyStructure.limitedMuscles : [];
+      const effectiveWeeklyPlan = useAdaptivePlanHints ? weeklyStructure.upcomingDays : undefined;
 
       const { workout } = await generateWorkout({
         userId,
@@ -1553,7 +1727,7 @@ export default function HomePage() {
         gymLabel,
         gymEquipmentDetails: selectedGym?.equipment ?? [],
         confidenceScore: weeklyStructure.confidenceScore,
-        nextFocus: todaysRecommendedFocus,
+        nextFocus: homeRecommendation.focus,
         splitStyle: weeklyStructure.splitStyle,
         weeklyBudget: weeklyStructure.muscleBudget.map((entry) => ({
           group: entry.group,
@@ -1566,12 +1740,12 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
           loadStatus: entry.loadStatus,
         })),
-        weeklyPlan: weeklyStructure.upcomingDays,
-        selectedPlanMode: weeklyStructure.selectedPlanMode,
-        focusIntent: weeklyStructure.focusIntent,
-        targetMuscles: weeklyStructure.targetMuscles,
-        avoidMuscles: weeklyStructure.avoidMuscles,
-        limitedMuscles: weeklyStructure.limitedMuscles,
+        weeklyPlan: effectiveWeeklyPlan,
+        selectedPlanMode: effectiveSelectedPlanMode,
+        focusIntent: effectiveFocusIntent,
+        targetMuscles: effectiveTargetMuscles,
+        avoidMuscles: effectiveAvoidMuscles,
+        limitedMuscles: effectiveLimitedMuscles,
         weeklyPlanContext,
         trainingGap: weeklyStructure.trainingGap,
         lessOftenExerciseIds,
@@ -1585,7 +1759,7 @@ export default function HomePage() {
         goal,
         selectedGym: gymLabel,
         equipmentSeed: equipment,
-        workoutFocusTag: todaysRecommendedFocus,
+        workoutFocusTag: homeRecommendation.focus,
         request: {
           goal,
           durationMinutes,
@@ -1593,12 +1767,12 @@ export default function HomePage() {
           gym: gymId,
           gymLabel,
           confidenceScore: weeklyStructure.confidenceScore,
-          nextFocus: todaysRecommendedFocus,
-          selectedPlanMode: weeklyStructure.selectedPlanMode,
-          focusIntent: weeklyStructure.focusIntent,
-          targetMuscles: weeklyStructure.targetMuscles,
-          avoidMuscles: weeklyStructure.avoidMuscles,
-          limitedMuscles: weeklyStructure.limitedMuscles,
+          nextFocus: homeRecommendation.focus,
+          selectedPlanMode: effectiveSelectedPlanMode,
+          focusIntent: effectiveFocusIntent,
+          targetMuscles: effectiveTargetMuscles,
+          avoidMuscles: effectiveAvoidMuscles,
+          limitedMuscles: effectiveLimitedMuscles,
           weeklyPlanContext,
           splitStyle: weeklyStructure.splitStyle,
           supersetPreference: settings?.superset_preference ?? null,
@@ -1614,7 +1788,7 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
           loadStatus: entry.loadStatus,
         })),
-        weeklyPlan: weeklyStructure.upcomingDays,
+        weeklyPlan: effectiveWeeklyPlan ?? [],
         normalizedWorkout: workout,
         aiDebug: workout.aiDebug ?? null,
       });
@@ -1626,7 +1800,7 @@ export default function HomePage() {
         gym: gymId,
         gymLabel,
         availableEquipment: equipment,
-        plannedFocus: weeklyStructure.nextFocus,
+        plannedFocus: homeRecommendation.plannedFocus,
       });
 
       router.push(`/workout/preview?userId=${encodeURIComponent(userId)}`);
@@ -1667,6 +1841,23 @@ export default function HomePage() {
       const lessOftenExerciseIds = getExercisePreferences(userId)
         .filter((entry) => entry.preference === "less_often")
         .map((entry) => entry.exerciseId);
+      const useAdaptivePlanHints =
+        homeRecommendation.source === "adaptive_fallback" ||
+        weeklyStructure.nextFocus === homeRecommendation.focus;
+      const effectiveSelectedPlanMode = useAdaptivePlanHints
+        ? weeklyStructure.selectedPlanMode
+        : weeklyPlanStatus?.suggestedNextWorkoutFocus === "recovery_strength"
+          ? "light_accessory"
+          : null;
+      const effectiveFocusIntent = useAdaptivePlanHints
+        ? weeklyStructure.focusIntent
+        : weeklyPlanContext?.coachText ?? null;
+      const effectiveTargetMuscles = useAdaptivePlanHints
+        ? weeklyStructure.targetMuscles
+        : homeRecommendation.muscleGroups;
+      const effectiveAvoidMuscles = useAdaptivePlanHints ? weeklyStructure.avoidMuscles : [];
+      const effectiveLimitedMuscles = useAdaptivePlanHints ? weeklyStructure.limitedMuscles : [];
+      const effectiveWeeklyPlan = useAdaptivePlanHints ? weeklyStructure.upcomingDays : undefined;
 
       const quickDuration = durationMinutes;
 
@@ -1679,7 +1870,7 @@ export default function HomePage() {
         gymLabel,
         gymEquipmentDetails: selectedGym?.equipment ?? [],
         confidenceScore: weeklyStructure.confidenceScore,
-        nextFocus: todaysRecommendedFocus,
+        nextFocus: homeRecommendation.focus,
         splitStyle: weeklyStructure.splitStyle,
         weeklyBudget: weeklyStructure.muscleBudget.map((entry) => ({
           group: entry.group,
@@ -1692,12 +1883,12 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
           loadStatus: entry.loadStatus,
         })),
-        weeklyPlan: weeklyStructure.upcomingDays,
-        selectedPlanMode: weeklyStructure.selectedPlanMode,
-        focusIntent: weeklyStructure.focusIntent,
-        targetMuscles: weeklyStructure.targetMuscles,
-        avoidMuscles: weeklyStructure.avoidMuscles,
-        limitedMuscles: weeklyStructure.limitedMuscles,
+        weeklyPlan: effectiveWeeklyPlan,
+        selectedPlanMode: effectiveSelectedPlanMode,
+        focusIntent: effectiveFocusIntent,
+        targetMuscles: effectiveTargetMuscles,
+        avoidMuscles: effectiveAvoidMuscles,
+        limitedMuscles: effectiveLimitedMuscles,
         weeklyPlanContext,
         trainingGap: weeklyStructure.trainingGap,
         lessOftenExerciseIds,
@@ -1711,7 +1902,7 @@ export default function HomePage() {
         goal,
         selectedGym: gymLabel,
         equipmentSeed: equipment,
-        workoutFocusTag: todaysRecommendedFocus,
+        workoutFocusTag: homeRecommendation.focus,
         request: {
           goal,
           durationMinutes: quickDuration,
@@ -1719,12 +1910,12 @@ export default function HomePage() {
           gym: gymId,
           gymLabel,
           confidenceScore: weeklyStructure.confidenceScore,
-          nextFocus: todaysRecommendedFocus,
-          selectedPlanMode: weeklyStructure.selectedPlanMode,
-          focusIntent: weeklyStructure.focusIntent,
-          targetMuscles: weeklyStructure.targetMuscles,
-          avoidMuscles: weeklyStructure.avoidMuscles,
-          limitedMuscles: weeklyStructure.limitedMuscles,
+          nextFocus: homeRecommendation.focus,
+          selectedPlanMode: effectiveSelectedPlanMode,
+          focusIntent: effectiveFocusIntent,
+          targetMuscles: effectiveTargetMuscles,
+          avoidMuscles: effectiveAvoidMuscles,
+          limitedMuscles: effectiveLimitedMuscles,
           weeklyPlanContext,
           splitStyle: weeklyStructure.splitStyle,
           supersetPreference: settings?.superset_preference ?? null,
@@ -1740,7 +1931,7 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
           loadStatus: entry.loadStatus,
         })),
-        weeklyPlan: weeklyStructure.upcomingDays,
+        weeklyPlan: effectiveWeeklyPlan ?? [],
         normalizedWorkout: workout,
         aiDebug: workout.aiDebug ?? null,
       });
@@ -1752,7 +1943,7 @@ export default function HomePage() {
         gym: gymId,
         gymLabel,
         availableEquipment: equipment,
-        plannedFocus: todaysRecommendedFocus,
+        plannedFocus: homeRecommendation.plannedFocus,
       });
 
       router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);
@@ -1819,14 +2010,14 @@ export default function HomePage() {
         />
 
         <TodayFocusCard
-          focus={todaysRecommendedFocus}
-          muscleGroups={todaysRecommendedMuscles}
+          focus={homeRecommendation.focus}
+          muscleGroups={homeRecommendation.muscleGroups}
           coachText={coachMessage}
           gymLabel={selectedGym?.name ?? "Kroppsvikt / utan gym"}
           gymOptions={gymOptions.map((gym) => ({ id: gym.id, name: gym.name }))}
           selectedGymId={selectedGymId}
           onSelectGym={handleSelectedGymChange}
-          recommendedDurationMinutes={todaysRecommendedDurationMinutes ?? durationMinutes}
+          recommendedDurationMinutes={homeRecommendation.durationMinutes}
           onAction={handleQuickStartTodayWorkout}
           isGenerating={isGenerating}
           hasActiveWorkout={Boolean(activeWorkout)}
@@ -1876,6 +2067,7 @@ export default function HomePage() {
             showWeeklyInsights={showWeeklyInsights}
             onToggle={() => setShowWeeklyInsights((previous) => !previous)}
             weeklyStructure={weeklyStructure}
+            currentRecommendation={homeRecommendation}
             weeklyPlanDays={weeklyPlanDays}
             onOpenHistoryDay={handleOpenHistoryDay}
             onStartWorkout={handleReviewAiWorkout}
