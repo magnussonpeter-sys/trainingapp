@@ -1,19 +1,25 @@
 import { pool } from "@/lib/db";
 import {
+  buildWeeklyPlanContext,
   buildInitialWeeklyPlan,
+  buildWeeklyPlanStatus,
   deriveWeeklyPlanState,
   getDefaultWeeklyPlanSettings,
+  getPriorityMusclesFromProfile,
   getWeekStartDate,
   type PlannedSession,
+  type ProfilePriorityMuscleFields,
   type WeeklyPlanSettings,
+  type WeeklyPlanStatus,
+  type WeeklyPlanContext,
   type WeeklyPlanState,
 } from "@/lib/planning/weekly-plan";
 import {
   markMissedSessions,
   postponePlannedSession,
-  reconcileWorkoutWithWeeklyPlan,
 } from "@/lib/planning/weekly-plan-adjustments";
 import { getWorkoutLogsByUser } from "@/lib/workout-log-repository";
+import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
 
 type WeeklyPlanSettingsRow = {
   userId: string;
@@ -44,6 +50,13 @@ type PlannedSessionRow = {
   replacedByWorkoutLogId: string | null;
   movedFromDate: string | null;
   movedToDate: string | null;
+};
+
+type UserPlanProfileRow = {
+  training_goal: string | null;
+  primary_priority_muscle: string | null;
+  secondary_priority_muscle: string | null;
+  tertiary_priority_muscle: string | null;
 };
 
 function normalizeStringArray(value: unknown) {
@@ -137,6 +150,25 @@ function normalizePlannedStatus(value: string): PlannedSession["status"] {
   return "planned";
 }
 
+function isMuscleBudgetGroup(value: string): value is MuscleBudgetGroup {
+  return (
+    value === "chest" ||
+    value === "back" ||
+    value === "quads" ||
+    value === "hamstrings" ||
+    value === "glutes" ||
+    value === "shoulders" ||
+    value === "biceps" ||
+    value === "triceps" ||
+    value === "calves" ||
+    value === "core"
+  );
+}
+
+function normalizePriorityMuscle(value: string | null) {
+  return value && isMuscleBudgetGroup(value) ? value : null;
+}
+
 function mapSettingsRow(row: WeeklyPlanSettingsRow): WeeklyPlanSettings {
   const preferredDays = normalizeStringArray(row.preferredDays).map(normalizeWeekday);
   const priorityMuscles = normalizeStringArray(row.priorityMuscles);
@@ -222,6 +254,67 @@ export async function ensureWeeklyPlanTables() {
     create index if not exists weekly_planned_sessions_user_week_idx
     on weekly_planned_sessions (user_id, week_start_date)
   `);
+
+  // Veckoplanmotorn läser mål och prioriteringar server-side för att undvika
+  // att /home och /home/plan bygger olika rekommendationer.
+  await pool.query(`
+    ALTER TABLE user_settings
+    ADD COLUMN IF NOT EXISTS primary_priority_muscle TEXT
+  `);
+  await pool.query(`
+    ALTER TABLE user_settings
+    ADD COLUMN IF NOT EXISTS secondary_priority_muscle TEXT
+  `);
+  await pool.query(`
+    ALTER TABLE user_settings
+    ADD COLUMN IF NOT EXISTS tertiary_priority_muscle TEXT
+  `);
+}
+
+async function getWeeklyPlanUserProfile(userId: string) {
+  const result = await pool.query<UserPlanProfileRow>(
+    `
+      select
+        training_goal,
+        primary_priority_muscle,
+        secondary_priority_muscle,
+        tertiary_priority_muscle
+      from user_settings
+      where user_id = $1
+      limit 1
+    `,
+    [userId],
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return {
+      goal: null,
+      priorityMuscles: [] as MuscleBudgetGroup[],
+    };
+  }
+
+  return {
+    goal: row.training_goal ?? null,
+    priorityMuscles: getPriorityMusclesFromProfile({
+      primary_priority_muscle: normalizePriorityMuscle(row.primary_priority_muscle),
+      secondary_priority_muscle: normalizePriorityMuscle(row.secondary_priority_muscle),
+      tertiary_priority_muscle: normalizePriorityMuscle(row.tertiary_priority_muscle),
+    } satisfies ProfilePriorityMuscleFields),
+  };
+}
+
+function buildWeeklyPlanBundle(params: {
+  settings: WeeklyPlanSettings;
+  state: WeeklyPlanState;
+}) {
+  return {
+    settings: params.settings,
+    plannedSessions: params.state.plannedSessions,
+    state: params.state,
+    status: buildWeeklyPlanStatus(params.state),
+    context: buildWeeklyPlanContext(params.state),
+  };
 }
 
 export async function getWeeklyPlanSettingsByUser(userId: string) {
@@ -444,21 +537,25 @@ export async function getWeeklyPlanStateForUser(
   settings: WeeklyPlanSettings;
   plannedSessions: PlannedSession[];
   state: WeeklyPlanState;
+  status: WeeklyPlanStatus;
+  context: WeeklyPlanContext;
 }> {
   const { settings, plannedSessions } = await getOrCreateWeeklyPlanParts(userId, now);
   const logs = await getWorkoutLogsByUser(userId, 120);
+  const profile = await getWeeklyPlanUserProfile(userId);
   const state = deriveWeeklyPlanState({
     settings,
     plannedSessions,
     workoutLogs: logs,
     now,
+    goal: profile.goal,
+    priorityMuscles: profile.priorityMuscles,
   });
 
-  return {
+  return buildWeeklyPlanBundle({
     settings,
-    plannedSessions,
     state,
-  };
+  });
 }
 
 export async function saveWeeklyPlanSettingsAndRebuildCurrentWeek(
@@ -482,20 +579,22 @@ export async function postponeWeeklyPlanSession(
   now = new Date(),
 ) {
   const { settings, plannedSessions } = await getOrCreateWeeklyPlanParts(userId, now);
+  const profile = await getWeeklyPlanUserProfile(userId);
   const nextSessions = postponePlannedSession(plannedSessions, sessionId, newDate);
 
   await replaceWeeklyPlannedSessions(userId, getWeekStartDate(now), nextSessions);
 
-  return {
+  return buildWeeklyPlanBundle({
     settings,
-    plannedSessions: nextSessions,
     state: deriveWeeklyPlanState({
       settings,
       plannedSessions: nextSessions,
       workoutLogs: await getWorkoutLogsByUser(userId, 120),
       now,
+      goal: profile.goal,
+      priorityMuscles: profile.priorityMuscles,
     }),
-  };
+  });
 }
 
 export async function recalculateWeeklyPlanState(
@@ -504,6 +603,7 @@ export async function recalculateWeeklyPlanState(
 ) {
   const { settings, plannedSessions } = await getOrCreateWeeklyPlanParts(userId, now);
   const logs = await getWorkoutLogsByUser(userId, 120);
+  const profile = await getWeeklyPlanUserProfile(userId);
   const markedSessions = markMissedSessions(
     plannedSessions,
     now,
@@ -514,15 +614,16 @@ export async function recalculateWeeklyPlanState(
     plannedSessions: markedSessions,
     workoutLogs: logs,
     now,
+    goal: profile.goal,
+    priorityMuscles: profile.priorityMuscles,
   });
 
   await replaceWeeklyPlannedSessions(userId, getWeekStartDate(now), state.plannedSessions);
 
-  return {
+  return buildWeeklyPlanBundle({
     settings,
-    plannedSessions: state.plannedSessions,
     state,
-  };
+  });
 }
 
 export async function reconcileWorkoutLogWithWeeklyPlan(
@@ -535,18 +636,17 @@ export async function reconcileWorkoutLogWithWeeklyPlan(
 ) {
   const now = new Date(workoutLog.completedAt);
   const { settings, plannedSessions } = await getOrCreateWeeklyPlanParts(userId, now);
-  const stateBefore = deriveWeeklyPlanState({
+  const profile = await getWeeklyPlanUserProfile(userId);
+  const recalculatedState = deriveWeeklyPlanState({
     settings,
     plannedSessions,
     workoutLogs: await getWorkoutLogsByUser(userId, 120),
     now,
+    goal: profile.goal,
+    priorityMuscles: profile.priorityMuscles,
   });
-  const reconcileResult = reconcileWorkoutWithWeeklyPlan(
-    workoutLog,
-    stateBefore,
-  );
   const nextSessions = markMissedSessions(
-    reconcileResult.plannedSessions,
+    recalculatedState.plannedSessions,
     now,
     settings.flexibility,
   );

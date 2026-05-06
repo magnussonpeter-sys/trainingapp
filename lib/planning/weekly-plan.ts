@@ -73,6 +73,20 @@ export type SuggestedWeeklyWorkout = {
   hasSpontaneousWorkoutThisWeek: boolean;
 };
 
+export type WorkoutPlanCredit = {
+  sessionCredit: number;
+  minuteCredit: number;
+  muscleSetCreditScale: number;
+  reason: string;
+  countsAsMeaningful: boolean;
+};
+
+export type ProfilePriorityMuscleFields = {
+  primary_priority_muscle?: MuscleBudgetGroup | null;
+  secondary_priority_muscle?: MuscleBudgetGroup | null;
+  tertiary_priority_muscle?: MuscleBudgetGroup | null;
+};
+
 export type WeeklyPlanState = {
   userId: string;
   weekStartDate: string;
@@ -81,27 +95,37 @@ export type WeeklyPlanState = {
   completedWorkoutLogIds: string[];
   spontaneousWorkoutLogIds: string[];
   missedSessions: PlannedSession[];
+  profilePriorityMuscles: MuscleBudgetGroup[];
   remainingTrainingNeed: {
     sessionsRemaining: number;
+    remainingSessionCredit: number;
     plannedMinutesRemaining: number;
     completedMinutesThisWeek: number;
     targetMinutesThisWeek: number;
+    completedSessionCreditThisWeek: number;
+    targetSessionCreditThisWeek: number;
     muscleSetDeficits: Record<MuscleBudgetGroup, number>;
+    totalRelevantDeficit: number;
     suggestedNextFocus: PlannedSessionFocus;
     suggestedNextDurationMinutes: number;
+    suggestedNextFocusReason: string;
   };
+  debug?: WeeklyPlanDebug;
 };
 
 export type WeeklyPlanContext = {
   sessionsPerWeek: number;
   completedSessionsThisWeek: number;
+  completedSessionCreditThisWeek: number;
   remainingSessionsThisWeek: number;
+  remainingSessionCreditThisWeek: number;
   targetMinutesThisWeek: number;
   completedMinutesThisWeek: number;
   plannedMinutesRemaining: number;
   suggestedNextFocus: PlannedSessionFocus;
   suggestedNextDurationMinutes: number;
   priorityMuscles: MuscleBudgetGroup[];
+  profilePriorityMuscles: MuscleBudgetGroup[];
   easyMuscles: MuscleBudgetGroup[];
   muscleSetDeficits: Record<MuscleBudgetGroup, number>;
   isUserBehindPlan: boolean;
@@ -115,11 +139,34 @@ export type WeeklyPlanContext = {
 type FocusRecommendationScore = {
   focus: PlannedSessionFocus;
   score: number;
-  deficitScore: number;
-  carryScore: number;
-  goalBias: number;
+  remainingVolumeNeed: number;
+  goalPriorityWeight: number;
+  priorityMuscleWeight: number;
+  timeSinceLastStimulus: number;
+  plannedSessionReplacementNeed: number;
+  recentFatiguePenalty: number;
+  overloadRiskPenalty: number;
   practicalityBonus: number;
-  recoveryPenalty: number;
+  remainingDaysUrgency: number;
+  reason: string;
+};
+
+export type WeeklyPlanDebug = {
+  workoutCredits: Array<{
+    workoutLogId: string;
+    workoutName: string;
+    completedAt: string;
+    inferredFocus: PlannedSessionFocus;
+    sessionCredit: number;
+    minuteCredit: number;
+    reason: string;
+    matchedSessionId: string | null;
+    matchedSessionFocus: PlannedSessionFocus | null;
+    matchScore: number | null;
+    matchingReason: string;
+  }>;
+  focusScores: Array<FocusRecommendationScore & { selected: boolean }>;
+  goalReachedReason: string;
 };
 
 export type WeeklyPlanRecommendation = {
@@ -139,6 +186,7 @@ export type WeeklyPlanStatus = {
   completedMinutes: number;
   targetMinutes: number;
   remainingMinutes: number;
+  goalReached: boolean;
   suggestedNextWorkoutFocus: WorkoutFocus | "recovery_strength";
   suggestedNextDurationMinutes: number;
   message: string;
@@ -267,23 +315,92 @@ function getCompletedWorkingSetCount(log: WorkoutLog) {
   return log.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
 }
 
-function isMeaningfulWorkoutForPlan(log: WorkoutLog) {
+export function getWorkoutPlanCredit(
+  log: WorkoutLog,
+  plannedDurationMinutes?: number | null,
+): WorkoutPlanCredit {
   if (log.status !== "completed" || isWorkoutLogExcludedFromAnalysis(log)) {
-    return false;
+    return {
+      sessionCredit: 0,
+      minuteCredit: 0,
+      muscleSetCreditScale: 0,
+      reason: "Passet är avbrutet eller exkluderat från analys.",
+      countsAsMeaningful: false,
+    };
   }
 
   const completedSetCount = getCompletedWorkingSetCount(log);
   const durationMinutes = getWorkoutDurationMinutes(log);
 
-  // Väldigt korta pass utan tydlig volym ska inte styra veckoplaneringen.
+  // Väldigt korta testpass ska inte kunna uppfylla veckan på egen hand.
   if (durationMinutes < 5 && completedSetCount <= 1) {
-    return false;
+    return {
+      sessionCredit: 0,
+      minuteCredit: 0,
+      muscleSetCreditScale: 0,
+      reason: "Mycket kort testpass utan tydlig träningsvolym.",
+      countsAsMeaningful: false,
+    };
   }
 
-  return completedSetCount > 0 || durationMinutes >= 5;
+  const durationScore =
+    durationMinutes >= 35
+      ? 1
+      : durationMinutes >= 25
+        ? 0.9
+        : durationMinutes >= 15
+          ? 0.65
+          : durationMinutes >= 8
+            ? 0.35
+            : durationMinutes >= 5
+              ? 0.2
+              : 0;
+  const setScore =
+    completedSetCount >= 10
+      ? 1
+      : completedSetCount >= 6
+        ? 0.85
+        : completedSetCount >= 4
+          ? 0.65
+          : completedSetCount >= 2
+            ? 0.4
+            : completedSetCount >= 1
+              ? 0.15
+              : 0;
+  const plannedDurationRatio =
+    plannedDurationMinutes && plannedDurationMinutes > 0
+      ? clampNumber(durationMinutes / plannedDurationMinutes, 0, 1)
+      : null;
+  let sessionCredit =
+    plannedDurationRatio !== null
+      ? plannedDurationRatio * 0.4 + durationScore * 0.3 + setScore * 0.3
+      : durationScore * 0.55 + setScore * 0.45;
+
+  if (durationMinutes < 10 && completedSetCount < 3) {
+    sessionCredit = Math.min(sessionCredit, 0.5);
+  }
+
+  sessionCredit = roundToSingleDecimal(clampNumber(sessionCredit, 0, 1));
+  const countsAsMeaningful = sessionCredit >= 0.2 || durationMinutes >= 8 || completedSetCount >= 2;
+
+  return {
+    sessionCredit: countsAsMeaningful ? sessionCredit : 0,
+    minuteCredit: countsAsMeaningful ? durationMinutes : 0,
+    muscleSetCreditScale: countsAsMeaningful ? sessionCredit : 0,
+    reason:
+      countsAsMeaningful && sessionCredit < 0.7
+        ? "Kortare eller lättare pass som räknas delvis i veckoplanen."
+        : countsAsMeaningful
+          ? "Rimligt fullvärdigt träningspass för veckoplanen."
+          : "För låg volym för att räknas meningsfullt i veckoplanen.",
+    countsAsMeaningful,
+  };
 }
 
-function buildMuscleStimulusFromExercises(exercises: WorkoutLog["exercises"]) {
+function buildMuscleStimulusFromExercises(
+  exercises: WorkoutLog["exercises"],
+  creditScale = 1,
+) {
   const totals = createMuscleRecord();
 
   for (const exercise of exercises) {
@@ -319,7 +436,7 @@ function buildMuscleStimulusFromExercises(exercises: WorkoutLog["exercises"]) {
     }
 
     for (const [group, credit] of perGroupCredits) {
-      totals[group] += setCount * credit;
+      totals[group] += setCount * credit * creditScale;
     }
   }
 
@@ -358,20 +475,86 @@ function inferWorkoutFocus(log: WorkoutLog): PlannedSessionFocus {
   return "lower";
 }
 
-function buildPlannedTargetMuscleSets(plannedSessions: PlannedSession[]) {
+function getPlannedSessionVolumeScale(params: {
+  session: PlannedSession;
+  settings: WeeklyPlanSettings;
+  goal?: string | null;
+}) {
+  const normalizedGoal = normalizeTrainingGoal(params.goal);
+  const duration = params.session.targetDurationMinutes;
+  const durationScale =
+    duration <= 20 ? 0.6 : duration <= 30 ? 0.8 : duration <= 45 ? 1 : duration <= 60 ? 1.15 : 1.25;
+  const frequencyScale =
+    params.settings.sessionsPerWeek <= 2 ? 1.05 : params.settings.sessionsPerWeek >= 5 ? 0.9 : 1;
+  const goalScale =
+    normalizedGoal === "hypertrophy"
+      ? 1.1
+      : normalizedGoal === "strength"
+        ? 0.95
+        : normalizedGoal === "body_composition"
+          ? 1
+          : 0.85;
+
+  // Detta är en praktisk planeringsuppskattning, inte en exakt fysiologisk sanning.
+  return durationScale * frequencyScale * goalScale;
+}
+
+function buildPlannedTargetMuscleSets(
+  plannedSessions: PlannedSession[],
+  settings: WeeklyPlanSettings,
+  goal?: string | null,
+) {
   const targets = createMuscleRecord();
 
   for (const session of plannedSessions) {
     const focusGroups = FOCUS_MUSCLES[session.focus];
+    const sessionScale = getPlannedSessionVolumeScale({
+      session,
+      settings,
+      goal,
+    });
+    const baseCredit =
+      session.focus === "full_body"
+        ? 1.8
+        : session.focus === "push" || session.focus === "pull"
+          ? 2.4
+          : session.focus === "core"
+            ? 1.4
+            : session.focus === "mobility"
+              ? 0
+              : 2.6;
+
     for (const group of focusGroups) {
-      // Veckoplanen är avsiktligt enkel här. Muskelnyansering kommer från
-      // historik, muskelbudget och coachmotorn snarare än manuella planfält.
-      const credit = session.focus === "full_body" ? 2 : 3;
-      targets[group] += credit;
+      const groupScale =
+        session.focus === "lower" && group === "calves"
+          ? 0.65
+          : session.focus === "upper" && group === "shoulders"
+            ? 0.85
+            : 1;
+      targets[group] += roundToSingleDecimal(baseCredit * sessionScale * groupScale);
     }
   }
 
   return targets;
+}
+
+export function getPriorityMusclesFromProfile(
+  profile: ProfilePriorityMuscleFields | null | undefined,
+  settings?: Pick<WeeklyPlanSettings, "priorityMuscles"> | null,
+) {
+  const explicitProfilePriorities = [
+    profile?.primary_priority_muscle ?? null,
+    profile?.secondary_priority_muscle ?? null,
+    profile?.tertiary_priority_muscle ?? null,
+  ].filter((group): group is MuscleBudgetGroup => Boolean(group));
+
+  // Legacyfält läses bara som passiv fallback för äldre data.
+  return Array.from(
+    new Set([
+      ...explicitProfilePriorities,
+      ...(settings?.priorityMuscles ?? []),
+    ]),
+  );
 }
 
 function getPriorityMusclesForSession(
@@ -607,6 +790,19 @@ export function buildInitialWeeklyPlan(
 }
 
 type InternalMatchedSession = PlannedSession;
+type WorkoutFocusAnalysis = {
+  log: WorkoutLog;
+  logDate: string;
+  inferredFocus: PlannedSessionFocus;
+  credit: WorkoutPlanCredit;
+  stimulus: Record<MuscleBudgetGroup, number>;
+  topStimulusGroups: MuscleBudgetGroup[];
+};
+type MatchedWorkoutDebugEntry = WeeklyPlanDebug["workoutCredits"][number];
+type MatchEvaluation = {
+  score: number;
+  reason: string;
+};
 
 function getMatchWindowDays(flexibility: WeeklyPlanFlexibility) {
   if (flexibility === "strict") {
@@ -620,17 +816,102 @@ function getMatchWindowDays(flexibility: WeeklyPlanFlexibility) {
   return 7;
 }
 
+function getTopStimulusGroups(stimulus: Record<MuscleBudgetGroup, number>) {
+  return (Object.keys(stimulus) as MuscleBudgetGroup[])
+    .filter((group) => stimulus[group] > 0.4)
+    .sort((left, right) => stimulus[right] - stimulus[left])
+    .slice(0, 4);
+}
+
+function getWorkoutFocusAnalysis(log: WorkoutLog): WorkoutFocusAnalysis {
+  const credit = getWorkoutPlanCredit(log);
+  const stimulus = buildMuscleStimulusFromExercises(log.exercises, credit.muscleSetCreditScale);
+
+  return {
+    log,
+    logDate: normalizeIsoDate(log.completedAt),
+    inferredFocus: inferWorkoutFocus(log),
+    credit,
+    stimulus,
+    topStimulusGroups: getTopStimulusGroups(stimulus),
+  };
+}
+
+function getFocusOverlapScore(
+  plannedFocus: PlannedSessionFocus,
+  inferredFocus: PlannedSessionFocus,
+) {
+  if (plannedFocus === inferredFocus) {
+    return 3.25;
+  }
+
+  const plannedMappedFocus = mapPlannedFocusToWorkoutFocus(plannedFocus);
+  const inferredMappedFocus = mapPlannedFocusToWorkoutFocus(inferredFocus);
+
+  if (plannedMappedFocus === inferredMappedFocus) {
+    return 2.25;
+  }
+
+  if (plannedFocus === "full_body" || inferredFocus === "full_body") {
+    return 1.2;
+  }
+
+  return 0;
+}
+
+function evaluateWorkoutSessionMatch(params: {
+  log: WorkoutFocusAnalysis;
+  session: PlannedSession;
+  flexibility: WeeklyPlanFlexibility;
+}) {
+  const dateDistance = Math.abs(dateDiffInDays(params.log.logDate, params.session.plannedDate));
+  const dateProximityScore = Math.max(0, 4 - dateDistance * 1.1);
+  const focusOverlapScore = getFocusOverlapScore(
+    params.session.focus,
+    params.log.inferredFocus,
+  );
+  const sessionGroups = new Set(FOCUS_MUSCLES[params.session.focus]);
+  const overlappingGroups = params.log.topStimulusGroups.filter((group) => sessionGroups.has(group));
+  const muscleOverlapScore =
+    overlappingGroups.length * 0.85 +
+    overlappingGroups.reduce((sum, group) => sum + Math.min(1.2, params.log.stimulus[group] * 0.3), 0);
+  const mismatchPenalty =
+    focusOverlapScore === 0 &&
+    overlappingGroups.length === 0 &&
+    params.session.focus !== "mobility"
+      ? 2.25
+      : 0;
+  const extraDistancePenalty =
+    dateDistance > getMatchWindowDays(params.flexibility)
+      ? (dateDistance - getMatchWindowDays(params.flexibility)) * 1.25
+      : 0;
+
+  return {
+    score:
+      dateProximityScore +
+      focusOverlapScore +
+      muscleOverlapScore -
+      mismatchPenalty -
+      extraDistancePenalty,
+    reason: `datum ${roundToSingleDecimal(dateProximityScore)}, fokus ${roundToSingleDecimal(
+      focusOverlapScore,
+    )}, muskelöverlapp ${roundToSingleDecimal(muscleOverlapScore)}, avdrag ${roundToSingleDecimal(
+      mismatchPenalty + extraDistancePenalty,
+    )}`,
+  } satisfies MatchEvaluation;
+}
+
 function matchLogsToPlannedSessions(
   plannedSessions: PlannedSession[],
   logs: WorkoutLog[],
   flexibility: WeeklyPlanFlexibility,
 ) {
-  const meaningfulLogs = logs
-    .filter(isMeaningfulWorkoutForPlan)
+  const analyzedLogs = logs
     .sort(
       (left, right) =>
         new Date(left.completedAt).getTime() - new Date(right.completedAt).getTime(),
-    );
+    )
+    .map((log) => getWorkoutFocusAnalysis(log));
   const sessions = plannedSessions
     .map((session) => ({ ...session }) satisfies InternalMatchedSession)
     .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate));
@@ -638,81 +919,170 @@ function matchLogsToPlannedSessions(
   const spontaneousWorkoutLogIds: string[] = [];
   const completedWorkoutLogIds: string[] = [];
   const replacedByWorkoutLogIds = new Set<string>();
-  const matchWindowDays = getMatchWindowDays(flexibility);
+  const debugEntries: MatchedWorkoutDebugEntry[] = [];
+  const explicitSessionByLogId = new Map<string, InternalMatchedSession>();
 
-  for (const log of meaningfulLogs) {
-    const logDate = normalizeIsoDate(log.completedAt);
+  for (const session of sessions) {
+    if (session.completedWorkoutLogId) {
+      explicitSessionByLogId.set(session.completedWorkoutLogId, session);
+    }
+    if (session.replacedByWorkoutLogId) {
+      explicitSessionByLogId.set(session.replacedByWorkoutLogId, session);
+    }
+  }
+
+  for (const analysis of analyzedLogs) {
+    if (!analysis.credit.countsAsMeaningful) {
+      debugEntries.push({
+        workoutLogId: analysis.log.id,
+        workoutName: analysis.log.workoutName,
+        completedAt: analysis.log.completedAt,
+        inferredFocus: analysis.inferredFocus,
+        sessionCredit: analysis.credit.sessionCredit,
+        minuteCredit: analysis.credit.minuteCredit,
+        reason: analysis.credit.reason,
+        matchedSessionId: null,
+        matchedSessionFocus: null,
+        matchScore: null,
+        matchingReason: "Passet gav för låg kredit för att styra veckoplanen.",
+      });
+      continue;
+    }
+
+    const explicitSession = explicitSessionByLogId.get(analysis.log.id);
+    if (explicitSession) {
+      usedSessionIds.add(explicitSession.id);
+
+      if (explicitSession.completedWorkoutLogId === analysis.log.id) {
+        completedWorkoutLogIds.push(analysis.log.id);
+      } else {
+        spontaneousWorkoutLogIds.push(analysis.log.id);
+      }
+
+      debugEntries.push({
+        workoutLogId: analysis.log.id,
+        workoutName: analysis.log.workoutName,
+        completedAt: analysis.log.completedAt,
+        inferredFocus: analysis.inferredFocus,
+        sessionCredit: analysis.credit.sessionCredit,
+        minuteCredit: analysis.credit.minuteCredit,
+        reason: analysis.credit.reason,
+        matchedSessionId: explicitSession.id,
+        matchedSessionFocus: explicitSession.focus,
+        matchScore: 999,
+        matchingReason: "Använde sparad koppling mellan workoutLog och planerat pass.",
+      });
+      continue;
+    }
+
     const unmatchedCandidates = sessions.filter((session) => {
       if (usedSessionIds.has(session.id)) {
         return false;
       }
 
-      const dayDifference = Math.abs(dateDiffInDays(logDate, session.plannedDate));
-      if (dayDifference > matchWindowDays) {
+      const dayDifference = Math.abs(dateDiffInDays(analysis.logDate, session.plannedDate));
+      if (dayDifference > Math.max(getMatchWindowDays(flexibility), flexibility === "flexible" ? 4 : 2)) {
         return false;
       }
 
       return true;
     });
 
-    const bestMatch = unmatchedCandidates.sort((left, right) => {
-      const leftDiff = Math.abs(dateDiffInDays(logDate, left.plannedDate));
-      const rightDiff = Math.abs(dateDiffInDays(logDate, right.plannedDate));
-      return leftDiff - rightDiff;
-    })[0];
+    const bestMatch =
+      unmatchedCandidates
+        .map((session) => ({
+          session,
+          evaluation: evaluateWorkoutSessionMatch({
+            log: analysis,
+            session,
+            flexibility,
+          }),
+        }))
+        .sort((left, right) => right.evaluation.score - left.evaluation.score)[0] ?? null;
 
-    if (bestMatch) {
-      usedSessionIds.add(bestMatch.id);
-      bestMatch.status = "completed";
-      bestMatch.completedWorkoutLogId = log.id;
-      completedWorkoutLogIds.push(log.id);
+    if (bestMatch && bestMatch.evaluation.score >= 2.25) {
+      usedSessionIds.add(bestMatch.session.id);
+      bestMatch.session.status = "completed";
+      bestMatch.session.completedWorkoutLogId = analysis.log.id;
+      completedWorkoutLogIds.push(analysis.log.id);
+      debugEntries.push({
+        workoutLogId: analysis.log.id,
+        workoutName: analysis.log.workoutName,
+        completedAt: analysis.log.completedAt,
+        inferredFocus: analysis.inferredFocus,
+        sessionCredit: analysis.credit.sessionCredit,
+        minuteCredit: analysis.credit.minuteCredit,
+        reason: analysis.credit.reason,
+        matchedSessionId: bestMatch.session.id,
+        matchedSessionFocus: bestMatch.session.focus,
+        matchScore: roundToSingleDecimal(bestMatch.evaluation.score),
+        matchingReason: bestMatch.evaluation.reason,
+      });
       continue;
     }
 
-    spontaneousWorkoutLogIds.push(log.id);
+    spontaneousWorkoutLogIds.push(analysis.log.id);
+    debugEntries.push({
+      workoutLogId: analysis.log.id,
+      workoutName: analysis.log.workoutName,
+      completedAt: analysis.log.completedAt,
+      inferredFocus: analysis.inferredFocus,
+      sessionCredit: analysis.credit.sessionCredit,
+      minuteCredit: analysis.credit.minuteCredit,
+      reason: analysis.credit.reason,
+      matchedSessionId: null,
+      matchedSessionFocus: null,
+      matchScore: bestMatch ? roundToSingleDecimal(bestMatch.evaluation.score) : null,
+      matchingReason: bestMatch
+        ? `Ingen tillräckligt stark matchning. Bästa kandidat gav ${roundToSingleDecimal(
+            bestMatch.evaluation.score,
+          )} poäng.`
+        : "Inget rimligt planerat pass att matcha mot.",
+    });
   }
 
-  const spontaneousLogs = meaningfulLogs.filter((log) => spontaneousWorkoutLogIds.includes(log.id));
+  const spontaneousLogs = analyzedLogs.filter((analysis) =>
+    spontaneousWorkoutLogIds.includes(analysis.log.id),
+  );
 
-  for (const log of spontaneousLogs) {
-    const inferredFocus = inferWorkoutFocus(log);
-    const logDate = normalizeIsoDate(log.completedAt);
-    const candidate = sessions
+  for (const analysis of spontaneousLogs) {
+    const candidate =
+      sessions
       .filter((session) => !usedSessionIds.has(session.id) && !replacedByWorkoutLogIds.has(session.id))
-      .filter((session) => dateDiffInDays(session.plannedDate, logDate) >= 0)
-      .sort(
-        (left, right) =>
-          Math.abs(dateDiffInDays(left.plannedDate, logDate)) -
-          Math.abs(dateDiffInDays(right.plannedDate, logDate)),
-      )
-      .find((session) => {
-        if (flexibility === "strict") {
-          return false;
-        }
+      .filter((session) => dateDiffInDays(session.plannedDate, analysis.logDate) >= 0)
+      .map((session) => ({
+        session,
+        evaluation: evaluateWorkoutSessionMatch({
+          log: analysis,
+          session,
+          flexibility,
+        }),
+      }))
+      .sort((left, right) => right.evaluation.score - left.evaluation.score)[0] ?? null;
 
-        const focusOverlap = FOCUS_MUSCLES[session.focus].some((group) =>
-          FOCUS_MUSCLES[inferredFocus].includes(group),
-        );
-        const maxReplaceDistance = flexibility === "balanced" ? 2 : 4;
-        return (
-          focusOverlap &&
-          Math.abs(dateDiffInDays(session.plannedDate, logDate)) <= maxReplaceDistance
-        );
-      });
-
-    if (!candidate) {
+    if (!candidate || flexibility === "strict" || candidate.evaluation.score < 3) {
       continue;
     }
 
-    candidate.status = "replaced_by_spontaneous";
-    candidate.replacedByWorkoutLogId = log.id;
-    replacedByWorkoutLogIds.add(candidate.id);
+    candidate.session.status = "replaced_by_spontaneous";
+    candidate.session.replacedByWorkoutLogId = analysis.log.id;
+    replacedByWorkoutLogIds.add(candidate.session.id);
+
+    const debugEntry = debugEntries.find((entry) => entry.workoutLogId === analysis.log.id);
+    if (debugEntry) {
+      debugEntry.matchedSessionId = candidate.session.id;
+      debugEntry.matchedSessionFocus = candidate.session.focus;
+      debugEntry.matchScore = roundToSingleDecimal(candidate.evaluation.score);
+      debugEntry.matchingReason = `Spontant pass som ersatte framtida planerat pass. ${candidate.evaluation.reason}`;
+    }
   }
 
   return {
     sessions,
     completedWorkoutLogIds,
     spontaneousWorkoutLogIds,
+    workoutAnalyses: analyzedLogs,
+    debugEntries,
   };
 }
 
@@ -741,11 +1111,9 @@ function markMissedSessionsForState(
   });
 }
 
-function getCompletedStimulusThisWeek(logs: WorkoutLog[]) {
-  return logs
-    .filter(isMeaningfulWorkoutForPlan)
-    .reduce<Record<MuscleBudgetGroup, number>>((totals, log) => {
-      const logStimulus = buildMuscleStimulusFromExercises(log.exercises);
+function getCompletedStimulusThisWeek(workoutAnalyses: WorkoutFocusAnalysis[]) {
+  return workoutAnalyses.reduce<Record<MuscleBudgetGroup, number>>((totals, analysis) => {
+      const logStimulus = analysis.stimulus;
       for (const group of Object.keys(totals) as MuscleBudgetGroup[]) {
         totals[group] += logStimulus[group];
       }
@@ -756,10 +1124,11 @@ function getCompletedStimulusThisWeek(logs: WorkoutLog[]) {
 function buildMuscleSetDeficits(
   settings: WeeklyPlanSettings,
   plannedSessions: PlannedSession[],
-  completedLogs: WorkoutLog[],
+  completedWorkoutAnalyses: WorkoutFocusAnalysis[],
+  goal?: string | null,
 ) {
-  const targets = buildPlannedTargetMuscleSets(plannedSessions);
-  const completed = getCompletedStimulusThisWeek(completedLogs);
+  const targets = buildPlannedTargetMuscleSets(plannedSessions, settings, goal);
+  const completed = getCompletedStimulusThisWeek(completedWorkoutAnalyses);
   const deficits = createMuscleRecord();
 
   for (const group of Object.keys(deficits) as MuscleBudgetGroup[]) {
@@ -825,16 +1194,28 @@ function getFocusDeficitScore(
   return FOCUS_MUSCLES[focus].reduce((sum, group) => sum + deficits[group], 0);
 }
 
-function getFocusCarryScore(
+function getFocusReplacementNeed(
   focus: PlannedSessionFocus,
   sessions: PlannedSession[],
 ) {
   return sessions.reduce((sum, session) => {
-    if (session.status !== "planned" && session.status !== "moved") {
+    if (
+      session.status !== "planned" &&
+      session.status !== "moved" &&
+      session.status !== "missed"
+    ) {
       return sum;
     }
 
-    return session.focus === focus ? sum + 0.75 : sum;
+    if (session.focus === focus) {
+      return sum + (session.status === "missed" ? 1.1 : 0.75);
+    }
+
+    const sameMappedFocus =
+      mapPlannedFocusToWorkoutFocus(session.focus) ===
+      mapPlannedFocusToWorkoutFocus(focus);
+
+    return sameMappedFocus ? sum + 0.35 : sum;
   }, 0);
 }
 
@@ -872,15 +1253,56 @@ function getFocusGoalBias(
   return 0;
 }
 
+function getFocusPriorityMuscleWeight(params: {
+  focus: PlannedSessionFocus;
+  deficits: Record<MuscleBudgetGroup, number>;
+  profilePriorityMuscles: MuscleBudgetGroup[];
+}) {
+  if (params.profilePriorityMuscles.length === 0) {
+    return 0;
+  }
+
+  const focusGroups = new Set(FOCUS_MUSCLES[params.focus]);
+  return params.profilePriorityMuscles.reduce((sum, group) => {
+    if (!focusGroups.has(group)) {
+      return sum;
+    }
+
+    return sum + Math.max(0.4, params.deficits[group] * 0.55);
+  }, 0);
+}
+
+function getFocusTimeSinceLastStimulusBonus(params: {
+  focus: PlannedSessionFocus;
+  workoutAnalyses: WorkoutFocusAnalysis[];
+  now: Date;
+}) {
+  const focusGroups = new Set(FOCUS_MUSCLES[params.focus]);
+  const lastRelevantHours = params.workoutAnalyses
+    .filter((analysis) => analysis.topStimulusGroups.some((group) => focusGroups.has(group)))
+    .map((analysis) => getHoursSince(analysis.log.completedAt, params.now))
+    .sort((left, right) => left - right)[0];
+
+  if (!Number.isFinite(lastRelevantHours)) {
+    return 1.8;
+  }
+
+  if (lastRelevantHours >= 96) return 1.6;
+  if (lastRelevantHours >= 72) return 1.2;
+  if (lastRelevantHours >= 48) return 0.8;
+  if (lastRelevantHours >= 30) return 0.35;
+  return 0;
+}
+
 function getFocusPracticalityBonus(params: {
   focus: PlannedSessionFocus;
   deficits: Record<MuscleBudgetGroup, number>;
-  remainingSessions: number;
+  remainingSessionCredit: number;
   remainingDaysInWeek: number;
   averageRemainingMinutes: number;
   goal: string | null | undefined;
 }) {
-  const { focus, deficits, remainingSessions, remainingDaysInWeek, averageRemainingMinutes, goal } =
+  const { focus, deficits, remainingSessionCredit, remainingDaysInWeek, averageRemainingMinutes, goal } =
     params;
   const normalizedGoal = normalizeTrainingGoal(goal);
   const upperScore =
@@ -891,7 +1313,7 @@ function getFocusPracticalityBonus(params: {
   let bonus = 0;
 
   // När veckan börjar ta slut är ett rimligt helkropps- eller brett fokus ofta bättre än att jaga en gammal dagslabel.
-  if (remainingSessions <= 1 && remainingDaysInWeek <= 2 && upperScore > 0 && lowerScore > 0) {
+  if (remainingSessionCredit <= 1.1 && remainingDaysInWeek <= 2 && upperScore > 0 && lowerScore > 0) {
     bonus += focus === "full_body" ? 2.4 : 0;
   }
 
@@ -915,29 +1337,27 @@ function getFocusPracticalityBonus(params: {
   return bonus;
 }
 
-function getFocusRecoveryPenalty(params: {
+function getFocusRecentPenalty(params: {
   focus: PlannedSessionFocus;
-  completedLogs: WorkoutLog[];
+  workoutAnalyses: WorkoutFocusAnalysis[];
   now: Date;
 }) {
-  const recentLogs = [...params.completedLogs]
-    .filter(isMeaningfulWorkoutForPlan)
+  const recentLogs = [...params.workoutAnalyses]
     .sort(
       (left, right) =>
-        new Date(right.completedAt).getTime() - new Date(left.completedAt).getTime(),
+        new Date(right.log.completedAt).getTime() - new Date(left.log.completedAt).getTime(),
     )
     .slice(0, 2);
   let penalty = 0;
   const focusGroups = new Set(FOCUS_MUSCLES[params.focus]);
 
-  for (const log of recentLogs) {
-    const inferredFocus = inferWorkoutFocus(log);
-    const hoursSince = getHoursSince(log.completedAt, params.now);
+  for (const analysis of recentLogs) {
+    const inferredFocus = analysis.inferredFocus;
+    const hoursSince = getHoursSince(analysis.log.completedAt, params.now);
     const sameMappedFocus =
       mapPlannedFocusToWorkoutFocus(params.focus) ===
       mapPlannedFocusToWorkoutFocus(inferredFocus);
-    const overlapCount = FOCUS_MUSCLES[inferredFocus].filter((group) => focusGroups.has(group))
-      .length;
+    const overlapCount = analysis.topStimulusGroups.filter((group) => focusGroups.has(group)).length;
 
     if (sameMappedFocus) {
       if (hoursSince <= 30) {
@@ -963,25 +1383,75 @@ function getFocusRecoveryPenalty(params: {
   return penalty;
 }
 
-function selectSuggestedNextFocus(params: {
+function getFocusOverloadPenalty(params: {
+  focus: PlannedSessionFocus;
+  workoutAnalyses: WorkoutFocusAnalysis[];
+  now: Date;
+}) {
+  const focusGroups = new Set(FOCUS_MUSCLES[params.focus]);
+  let recentStimulus = 0;
+
+  for (const analysis of params.workoutAnalyses) {
+    const hoursSince = getHoursSince(analysis.log.completedAt, params.now);
+    if (hoursSince > 48) {
+      continue;
+    }
+
+    for (const group of analysis.topStimulusGroups) {
+      if (focusGroups.has(group)) {
+        recentStimulus += analysis.stimulus[group];
+      }
+    }
+  }
+
+  if (params.focus === "core" && recentStimulus > 2.4) {
+    return 2.2;
+  }
+
+  if (recentStimulus > 6) {
+    return 1.8;
+  }
+
+  if (recentStimulus > 3.5) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function getFocusRemainingDaysUrgency(params: {
+  focus: PlannedSessionFocus;
+  deficits: Record<MuscleBudgetGroup, number>;
+  remainingDaysInWeek: number;
+  remainingSessionCredit: number;
+}) {
+  const focusDeficit = getFocusDeficitScore(params.focus, params.deficits);
+
+  if (focusDeficit <= 0) {
+    return 0;
+  }
+
+  if (params.remainingDaysInWeek <= Math.max(1, Math.ceil(params.remainingSessionCredit))) {
+    return Math.min(1.8, focusDeficit * 0.22);
+  }
+
+  return Math.min(0.9, focusDeficit * 0.1);
+}
+
+function buildFocusRecommendationScores(params: {
   sessions: PlannedSession[];
-  completedLogs: WorkoutLog[];
+  workoutAnalyses: WorkoutFocusAnalysis[];
   deficits: Record<MuscleBudgetGroup, number>;
   settings: WeeklyPlanSettings;
   now: Date;
   goal?: string | null;
+  profilePriorityMuscles: MuscleBudgetGroup[];
+  remainingSessionCredit: number;
+  completedMinutesThisWeek: number;
+  targetMinutesThisWeek: number;
 }) {
-  const remainingSessions = Math.max(
-    0,
-    params.settings.sessionsPerWeek - params.completedLogs.filter(isMeaningfulWorkoutForPlan).length,
-  );
-  const targetMinutesThisWeek =
-    params.settings.defaultDurationMinutes * params.settings.sessionsPerWeek;
-  const completedMinutesThisWeek = params.completedLogs.reduce(
-    (sum, log) => sum + getWorkoutDurationMinutes(log),
-    0,
-  );
-  const remainingMinutes = Math.max(0, targetMinutesThisWeek - completedMinutesThisWeek);
+  const remainingSessions = Math.max(1, Math.ceil(params.remainingSessionCredit));
+  const remainingMinutes = Math.max(0, params.targetMinutesThisWeek - params.completedMinutesThisWeek);
   const averageRemainingMinutes =
     remainingSessions > 0
       ? Math.round(remainingMinutes / remainingSessions)
@@ -989,59 +1459,127 @@ function selectSuggestedNextFocus(params: {
   const remainingDaysInWeek = getRemainingDaysInWeek(params.now);
   const candidates: PlannedSessionFocus[] = ["upper", "lower", "full_body", "push", "pull", "core"];
 
-  const scores = candidates.map((focus) => {
-    const deficitScore = getFocusDeficitScore(focus, params.deficits);
-    const carryScore = getFocusCarryScore(focus, params.sessions);
-    const goalBias = getFocusGoalBias(focus, params.goal);
+  return candidates.map((focus) => {
+    const remainingVolumeNeed = getFocusDeficitScore(focus, params.deficits);
+    const goalPriorityWeight = getFocusGoalBias(focus, params.goal);
+    const priorityMuscleWeight = getFocusPriorityMuscleWeight({
+      focus,
+      deficits: params.deficits,
+      profilePriorityMuscles: params.profilePriorityMuscles,
+    });
+    const timeSinceLastStimulus = getFocusTimeSinceLastStimulusBonus({
+      focus,
+      workoutAnalyses: params.workoutAnalyses,
+      now: params.now,
+    });
+    const plannedSessionReplacementNeed = getFocusReplacementNeed(focus, params.sessions);
     const practicalityBonus = getFocusPracticalityBonus({
       focus,
       deficits: params.deficits,
-      remainingSessions,
+      remainingSessionCredit: params.remainingSessionCredit,
       remainingDaysInWeek,
       averageRemainingMinutes,
       goal: params.goal,
     });
-    const recoveryPenalty = getFocusRecoveryPenalty({
+    const recentFatiguePenalty = getFocusRecentPenalty({
       focus,
-      completedLogs: params.completedLogs,
+      workoutAnalyses: params.workoutAnalyses,
       now: params.now,
+    });
+    const overloadRiskPenalty = getFocusOverloadPenalty({
+      focus,
+      workoutAnalyses: params.workoutAnalyses,
+      now: params.now,
+    });
+    const remainingDaysUrgency = getFocusRemainingDaysUrgency({
+      focus,
+      deficits: params.deficits,
+      remainingDaysInWeek,
+      remainingSessionCredit: params.remainingSessionCredit,
     });
 
     return {
       focus,
-      score: deficitScore + carryScore + goalBias + practicalityBonus - recoveryPenalty,
-      deficitScore,
-      carryScore,
-      goalBias,
+      score:
+        remainingVolumeNeed +
+        goalPriorityWeight +
+        priorityMuscleWeight +
+        timeSinceLastStimulus +
+        plannedSessionReplacementNeed +
+        remainingDaysUrgency -
+        recentFatiguePenalty -
+        overloadRiskPenalty +
+        practicalityBonus,
+      remainingVolumeNeed,
+      goalPriorityWeight,
+      priorityMuscleWeight,
+      timeSinceLastStimulus,
+      plannedSessionReplacementNeed,
+      recentFatiguePenalty,
+      overloadRiskPenalty,
       practicalityBonus,
-      recoveryPenalty,
+      remainingDaysUrgency,
+      reason: [
+        `volym ${roundToSingleDecimal(remainingVolumeNeed)}`,
+        `mål ${roundToSingleDecimal(goalPriorityWeight)}`,
+        `prioritet ${roundToSingleDecimal(priorityMuscleWeight)}`,
+        `tid sedan stimuli ${roundToSingleDecimal(timeSinceLastStimulus)}`,
+        `ersättningsbehov ${roundToSingleDecimal(plannedSessionReplacementNeed)}`,
+        `dag-urgens ${roundToSingleDecimal(remainingDaysUrgency)}`,
+        `trötthet -${roundToSingleDecimal(recentFatiguePenalty)}`,
+        `risk -${roundToSingleDecimal(overloadRiskPenalty)}`,
+        `praktik ${roundToSingleDecimal(practicalityBonus)}`,
+      ].join(" · "),
     } satisfies FocusRecommendationScore;
   });
+}
+
+function selectSuggestedNextFocus(params: {
+  sessions: PlannedSession[];
+  workoutAnalyses: WorkoutFocusAnalysis[];
+  deficits: Record<MuscleBudgetGroup, number>;
+  settings: WeeklyPlanSettings;
+  now: Date;
+  goal?: string | null;
+  profilePriorityMuscles: MuscleBudgetGroup[];
+  remainingSessionCredit: number;
+  completedMinutesThisWeek: number;
+  targetMinutesThisWeek: number;
+}) {
+  const scores = buildFocusRecommendationScores(params);
 
   return [...scores].sort((left, right) => {
     if (right.score !== left.score) {
       return right.score - left.score;
     }
 
-    if (right.deficitScore !== left.deficitScore) {
-      return right.deficitScore - left.deficitScore;
+    if (right.remainingVolumeNeed !== left.remainingVolumeNeed) {
+      return right.remainingVolumeNeed - left.remainingVolumeNeed;
     }
 
-    return right.carryScore - left.carryScore;
+    return right.plannedSessionReplacementNeed - left.plannedSessionReplacementNeed;
   })[0] ?? {
     focus: focusFromLargestDeficits(params.deficits),
     score: 0,
-    deficitScore: 0,
-    carryScore: 0,
-    goalBias: 0,
+    remainingVolumeNeed: 0,
+    goalPriorityWeight: 0,
+    priorityMuscleWeight: 0,
+    timeSinceLastStimulus: 0,
+    plannedSessionReplacementNeed: 0,
+    recentFatiguePenalty: 0,
+    overloadRiskPenalty: 0,
     practicalityBonus: 0,
-    recoveryPenalty: 0,
+    remainingDaysUrgency: 0,
+    reason: "Fallback till största kvarvarande underskott.",
   };
 }
 
 export function suggestNextWorkoutFromWeeklyPlan(planState: WeeklyPlanState): SuggestedWeeklyWorkout {
   const deficits = planState.remainingTrainingNeed.muscleSetDeficits;
   const sortedDeficitMuscles = (Object.keys(deficits) as MuscleBudgetGroup[])
+    .filter((group) => deficits[group] > 0)
+    .sort((left, right) => deficits[right] - deficits[left]);
+  const priorityDeficitMuscles = planState.profilePriorityMuscles
     .filter((group) => deficits[group] > 0)
     .sort((left, right) => deficits[right] - deficits[left]);
   const targetMuscles = sortedDeficitMuscles.slice(0, 3);
@@ -1051,12 +1589,12 @@ export function suggestNextWorkoutFromWeeklyPlan(planState: WeeklyPlanState): Su
   return {
     focus: suggestedNextFocus,
     durationMinutes: planState.remainingTrainingNeed.suggestedNextDurationMinutes,
-    priorityMuscles: targetMuscles,
+    priorityMuscles: Array.from(new Set([...priorityDeficitMuscles, ...targetMuscles])).slice(0, 3),
     easyMuscles: [],
     isUserBehindPlan:
-      planState.remainingTrainingNeed.sessionsRemaining > 0 &&
+      planState.remainingTrainingNeed.remainingSessionCredit > 0.5 &&
       planState.remainingTrainingNeed.completedMinutesThisWeek <
-        planState.remainingTrainingNeed.targetMinutesThisWeek * 0.6,
+        planState.remainingTrainingNeed.targetMinutesThisWeek * 0.75,
     hasSpontaneousWorkoutThisWeek: planState.spontaneousWorkoutLogIds.length > 0,
   };
 }
@@ -1073,17 +1611,32 @@ function getFlexibilityCoachText(flexibility: WeeklyPlanFlexibility) {
   return "Planen kan glida någon dag åt varje håll om veckan förändras.";
 }
 
+function getAllowedDeficitThreshold(planState: WeeklyPlanState) {
+  const flexibilityBonus =
+    planState.settings.flexibility === "flexible"
+      ? 1.2
+      : planState.settings.flexibility === "balanced"
+        ? 0.6
+        : 0;
+
+  return Math.max(2.5, planState.settings.sessionsPerWeek * 1.5 + flexibilityBonus);
+}
+
 export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanStatus {
-  const completedSessions = Math.min(
-    planState.settings.sessionsPerWeek,
-    planState.completedWorkoutLogIds.length + planState.spontaneousWorkoutLogIds.length,
-  );
+  const completedSessions =
+    planState.completedWorkoutLogIds.length + planState.spontaneousWorkoutLogIds.length;
   const targetMinutes = planState.remainingTrainingNeed.targetMinutesThisWeek;
   const completedMinutes = planState.remainingTrainingNeed.completedMinutesThisWeek;
   const remainingMinutes = planState.remainingTrainingNeed.plannedMinutesRemaining;
   const remainingSessions = planState.remainingTrainingNeed.sessionsRemaining;
+  const hasEnoughSessionCredit =
+    planState.remainingTrainingNeed.completedSessionCreditThisWeek >=
+    planState.remainingTrainingNeed.targetSessionCreditThisWeek * 0.85;
+  const hasEnoughMinutes = completedMinutes >= targetMinutes * 0.75;
+  const hasAcceptableMuscleDeficit =
+    planState.remainingTrainingNeed.totalRelevantDeficit <= getAllowedDeficitThreshold(planState);
   const goalReached =
-    remainingSessions === 0 || completedMinutes >= Math.round(targetMinutes * 0.95);
+    hasEnoughSessionCredit && (hasEnoughMinutes || hasAcceptableMuscleDeficit);
   const suggestedNextWorkoutFocus = goalReached
     ? "recovery_strength"
     : mapPlannedFocusToWorkoutFocus(planState.remainingTrainingNeed.suggestedNextFocus);
@@ -1099,6 +1652,15 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
   } else if (completedSessions === 0) {
     message =
       `Du har ${remainingSessions} pass kvar den här veckan. Det viktigaste är att komma igång med ett genomförbart pass.`;
+  } else if (
+    planState.remainingTrainingNeed.completedSessionCreditThisWeek <
+      Math.max(0.75, completedSessions * 0.7) &&
+    completedMinutes < targetMinutes * 0.7
+  ) {
+    message =
+      `Du har tränat ${completedSessions} gånger den här veckan, men passen blev korta. Ett ${formatPlannedSessionFocus(
+        planState.remainingTrainingNeed.suggestedNextFocus,
+      ).toLowerCase()}pass nu skulle bäst fylla kvarvarande träningsgap.`;
   } else if (planState.spontaneousWorkoutLogIds.length > 0) {
     message =
       `Planen har räknats om efter ditt spontana pass. Det återstår ungefär ${remainingSessions} pass och cirka ${remainingMinutes} minuter.`;
@@ -1114,6 +1676,7 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     completedMinutes,
     targetMinutes,
     remainingMinutes,
+    goalReached,
     suggestedNextWorkoutFocus,
     suggestedNextDurationMinutes,
     message: `${message} ${getFlexibilityCoachText(planState.settings.flexibility)}`.trim(),
@@ -1127,13 +1690,18 @@ export function buildWeeklyPlanContext(planState: WeeklyPlanState): WeeklyPlanCo
   return {
     sessionsPerWeek: planState.settings.sessionsPerWeek,
     completedSessionsThisWeek: status.completedSessions,
+    completedSessionCreditThisWeek:
+      planState.remainingTrainingNeed.completedSessionCreditThisWeek,
     remainingSessionsThisWeek: planState.remainingTrainingNeed.sessionsRemaining,
+    remainingSessionCreditThisWeek:
+      planState.remainingTrainingNeed.remainingSessionCredit,
     targetMinutesThisWeek: planState.remainingTrainingNeed.targetMinutesThisWeek,
     completedMinutesThisWeek: planState.remainingTrainingNeed.completedMinutesThisWeek,
     plannedMinutesRemaining: planState.remainingTrainingNeed.plannedMinutesRemaining,
     suggestedNextFocus: suggestion.focus,
     suggestedNextDurationMinutes: suggestion.durationMinutes,
     priorityMuscles: suggestion.priorityMuscles,
+    profilePriorityMuscles: planState.profilePriorityMuscles,
     easyMuscles: suggestion.easyMuscles,
     muscleSetDeficits: planState.remainingTrainingNeed.muscleSetDeficits,
     isUserBehindPlan: suggestion.isUserBehindPlan,
@@ -1151,9 +1719,18 @@ export function deriveWeeklyPlanState(params: {
   workoutLogs: WorkoutLog[];
   now?: Date;
   goal?: string | null;
+  priorityMuscles?: MuscleBudgetGroup[];
 }): WeeklyPlanState {
   const now = params.now ?? new Date();
   const weekStartDate = getWeekStartDate(now);
+  const profilePriorityMuscles = getPriorityMusclesFromProfile(
+    {
+      primary_priority_muscle: params.priorityMuscles?.[0] ?? null,
+      secondary_priority_muscle: params.priorityMuscles?.[1] ?? null,
+      tertiary_priority_muscle: params.priorityMuscles?.[2] ?? null,
+    },
+    params.settings,
+  );
   const logsThisWeek = params.workoutLogs.filter((log) => {
     if (isWorkoutLogExcludedFromAnalysis(log)) {
       return false;
@@ -1175,34 +1752,53 @@ export function deriveWeeklyPlanState(params: {
     params.settings.flexibility,
   );
   const missedSessions = sessionsWithMissedStatus.filter((session) => session.status === "missed");
-  const completedLogs = logsThisWeek.filter(
-    (log) => matched.completedWorkoutLogIds.includes(log.id) || matched.spontaneousWorkoutLogIds.includes(log.id),
+  const completedWorkoutAnalyses = matched.workoutAnalyses.filter(
+    (analysis) =>
+      matched.completedWorkoutLogIds.includes(analysis.log.id) ||
+      matched.spontaneousWorkoutLogIds.includes(analysis.log.id),
   );
-  const completedMinutesThisWeek = completedLogs.reduce(
-    (sum, log) => sum + getWorkoutDurationMinutes(log),
+  const completedMinutesThisWeek = completedWorkoutAnalyses.reduce(
+    (sum, analysis) => sum + analysis.credit.minuteCredit,
     0,
   );
-  const targetMinutesThisWeek = params.settings.defaultDurationMinutes * params.settings.sessionsPerWeek;
-  const completedSessionCount = Math.min(
-    params.settings.sessionsPerWeek,
-    matched.completedWorkoutLogIds.length + matched.spontaneousWorkoutLogIds.length,
+  const completedSessionCreditThisWeek = roundToSingleDecimal(
+    completedWorkoutAnalyses.reduce(
+      (sum, analysis) => sum + analysis.credit.sessionCredit,
+      0,
+    ),
   );
-  const sessionsRemaining = Math.max(0, params.settings.sessionsPerWeek - completedSessionCount);
+  const targetMinutesThisWeek =
+    params.settings.defaultDurationMinutes * params.settings.sessionsPerWeek;
+  const targetSessionCreditThisWeek = params.settings.sessionsPerWeek;
+  const remainingSessionCredit = Math.max(
+    0,
+    roundToSingleDecimal(targetSessionCreditThisWeek - completedSessionCreditThisWeek),
+  );
+  const sessionsRemaining =
+    remainingSessionCredit <= 0
+      ? 0
+      : Math.max(1, Math.ceil(remainingSessionCredit - 0.15));
   const plannedMinutesRemaining = Math.max(0, targetMinutesThisWeek - completedMinutesThisWeek);
   const muscleSetDeficits = buildMuscleSetDeficits(
     params.settings,
     currentWeekSessions,
-    completedLogs,
+    completedWorkoutAnalyses,
+    params.goal,
   );
-  // Nästa fokus ska spegla bästa nästa pass från och med nu, inte bara dagens ursprungliga planrad.
-  const suggestedNextFocus = selectSuggestedNextFocus({
+  const focusRecommendation = selectSuggestedNextFocus({
     sessions: sessionsWithMissedStatus,
-    completedLogs,
+    workoutAnalyses: completedWorkoutAnalyses,
     deficits: muscleSetDeficits,
     settings: params.settings,
     now,
     goal: params.goal,
-  }).focus;
+    profilePriorityMuscles,
+    remainingSessionCredit,
+    completedMinutesThisWeek,
+    targetMinutesThisWeek,
+  });
+  // Nästa fokus ska spegla bästa nästa pass från och med nu, inte bara dagens ursprungliga planrad.
+  const suggestedNextFocus = focusRecommendation.focus;
   const suggestedNextDurationMinutes = clampNumber(
     sessionsRemaining > 0
       ? Math.round(plannedMinutesRemaining / sessionsRemaining)
@@ -1210,6 +1806,32 @@ export function deriveWeeklyPlanState(params: {
     params.settings.minDurationMinutes,
     params.settings.maxDurationMinutes,
   );
+  const totalRelevantDeficit = roundToSingleDecimal(
+    (Object.keys(muscleSetDeficits) as MuscleBudgetGroup[]).reduce((sum, group) => {
+      const weight = profilePriorityMuscles.includes(group)
+        ? 1.25
+        : group === "calves" || group === "core"
+          ? 0.65
+          : 1;
+      return sum + muscleSetDeficits[group] * weight;
+    }, 0),
+  );
+  const focusScores = buildFocusRecommendationScores({
+    sessions: sessionsWithMissedStatus,
+    workoutAnalyses: completedWorkoutAnalyses,
+    deficits: muscleSetDeficits,
+    settings: params.settings,
+    now,
+    goal: params.goal,
+    profilePriorityMuscles,
+    remainingSessionCredit,
+    completedMinutesThisWeek,
+    targetMinutesThisWeek,
+  });
+  const goalReachedReason =
+    remainingSessionCredit <= 0.15 && plannedMinutesRemaining <= params.settings.minDurationMinutes
+      ? "Session- och minutmålet är i praktiken uppnått."
+      : `Sessioncredit ${completedSessionCreditThisWeek}/${targetSessionCreditThisWeek}, minuter ${completedMinutesThisWeek}/${targetMinutesThisWeek}, relevant deficit ${totalRelevantDeficit}.`;
 
   return {
     userId: params.settings.userId,
@@ -1219,14 +1841,28 @@ export function deriveWeeklyPlanState(params: {
     completedWorkoutLogIds: matched.completedWorkoutLogIds,
     spontaneousWorkoutLogIds: matched.spontaneousWorkoutLogIds,
     missedSessions,
+    profilePriorityMuscles,
     remainingTrainingNeed: {
       sessionsRemaining,
+      remainingSessionCredit,
       plannedMinutesRemaining,
       completedMinutesThisWeek,
       targetMinutesThisWeek,
+      completedSessionCreditThisWeek,
+      targetSessionCreditThisWeek,
       muscleSetDeficits,
+      totalRelevantDeficit,
       suggestedNextFocus,
       suggestedNextDurationMinutes,
+      suggestedNextFocusReason: focusRecommendation.reason,
+    },
+    debug: {
+      workoutCredits: matched.debugEntries,
+      focusScores: focusScores.map((score) => ({
+        ...score,
+        selected: score.focus === suggestedNextFocus,
+      })),
+      goalReachedReason,
     },
   };
 }

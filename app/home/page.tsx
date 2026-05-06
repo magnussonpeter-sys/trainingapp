@@ -33,6 +33,7 @@ import {
   type PlannedSession,
   type WeeklyPlanContext,
   type WeeklyPlanSettings,
+  type WeeklyPlanStatus,
   type WeeklyPlanState,
 } from "@/lib/planning/weekly-plan";
 import { getLocalWeeklyPlanSettings } from "@/lib/planning/weekly-plan-local-store";
@@ -157,6 +158,16 @@ type HomeWorkoutRecommendation = {
   durationMinutes: number;
   muscleGroups: MuscleBudgetGroup[];
   source: "weekly_plan" | "adaptive_fallback";
+};
+
+type WeeklyPlanApiResponse = {
+  ok?: boolean;
+  settings?: WeeklyPlanSettings;
+  plannedSessions?: PlannedSession[];
+  state?: WeeklyPlanState;
+  status?: WeeklyPlanStatus;
+  context?: WeeklyPlanContext;
+  error?: string;
 };
 
 const HOME_FOCUS_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
@@ -1405,6 +1416,9 @@ export default function HomePage() {
   const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
   const [weeklyPlanSettings, setWeeklyPlanSettings] = useState<WeeklyPlanSettings | null>(null);
   const [weeklyPlanSessions, setWeeklyPlanSessions] = useState<PlannedSession[]>([]);
+  const [serverWeeklyPlanState, setServerWeeklyPlanState] = useState<WeeklyPlanState | null>(null);
+  const [serverWeeklyPlanStatus, setServerWeeklyPlanStatus] = useState<WeeklyPlanStatus | null>(null);
+  const [serverWeeklyPlanContext, setServerWeeklyPlanContext] = useState<WeeklyPlanContext | null>(null);
   const hasAppliedInitialGymRef = useRef(false);
 
   const gymOptions = useMemo(() => {
@@ -1438,7 +1452,7 @@ export default function HomePage() {
       settings,
     });
   }, [settings, workoutLogs]);
-  const weeklyPlanState = useMemo(() => {
+  const fallbackWeeklyPlanState = useMemo(() => {
     if (!userId || !weeklyPlanSettings) {
       return null;
     }
@@ -1449,15 +1463,30 @@ export default function HomePage() {
       workoutLogs,
       now: new Date(),
       goal: settings?.training_goal ?? null,
+      priorityMuscles: [
+        settings?.primary_priority_muscle ?? null,
+        settings?.secondary_priority_muscle ?? null,
+        settings?.tertiary_priority_muscle ?? null,
+      ].filter((group): group is MuscleBudgetGroup => Boolean(group)),
     });
-  }, [settings?.training_goal, userId, weeklyPlanSessions, weeklyPlanSettings, workoutLogs]);
+  }, [
+    settings?.primary_priority_muscle,
+    settings?.secondary_priority_muscle,
+    settings?.tertiary_priority_muscle,
+    settings?.training_goal,
+    userId,
+    weeklyPlanSessions,
+    weeklyPlanSettings,
+    workoutLogs,
+  ]);
+  const weeklyPlanState = serverWeeklyPlanState ?? fallbackWeeklyPlanState;
   const weeklyPlanContext = useMemo(
-    () => (weeklyPlanState ? buildWeeklyPlanContext(weeklyPlanState) : null),
-    [weeklyPlanState],
+    () => serverWeeklyPlanContext ?? (weeklyPlanState ? buildWeeklyPlanContext(weeklyPlanState) : null),
+    [serverWeeklyPlanContext, weeklyPlanState],
   );
   const weeklyPlanStatus = useMemo(
-    () => (weeklyPlanState ? buildWeeklyPlanStatus(weeklyPlanState) : null),
-    [weeklyPlanState],
+    () => serverWeeklyPlanStatus ?? (weeklyPlanState ? buildWeeklyPlanStatus(weeklyPlanState) : null),
+    [serverWeeklyPlanStatus, weeklyPlanState],
   );
   const homeRecommendation = useMemo(() => {
     return buildHomeWorkoutRecommendation({
@@ -1492,14 +1521,7 @@ export default function HomePage() {
           cache: "no-store",
           credentials: "include",
         });
-        const payload = (await response.json().catch(() => null)) as
-          | {
-              ok?: boolean;
-              settings?: WeeklyPlanSettings;
-              plannedSessions?: PlannedSession[];
-              error?: string;
-            }
-          | null;
+        const payload = (await response.json().catch(() => null)) as WeeklyPlanApiResponse | null;
 
         if (!response.ok || !payload?.ok || !payload.settings) {
           throw new Error(payload?.error || "Kunde inte läsa veckoplanen");
@@ -1511,6 +1533,9 @@ export default function HomePage() {
 
         setWeeklyPlanSettings(payload.settings);
         setWeeklyPlanSessions(payload.plannedSessions ?? []);
+        setServerWeeklyPlanState(payload.state ?? null);
+        setServerWeeklyPlanStatus(payload.status ?? null);
+        setServerWeeklyPlanContext(payload.context ?? null);
       } catch {
         if (!isMounted) {
           return;
@@ -1522,6 +1547,9 @@ export default function HomePage() {
         setWeeklyPlanSessions(
           buildInitialWeeklyPlan(fallbackSettings, getWeekStartDate(new Date())),
         );
+        setServerWeeklyPlanState(null);
+        setServerWeeklyPlanStatus(null);
+        setServerWeeklyPlanContext(null);
       }
     }
 

@@ -21,6 +21,8 @@ export async function POST(request: NextRequest) {
       settings: result.settings,
       plannedSessions: result.plannedSessions,
       state: result.state,
+      status: result.status,
+      context: result.context,
     });
   } catch (error) {
     console.error("POST /api/weekly-plan/postpone error:", error);
@@ -55,4 +57,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

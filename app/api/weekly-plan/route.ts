@@ -13,6 +13,8 @@ export async function GET(request: NextRequest) {
       settings: result.settings,
       plannedSessions: result.plannedSessions,
       state: result.state,
+      status: result.status,
+      context: result.context,
     });
   } catch (error) {
     console.error("GET /api/weekly-plan error:", error);
@@ -40,4 +42,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

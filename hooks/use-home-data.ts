@@ -288,8 +288,10 @@ export function useHomeData({ router }: UseHomeDataParams) {
 
         try {
           const localLogs = getWorkoutLogs(userId);
+          // Home behöver lite bredare historik för lokala fallback-beräkningar,
+          // även om serverns veckoplanstatus ska vara primär när den finns.
           const logsRes = await fetch(
-            `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=12`,
+            `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=60`,
             {
               cache: "no-store",
               credentials: "include",

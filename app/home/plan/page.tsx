@@ -21,13 +21,16 @@ import {
   type PlannedSession,
   type Weekday,
   type WeeklyPlanFlexibility,
+  type WeeklyPlanContext,
   type WeeklyPlanSettings,
+  type WeeklyPlanStatus,
   type WeeklyPlanState,
 } from "@/lib/planning/weekly-plan";
 import {
   getLocalWeeklyPlanSettings,
   saveLocalWeeklyPlanSettings,
 } from "@/lib/planning/weekly-plan-local-store";
+import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
@@ -50,6 +53,8 @@ type WeeklyPlanApiResponse = {
   settings?: WeeklyPlanSettings;
   plannedSessions?: PlannedSession[];
   state?: WeeklyPlanState;
+  status?: WeeklyPlanStatus;
+  context?: WeeklyPlanContext;
 };
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -128,6 +133,9 @@ export default function WeeklyPlanPage() {
   const userId = authUser?.id ? String(authUser.id) : "";
   const [planSettings, setPlanSettings] = useState<WeeklyPlanSettings | null>(null);
   const [plannedSessions, setPlannedSessions] = useState<PlannedSession[]>([]);
+  const [serverPlanState, setServerPlanState] = useState<WeeklyPlanState | null>(null);
+  const [serverPlanStatus, setServerPlanStatus] = useState<WeeklyPlanStatus | null>(null);
+  const [serverPlanContext, setServerPlanContext] = useState<WeeklyPlanContext | null>(null);
   const [isLoadingPlan, setIsLoadingPlan] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -186,6 +194,9 @@ export default function WeeklyPlanPage() {
           payload.plannedSessions ??
             buildInitialWeeklyPlan(nextSettings, getWeekStartDate(new Date())),
         );
+        setServerPlanState(payload.state ?? null);
+        setServerPlanStatus(payload.status ?? null);
+        setServerPlanContext(payload.context ?? null);
       } catch (error) {
         if (!isMounted) {
           return;
@@ -199,6 +210,9 @@ export default function WeeklyPlanPage() {
         setPlannedSessions(
           buildInitialWeeklyPlan(localSettings, getWeekStartDate(new Date())),
         );
+        setServerPlanState(null);
+        setServerPlanStatus(null);
+        setServerPlanContext(null);
         setPlanError(
           error instanceof Error
             ? `${error.message}. Visar lokal fallback så länge.`
@@ -218,7 +232,7 @@ export default function WeeklyPlanPage() {
     };
   }, [userId]);
 
-  const derivedPlanState = useMemo(() => {
+  const fallbackPlanState = useMemo(() => {
     if (!userId || !planSettings) {
       return null;
     }
@@ -229,16 +243,35 @@ export default function WeeklyPlanPage() {
       workoutLogs,
       now: new Date(),
       goal: settings?.training_goal ?? null,
+      priorityMuscles: [
+        settings?.primary_priority_muscle ?? null,
+        settings?.secondary_priority_muscle ?? null,
+        settings?.tertiary_priority_muscle ?? null,
+      ].filter((group): group is MuscleBudgetGroup => Boolean(group)),
     });
-  }, [planSettings, plannedSessions, settings?.training_goal, userId, workoutLogs]);
+  }, [
+    planSettings,
+    plannedSessions,
+    settings?.primary_priority_muscle,
+    settings?.secondary_priority_muscle,
+    settings?.tertiary_priority_muscle,
+    settings?.training_goal,
+    userId,
+    workoutLogs,
+  ]);
+  // Serverberäknad veckoplanstatus är primär för att /home och /home/plan ska visa samma rekommendation.
+  const derivedPlanState = serverPlanState ?? fallbackPlanState;
 
   const weeklyPlanRecommendation = useMemo(() => {
     return buildWeeklyPlanRecommendation(settings?.training_goal ?? null);
   }, [settings?.training_goal]);
 
   const weeklyPlanStatus = useMemo(() => {
-    return derivedPlanState ? buildWeeklyPlanStatus(derivedPlanState) : null;
-  }, [derivedPlanState]);
+    return serverPlanStatus ?? (derivedPlanState ? buildWeeklyPlanStatus(derivedPlanState) : null);
+  }, [derivedPlanState, serverPlanStatus]);
+  const weeklyPlanContext = useMemo(() => {
+    return serverPlanContext ?? (derivedPlanState ? buildWeeklyPlanContext(derivedPlanState) : null);
+  }, [derivedPlanState, serverPlanContext]);
 
   const nextPlannedSessions = useMemo(() => {
     if (!derivedPlanState) {
@@ -327,6 +360,9 @@ export default function WeeklyPlanPage() {
       setPlanSettings(nextSettings);
       setDurationDrafts(createDurationDrafts(nextSettings));
       setPlannedSessions(payload.plannedSessions ?? []);
+      setServerPlanState(payload.state ?? null);
+      setServerPlanStatus(payload.status ?? null);
+      setServerPlanContext(payload.context ?? null);
       saveLocalWeeklyPlanSettings(nextSettings);
       setSaveMessage("Veckoplanen sparades.");
     } catch (error) {
@@ -336,6 +372,9 @@ export default function WeeklyPlanPage() {
       setPlannedSessions(
         buildInitialWeeklyPlan(normalizedSettings, getWeekStartDate(new Date())),
       );
+      setServerPlanState(null);
+      setServerPlanStatus(null);
+      setServerPlanContext(null);
       setPlanError(
         error instanceof Error
           ? `${error.message}. Ändringarna sparades lokalt så länge.`
@@ -355,7 +394,8 @@ export default function WeeklyPlanPage() {
       gymOptions.find((gym) => gym.id === (planSettings.preferredGymId ?? "bodyweight")) ??
       gymOptions[0];
     const equipment = normalizeEquipmentStrings(selectedGym.equipment);
-    const weeklyPlanContext = buildWeeklyPlanContext(derivedPlanState);
+    const effectiveWeeklyPlanContext =
+      weeklyPlanContext ?? buildWeeklyPlanContext(derivedPlanState);
     const goal = settings?.training_goal?.trim() || "health";
     const recommendedFocus =
       weeklyPlanStatus.suggestedNextWorkoutFocus === "recovery_strength"
@@ -383,8 +423,8 @@ export default function WeeklyPlanPage() {
         gymLabel,
         gymEquipmentDetails: selectedGym.equipment as Array<Record<string, unknown>>,
         nextFocus: recommendedFocus,
-        weeklyPlanContext,
-        focusMuscles: weeklyPlanContext.priorityMuscles,
+        weeklyPlanContext: effectiveWeeklyPlanContext,
+        focusMuscles: effectiveWeeklyPlanContext.priorityMuscles,
         lessOftenExerciseIds,
       });
 
