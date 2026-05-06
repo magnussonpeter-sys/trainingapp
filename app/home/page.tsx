@@ -25,6 +25,7 @@ import {
   buildInitialWeeklyPlan,
   buildWeeklyPlanContext,
   deriveWeeklyPlanState,
+  formatWeekdayLabel,
   getDefaultWeeklyPlanSettings,
   getWeekStartDate,
   type PlannedSession,
@@ -789,11 +790,16 @@ function TrainingGapCard(props: {
 
 function WeeklyPlanSummaryCard(props: {
   state: WeeklyPlanState;
-  onCreateWorkout: () => void;
   onOpenPlan: () => void;
 }) {
   const completedSessions = props.state.completedWorkoutLogIds.length;
   const targetSessions = props.state.settings.sessionsPerWeek;
+  const nextPlannedSession = props.state.plannedSessions.find(
+    (session) => session.status === "planned" || session.status === "moved",
+  );
+  const nextPlannedDayLabel = nextPlannedSession
+    ? formatWeekdayLabel(nextPlannedSession.weekday)
+    : null;
 
   return (
     <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
@@ -815,14 +821,16 @@ function WeeklyPlanSummaryCard(props: {
                 ? "press"
                 : props.state.remainingTrainingNeed.suggestedNextFocus === "pull"
                   ? "drag"
-                  : props.state.remainingTrainingNeed.suggestedNextFocus === "core"
+                : props.state.remainingTrainingNeed.suggestedNextFocus === "core"
                     ? "bål"
                     : "rörlighet"}
       </p>
+      {nextPlannedDayLabel ? (
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          Planerat nästa gång: {nextPlannedDayLabel}
+        </p>
+      ) : null}
       <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-        <button type="button" onClick={props.onCreateWorkout} className={uiButtonClasses.primary}>
-          Skapa AI-pass
-        </button>
         <button type="button" onClick={props.onOpenPlan} className={uiButtonClasses.secondary}>
           Ändra veckoplan
         </button>
@@ -1830,7 +1838,6 @@ export default function HomePage() {
         {weeklyPlanState ? (
           <WeeklyPlanSummaryCard
             state={weeklyPlanState}
-            onCreateWorkout={handleReviewAiWorkout}
             onOpenPlan={() => router.push("/home/plan")}
           />
         ) : null}

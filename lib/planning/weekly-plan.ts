@@ -107,6 +107,31 @@ export type WeeklyPlanContext = {
   isUserBehindPlan: boolean;
   hasSpontaneousWorkoutThisWeek: boolean;
   flexibility: WeeklyPlanFlexibility;
+  preferredDays: Weekday[];
+  preferredGymId?: string | null;
+  coachText: string;
+};
+
+export type WeeklyPlanRecommendation = {
+  recommendedSessionsPerWeek: number;
+  minimumSessionsPerWeek: number;
+  recommendedMinutesRange: {
+    min: number;
+    max: number;
+  };
+  explanation: string;
+};
+
+export type WeeklyPlanStatus = {
+  plannedSessions: number;
+  completedSessions: number;
+  remainingSessions: number;
+  completedMinutes: number;
+  targetMinutes: number;
+  remainingMinutes: number;
+  suggestedNextWorkoutFocus: WorkoutFocus | "recovery_strength";
+  suggestedNextDurationMinutes: number;
+  message: string;
 };
 
 const WEEKDAY_ORDER: Weekday[] = [
@@ -323,22 +348,15 @@ function inferWorkoutFocus(log: WorkoutLog): PlannedSessionFocus {
   return "lower";
 }
 
-function buildPlannedTargetMuscleSets(settings: WeeklyPlanSettings, plannedSessions: PlannedSession[]) {
+function buildPlannedTargetMuscleSets(plannedSessions: PlannedSession[]) {
   const targets = createMuscleRecord();
 
   for (const session of plannedSessions) {
     const focusGroups = FOCUS_MUSCLES[session.focus];
     for (const group of focusGroups) {
-      let credit = session.focus === "full_body" ? 2 : 3;
-
-      if (settings.priorityMuscles.includes(group)) {
-        credit += 1.5;
-      }
-
-      if (settings.easyMuscles.includes(group)) {
-        credit *= 0.6;
-      }
-
+      // Veckoplanen är avsiktligt enkel här. Muskelnyansering kommer från
+      // historik, muskelbudget och coachmotorn snarare än manuella planfält.
+      const credit = session.focus === "full_body" ? 2 : 3;
       targets[group] += credit;
     }
   }
@@ -347,11 +365,13 @@ function buildPlannedTargetMuscleSets(settings: WeeklyPlanSettings, plannedSessi
 }
 
 function getPriorityMusclesForSession(
-  settings: WeeklyPlanSettings,
+  _settings: WeeklyPlanSettings,
   focus: PlannedSessionFocus,
 ) {
-  const focusGroups = new Set(FOCUS_MUSCLES[focus]);
-  return settings.priorityMuscles.filter((group) => focusGroups.has(group));
+  void focus;
+  // Legacyfält finns kvar i modellen för bakåtkompatibilitet,
+  // men veckoplanen styr inte längre muskler manuellt.
+  return [];
 }
 
 function getAutoFillDays(
@@ -397,18 +417,13 @@ function getAutoFillDays(
 
 function buildFocusRotation(
   sessionsPerWeek: number,
-  settings: WeeklyPlanSettings,
 ): PlannedSessionFocus[] {
-  const upperPriorityCount = settings.priorityMuscles.filter((group) =>
-    ["chest", "back", "shoulders", "biceps", "triceps"].includes(group),
-  ).length;
-
   if (sessionsPerWeek <= 1) {
     return ["full_body"];
   }
 
   if (sessionsPerWeek === 2) {
-    return upperPriorityCount >= 2 ? ["upper", "full_body"] : ["full_body", "full_body"];
+    return ["full_body", "full_body"];
   }
 
   if (sessionsPerWeek === 3) {
@@ -485,12 +500,78 @@ export function getDefaultWeeklyPlanSettings(userId: string): WeeklyPlanSettings
   };
 }
 
+function normalizeTrainingGoal(goal?: string | null) {
+  if (!goal) {
+    return "health";
+  }
+
+  if (goal === "hypertrophy" || goal === "muscle_gain") {
+    return "hypertrophy";
+  }
+
+  if (goal === "strength") {
+    return "strength";
+  }
+
+  if (goal === "body_composition") {
+    return "body_composition";
+  }
+
+  if (goal === "general_fitness" || goal === "health") {
+    return "health";
+  }
+
+  return "health";
+}
+
+export function buildWeeklyPlanRecommendation(goal?: string | null): WeeklyPlanRecommendation {
+  const normalizedGoal = normalizeTrainingGoal(goal);
+
+  if (normalizedGoal === "hypertrophy") {
+    return {
+      recommendedSessionsPerWeek: 3,
+      minimumSessionsPerWeek: 2,
+      recommendedMinutesRange: { min: 35, max: 45 },
+      explanation:
+        "För muskeltillväxt behövs oftast minst 2 styrkepass per vecka. 3–4 pass ger bättre marginal för tillräcklig träningsvolym och återhämtning.",
+    };
+  }
+
+  if (normalizedGoal === "strength") {
+    return {
+      recommendedSessionsPerWeek: 3,
+      minimumSessionsPerWeek: 2,
+      recommendedMinutesRange: { min: 35, max: 50 },
+      explanation:
+        "För styrkeökning behövs oftast minst 2 pass per vecka. 3 pass ger bättre möjlighet att öva basrörelser och höja belastningen gradvis.",
+    };
+  }
+
+  if (normalizedGoal === "body_composition") {
+    return {
+      recommendedSessionsPerWeek: 3,
+      minimumSessionsPerWeek: 2,
+      recommendedMinutesRange: { min: 30, max: 45 },
+      explanation:
+        "För kroppssammansättning är 2–4 styrkepass per vecka en rimlig grund. Regelbundenhet och progression är viktigare än exakt veckoschema.",
+    };
+  }
+
+  return {
+    recommendedSessionsPerWeek: 2,
+    minimumSessionsPerWeek: 2,
+    recommendedMinutesRange: { min: 25, max: 40 },
+    explanation:
+      "För allmän hälsa räcker ofta 2 styrkepass per vecka som miniminivå. 3 pass ger bättre balans mellan styrka, energi och vana.",
+  };
+}
+
 export function buildInitialWeeklyPlan(
   settings: WeeklyPlanSettings,
   weekStartDate: string,
 ): PlannedSession[] {
   const selectedDays = getAutoFillDays(settings.sessionsPerWeek, settings.preferredDays);
-  const focusRotation = buildFocusRotation(selectedDays.length, settings);
+  const focusRotation = buildFocusRotation(selectedDays.length);
 
   return selectedDays.map((weekday, index) => {
     const focus = focusRotation[index] ?? focusRotation[focusRotation.length - 1] ?? "full_body";
@@ -667,7 +748,7 @@ function buildMuscleSetDeficits(
   plannedSessions: PlannedSession[],
   completedLogs: WorkoutLog[],
 ) {
-  const targets = buildPlannedTargetMuscleSets(settings, plannedSessions);
+  const targets = buildPlannedTargetMuscleSets(plannedSessions);
   const completed = getCompletedStimulusThisWeek(completedLogs);
   const deficits = createMuscleRecord();
 
@@ -716,20 +797,15 @@ export function suggestNextWorkoutFromWeeklyPlan(planState: WeeklyPlanState): Su
   const sortedDeficitMuscles = (Object.keys(deficits) as MuscleBudgetGroup[])
     .filter((group) => deficits[group] > 0)
     .sort((left, right) => deficits[right] - deficits[left]);
-  const targetMuscles = sortedDeficitMuscles
-    .filter((group) => !planState.settings.easyMuscles.includes(group))
-    .slice(0, 3);
-  const easyMuscles = sortedDeficitMuscles
-    .filter((group) => planState.settings.easyMuscles.includes(group))
-    .slice(0, 2);
+  const targetMuscles = sortedDeficitMuscles.slice(0, 3);
   const suggestedNextFocus =
     planState.remainingTrainingNeed.suggestedNextFocus ?? focusFromLargestDeficits(deficits);
 
   return {
     focus: suggestedNextFocus,
     durationMinutes: planState.remainingTrainingNeed.suggestedNextDurationMinutes,
-    priorityMuscles: targetMuscles.length > 0 ? targetMuscles : planState.settings.priorityMuscles,
-    easyMuscles,
+    priorityMuscles: targetMuscles,
+    easyMuscles: [],
     isUserBehindPlan:
       planState.remainingTrainingNeed.sessionsRemaining > 0 &&
       planState.remainingTrainingNeed.completedMinutesThisWeek <
@@ -738,16 +814,72 @@ export function suggestNextWorkoutFromWeeklyPlan(planState: WeeklyPlanState): Su
   };
 }
 
-export function buildWeeklyPlanContext(planState: WeeklyPlanState): WeeklyPlanContext {
-  const suggestion = suggestNextWorkoutFromWeeklyPlan(planState);
+function getFlexibilityCoachText(flexibility: WeeklyPlanFlexibility) {
+  if (flexibility === "strict") {
+    return "Vi försöker hålla oss nära dina valda dagar, men planen räknas ändå om automatiskt när du tränar.";
+  }
+
+  if (flexibility === "flexible") {
+    return "Planen följer främst det du faktiskt hinner under veckan.";
+  }
+
+  return "Planen kan glida någon dag åt varje håll om veckan förändras.";
+}
+
+export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanStatus {
   const completedSessions = Math.min(
     planState.settings.sessionsPerWeek,
     planState.completedWorkoutLogIds.length + planState.spontaneousWorkoutLogIds.length,
   );
+  const targetMinutes = planState.remainingTrainingNeed.targetMinutesThisWeek;
+  const completedMinutes = planState.remainingTrainingNeed.completedMinutesThisWeek;
+  const remainingMinutes = planState.remainingTrainingNeed.plannedMinutesRemaining;
+  const remainingSessions = planState.remainingTrainingNeed.sessionsRemaining;
+  const goalReached =
+    remainingSessions === 0 || completedMinutes >= Math.round(targetMinutes * 0.95);
+  const suggestedNextWorkoutFocus = goalReached
+    ? "recovery_strength"
+    : mapPlannedFocusToWorkoutFocus(planState.remainingTrainingNeed.suggestedNextFocus);
+  const suggestedNextDurationMinutes = goalReached
+    ? planState.settings.minDurationMinutes
+    : planState.remainingTrainingNeed.suggestedNextDurationMinutes;
+
+  let message = "Planen räknas om automatiskt när du tränar.";
+
+  if (goalReached) {
+    message =
+      "Bra jobbat! Veckans mål är i stort sett uppnått. Vill du träna mer nu passar ett kort, återhämtande styrkepass bäst.";
+  } else if (completedSessions === 0) {
+    message =
+      `Du har ${remainingSessions} pass kvar den här veckan. Det viktigaste är att komma igång med ett genomförbart pass.`;
+  } else if (planState.spontaneousWorkoutLogIds.length > 0) {
+    message =
+      `Planen har räknats om efter ditt spontana pass. Det återstår ungefär ${remainingSessions} pass och cirka ${remainingMinutes} minuter.`;
+  } else if (remainingSessions > 0) {
+    message =
+      `För att hålla veckan rimlig återstår ungefär ${remainingSessions} pass på cirka ${planState.remainingTrainingNeed.suggestedNextDurationMinutes} minuter.`;
+  }
+
+  return {
+    plannedSessions: planState.settings.sessionsPerWeek,
+    completedSessions,
+    remainingSessions,
+    completedMinutes,
+    targetMinutes,
+    remainingMinutes,
+    suggestedNextWorkoutFocus,
+    suggestedNextDurationMinutes,
+    message: `${message} ${getFlexibilityCoachText(planState.settings.flexibility)}`.trim(),
+  };
+}
+
+export function buildWeeklyPlanContext(planState: WeeklyPlanState): WeeklyPlanContext {
+  const suggestion = suggestNextWorkoutFromWeeklyPlan(planState);
+  const status = buildWeeklyPlanStatus(planState);
 
   return {
     sessionsPerWeek: planState.settings.sessionsPerWeek,
-    completedSessionsThisWeek: completedSessions,
+    completedSessionsThisWeek: status.completedSessions,
     remainingSessionsThisWeek: planState.remainingTrainingNeed.sessionsRemaining,
     targetMinutesThisWeek: planState.remainingTrainingNeed.targetMinutesThisWeek,
     completedMinutesThisWeek: planState.remainingTrainingNeed.completedMinutesThisWeek,
@@ -760,6 +892,9 @@ export function buildWeeklyPlanContext(planState: WeeklyPlanState): WeeklyPlanCo
     isUserBehindPlan: suggestion.isUserBehindPlan,
     hasSpontaneousWorkoutThisWeek: suggestion.hasSpontaneousWorkoutThisWeek,
     flexibility: planState.settings.flexibility,
+    preferredDays: planState.settings.preferredDays,
+    preferredGymId: planState.settings.preferredGymId ?? null,
+    coachText: status.message,
   };
 }
 

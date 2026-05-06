@@ -693,7 +693,7 @@ Kontext:
 - föreslagen split-stil denna vecka: ${splitStyleText}
 - veckans muskelbudget och återstående set: ${weeklyBudgetText}
 - enkel veckoplan för kommande 7 dagar: ${weeklyPlanText}
-- användarjusterbar veckoplan för denna vecka: ${weeklyPlanContextText}
+- automatisk veckoplan för denna vecka: ${weeklyPlanContextText}
 - regelbaserat träningsgap för veckan: ${trainingGapText}
 - planläge från lokala coachmotorn: ${params.selectedPlanMode ?? "normal_training"}
 - planens fokusavsikt: ${params.focusIntent ?? "ingen extra fokusavsikt"}
@@ -746,6 +746,7 @@ Viktförslag:
 - Use thirtyDayEffect only as coaching context. Do not claim measured muscle growth.
 - Phrase long-term adaptations as likely training stimulus, not exact outcomes.
 - Följ användarens uttryckliga längdval om en sådan finns i requesten. Om längden känns osäker, använd veckoplanens suggestedNextDurationMinutes som mjuk riktning.
+- Tolka preferredDays, flexibility och coachText i veckoplanen som mjuk coachkontext. Det är hjälp för veckan, inte ett hårt schema som måste följas exakt.
 - Kompensera inte missade pass aggressivt. Välj hellre ett genomförbart pass än ett långt kompensationspass.
 - Om användaren spontant har tränat extra denna vecka ska du undvika att överbelasta samma muskler igen.
 

@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 
 import PageNavActions from "@/components/shared/page-nav-actions";
 import { useHomeData } from "@/hooks/use-home-data";
-import { generateWorkout } from "@/lib/workout-generator";
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
+import { getExercisePreferences } from "@/lib/exercise-preference-storage";
 import {
   buildInitialWeeklyPlan,
   buildWeeklyPlanContext,
+  buildWeeklyPlanRecommendation,
+  buildWeeklyPlanStatus,
   deriveWeeklyPlanState,
   formatPlannedSessionFocus,
   formatWeekdayLabel,
@@ -26,24 +28,11 @@ import {
   getLocalWeeklyPlanSettings,
   saveLocalWeeklyPlanSettings,
 } from "@/lib/planning/weekly-plan-local-store";
-import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
-import { getExercisePreferences } from "@/lib/exercise-preference-storage";
-
-const MUSCLE_OPTIONS = [
-  { value: "chest", label: "Bröst" },
-  { value: "back", label: "Rygg" },
-  { value: "quads", label: "Framsida lår" },
-  { value: "hamstrings", label: "Baksida lår" },
-  { value: "glutes", label: "Säte" },
-  { value: "shoulders", label: "Axlar" },
-  { value: "biceps", label: "Biceps" },
-  { value: "triceps", label: "Triceps" },
-  { value: "calves", label: "Vader" },
-  { value: "core", label: "Bål" },
-] as const;
+import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
+import { generateWorkout } from "@/lib/workout-generator";
 
 const WEEKDAY_OPTIONS: Array<{ value: Weekday; label: string }> = [
   { value: "monday", label: "Mån" },
@@ -77,12 +66,6 @@ function clampDuration(value: number, min: number, max: number) {
   return Math.min(Math.max(Math.round(value), min), max);
 }
 
-function formatMuscleLabel(value: string) {
-  return (
-    MUSCLE_OPTIONS.find((option) => option.value === value)?.label ?? value
-  );
-}
-
 function getStatusLabel(status: PlannedSession["status"]) {
   if (status === "completed") return "Genomfört";
   if (status === "missed") return "Missat";
@@ -91,32 +74,44 @@ function getStatusLabel(status: PlannedSession["status"]) {
   return "Planerat";
 }
 
-function buildFeedbackLines(state: WeeklyPlanState) {
-  const lines = [
-    `Du har genomfört ${state.completedWorkoutLogIds.length} av ${state.settings.sessionsPerWeek} planerade pass.`,
-  ];
+function formatDurationRange(min: number, max: number) {
+  return min === max ? `${min} min` : `${min}–${max} min`;
+}
 
-  if (state.spontaneousWorkoutLogIds.length > 0) {
-    lines.push("Ett spontant pass den här veckan räknas också in i veckans träning.");
-  }
+function formatSuggestedRange(
+  suggestedMinutes: number,
+  settings: WeeklyPlanSettings,
+) {
+  const lower = Math.max(settings.minDurationMinutes, suggestedMinutes - 5);
+  const upper = Math.min(settings.maxDurationMinutes, suggestedMinutes + 5);
+  return formatDurationRange(lower, upper);
+}
 
-  if (state.remainingTrainingNeed.sessionsRemaining > 0) {
-    lines.push(
-      `För att hålla planen räcker det med ${state.remainingTrainingNeed.sessionsRemaining} pass på cirka ${state.remainingTrainingNeed.suggestedNextDurationMinutes} minuter.`,
-    );
-  }
+function formatFocusLabel(
+  focus: ReturnType<typeof buildWeeklyPlanStatus>["suggestedNextWorkoutFocus"],
+) {
+  if (focus === "upper_body") return "Överkropp";
+  if (focus === "lower_body") return "Ben";
+  if (focus === "core") return "Bål";
+  if (focus === "recovery_strength") return "Återhämtande styrka";
+  return "Helkropp";
+}
 
-  const nextFocusDeficits = Object.entries(state.remainingTrainingNeed.muscleSetDeficits)
-    .filter(([, value]) => value > 0)
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 2)
-    .map(([muscle]) => formatMuscleLabel(muscle));
+function stripLegacyPlanMuscles(settings: WeeklyPlanSettings): WeeklyPlanSettings {
+  return {
+    ...settings,
+    // Veckoplanen styr nu bara ramar. Äldre muskelval ignoreras här.
+    priorityMuscles: [],
+    easyMuscles: [],
+  };
+}
 
-  if (nextFocusDeficits.length > 0) {
-    lines.push(`${nextFocusDeficits.join(" och ")} bör prioriteras i nästa pass.`);
-  }
-
-  return lines;
+function createDurationDrafts(settings: WeeklyPlanSettings) {
+  return {
+    defaultDurationMinutes: String(settings.defaultDurationMinutes),
+    minDurationMinutes: String(settings.minDurationMinutes),
+    maxDurationMinutes: String(settings.maxDurationMinutes),
+  };
 }
 
 export default function WeeklyPlanPage() {
@@ -137,8 +132,12 @@ export default function WeeklyPlanPage() {
   const [planError, setPlanError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isGenerating, setIsGenerating] = useState<string | null>(null);
-  const [dateDrafts, setDateDrafts] = useState<Record<string, string>>({});
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [durationDrafts, setDurationDrafts] = useState({
+    defaultDurationMinutes: "",
+    minDurationMinutes: "",
+    maxDurationMinutes: "",
+  });
 
   const gymOptions = useMemo(() => {
     return [
@@ -177,18 +176,29 @@ export default function WeeklyPlanPage() {
           return;
         }
 
-        const nextSettings = payload.settings ?? getDefaultWeeklyPlanSettings(userId);
+        const nextSettings = stripLegacyPlanMuscles(
+          payload.settings ?? getDefaultWeeklyPlanSettings(userId),
+        );
         setPlanSettings(nextSettings);
+        setDurationDrafts(createDurationDrafts(nextSettings));
         saveLocalWeeklyPlanSettings(nextSettings);
-        setPlannedSessions(payload.plannedSessions ?? buildInitialWeeklyPlan(nextSettings, getWeekStartDate(new Date())));
+        setPlannedSessions(
+          payload.plannedSessions ??
+            buildInitialWeeklyPlan(nextSettings, getWeekStartDate(new Date())),
+        );
       } catch (error) {
         if (!isMounted) {
           return;
         }
 
-        const localSettings = getLocalWeeklyPlanSettings(userId) ?? getDefaultWeeklyPlanSettings(userId);
+        const localSettings = stripLegacyPlanMuscles(
+          getLocalWeeklyPlanSettings(userId) ?? getDefaultWeeklyPlanSettings(userId),
+        );
         setPlanSettings(localSettings);
-        setPlannedSessions(buildInitialWeeklyPlan(localSettings, getWeekStartDate(new Date())));
+        setDurationDrafts(createDurationDrafts(localSettings));
+        setPlannedSessions(
+          buildInitialWeeklyPlan(localSettings, getWeekStartDate(new Date())),
+        );
         setPlanError(
           error instanceof Error
             ? `${error.message}. Visar lokal fallback så länge.`
@@ -221,52 +231,79 @@ export default function WeeklyPlanPage() {
     });
   }, [planSettings, plannedSessions, userId, workoutLogs]);
 
-  const feedbackLines = useMemo(
-    () => (derivedPlanState ? buildFeedbackLines(derivedPlanState) : []),
-    [derivedPlanState],
-  );
+  const weeklyPlanRecommendation = useMemo(() => {
+    return buildWeeklyPlanRecommendation(settings?.training_goal ?? null);
+  }, [settings?.training_goal]);
 
-  function togglePreferredDay(day: Weekday) {
-    if (!planSettings) {
+  const weeklyPlanStatus = useMemo(() => {
+    return derivedPlanState ? buildWeeklyPlanStatus(derivedPlanState) : null;
+  }, [derivedPlanState]);
+
+  const nextPlannedSessions = useMemo(() => {
+    if (!derivedPlanState) {
+      return [];
+    }
+
+    return derivedPlanState.plannedSessions
+      .filter((session) => session.status === "planned" || session.status === "moved")
+      .slice(0, 2);
+  }, [derivedPlanState]);
+
+  function updateDurationDraft(
+    field: "defaultDurationMinutes" | "minDurationMinutes" | "maxDurationMinutes",
+    value: string,
+  ) {
+    if (!/^\d*$/.test(value)) {
       return;
     }
 
-    const nextDays = planSettings.preferredDays.includes(day)
-      ? planSettings.preferredDays.filter((value) => value !== day)
-      : [...planSettings.preferredDays, day];
-
-    setPlanSettings({
-      ...planSettings,
-      preferredDays: nextDays.length > 0 ? nextDays : [day],
-    });
+    setDurationDrafts((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
   }
 
-  function toggleMuscleList(
-    field: "priorityMuscles" | "easyMuscles",
-    muscle: WeeklyPlanSettings["priorityMuscles"][number],
+  function commitDurationDraft(
+    field: "defaultDurationMinutes" | "minDurationMinutes" | "maxDurationMinutes",
   ) {
     if (!planSettings) {
-      return;
+      return null;
     }
 
-    const currentValues = planSettings[field];
-    const nextValues = currentValues.includes(muscle)
-      ? currentValues.filter((value) => value !== muscle)
-      : [...currentValues, muscle].slice(0, 5);
+    const draftValue = durationDrafts[field];
+    const fallbackValue = planSettings[field];
+    const parsedValue =
+      draftValue.trim().length > 0 ? Number(draftValue) : fallbackValue;
 
-    setPlanSettings({
+    const nextValue =
+      field === "defaultDurationMinutes"
+        ? clampDuration(parsedValue, 10, 180)
+        : field === "minDurationMinutes"
+          ? clampDuration(parsedValue, 5, 120)
+          : clampDuration(parsedValue, 10, 180);
+
+    const nextSettings = {
       ...planSettings,
-      [field]:
-        field === "priorityMuscles"
-          ? nextValues.filter((value) => !planSettings.easyMuscles.includes(value))
-          : nextValues.filter((value) => !planSettings.priorityMuscles.includes(value)),
-    });
+      [field]: nextValue,
+    };
+
+    setPlanSettings(nextSettings);
+    setDurationDrafts(createDurationDrafts(nextSettings));
+    return nextSettings;
   }
 
   async function handleSaveSettings() {
     if (!planSettings || !userId) {
       return;
     }
+
+    const committedDefaultSettings =
+      commitDurationDraft("defaultDurationMinutes") ?? planSettings;
+    const committedMinSettings =
+      commitDurationDraft("minDurationMinutes") ?? committedDefaultSettings;
+    const committedMaxSettings =
+      commitDurationDraft("maxDurationMinutes") ?? committedMinSettings;
+    const normalizedSettings = stripLegacyPlanMuscles(committedMaxSettings);
 
     try {
       setIsSaving(true);
@@ -277,7 +314,7 @@ export default function WeeklyPlanPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify(planSettings),
+        body: JSON.stringify(normalizedSettings),
       });
       const payload = (await response.json().catch(() => null)) as WeeklyPlanApiResponse | null;
 
@@ -285,13 +322,19 @@ export default function WeeklyPlanPage() {
         throw new Error(payload?.error || "Kunde inte spara veckoplanen");
       }
 
-      setPlanSettings(payload.settings);
+      const nextSettings = stripLegacyPlanMuscles(payload.settings);
+      setPlanSettings(nextSettings);
+      setDurationDrafts(createDurationDrafts(nextSettings));
       setPlannedSessions(payload.plannedSessions ?? []);
-      saveLocalWeeklyPlanSettings(payload.settings);
+      saveLocalWeeklyPlanSettings(nextSettings);
       setSaveMessage("Veckoplanen sparades.");
     } catch (error) {
-      saveLocalWeeklyPlanSettings(planSettings);
-      setPlannedSessions(buildInitialWeeklyPlan(planSettings, getWeekStartDate(new Date())));
+      saveLocalWeeklyPlanSettings(normalizedSettings);
+      setPlanSettings(normalizedSettings);
+      setDurationDrafts(createDurationDrafts(normalizedSettings));
+      setPlannedSessions(
+        buildInitialWeeklyPlan(normalizedSettings, getWeekStartDate(new Date())),
+      );
       setPlanError(
         error instanceof Error
           ? `${error.message}. Ändringarna sparades lokalt så länge.`
@@ -302,51 +345,27 @@ export default function WeeklyPlanPage() {
     }
   }
 
-  async function handlePostponeSession(session: PlannedSession, newDate: string) {
-    if (!userId || !newDate) {
-      return;
-    }
-
-    try {
-      setPlanError(null);
-      const response = await fetch("/api/weekly-plan/postpone", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          userId,
-          sessionId: session.id,
-          newDate,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as WeeklyPlanApiResponse | null;
-
-      if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.error || "Kunde inte flytta passet");
-      }
-
-      setPlannedSessions(payload.plannedSessions ?? []);
-      setSaveMessage("Passet flyttades.");
-    } catch (error) {
-      setPlanError(error instanceof Error ? error.message : "Kunde inte flytta passet.");
-    }
-  }
-
-  async function handleCreatePlannedWorkout(session: PlannedSession) {
-    if (!userId || !derivedPlanState) {
+  async function handleCreateRecommendedWorkout() {
+    if (!userId || !derivedPlanState || !weeklyPlanStatus || !planSettings) {
       return;
     }
 
     const selectedGym =
-      gymOptions.find((gym) => gym.id === (session.preferredGymId ?? planSettings?.preferredGymId ?? "bodyweight")) ??
+      gymOptions.find((gym) => gym.id === (planSettings.preferredGymId ?? "bodyweight")) ??
       gymOptions[0];
     const equipment = normalizeEquipmentStrings(selectedGym.equipment);
     const weeklyPlanContext = buildWeeklyPlanContext(derivedPlanState);
     const goal = settings?.training_goal?.trim() || "health";
+    const recommendedFocus =
+      weeklyPlanStatus.suggestedNextWorkoutFocus === "recovery_strength"
+        ? mapPlannedFocusToWorkoutFocus(
+            derivedPlanState.remainingTrainingNeed.suggestedNextFocus,
+          )
+        : weeklyPlanStatus.suggestedNextWorkoutFocus;
 
     try {
       setPlanError(null);
-      setIsGenerating(session.id);
+      setIsGenerating(true);
 
       const lessOftenExerciseIds = getExercisePreferences(userId)
         .filter((entry) => entry.preference === "less_often")
@@ -357,24 +376,24 @@ export default function WeeklyPlanPage() {
       const { workout } = await generateWorkout({
         userId,
         goal,
-        durationMinutes: session.targetDurationMinutes,
+        durationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
         equipment,
         gym: gymId,
         gymLabel,
         gymEquipmentDetails: selectedGym.equipment as Array<Record<string, unknown>>,
-        nextFocus: mapPlannedFocusToWorkoutFocus(session.focus),
+        nextFocus: recommendedFocus,
         weeklyPlanContext,
-        focusMuscles: session.priorityMuscles,
+        focusMuscles: weeklyPlanContext.priorityMuscles,
         lessOftenExerciseIds,
       });
 
       saveWorkoutDraft(userId, {
         ...workout,
-        duration: session.targetDurationMinutes,
+        duration: weeklyPlanStatus.suggestedNextDurationMinutes,
         gym: gymId,
         gymLabel,
         availableEquipment: equipment,
-        plannedFocus: mapPlannedFocusToWorkoutFocus(session.focus),
+        plannedFocus: recommendedFocus,
       });
 
       router.push(`/workout/preview?userId=${encodeURIComponent(userId)}`);
@@ -383,11 +402,11 @@ export default function WeeklyPlanPage() {
         error instanceof Error ? error.message : "Kunde inte skapa passet just nu.",
       );
     } finally {
-      setIsGenerating(null);
+      setIsGenerating(false);
     }
   }
 
-  if (!authChecked || !planSettings || !derivedPlanState) {
+  if (!authChecked || !planSettings || !derivedPlanState || !weeklyPlanStatus) {
     return (
       <main className={cn(uiPageShellClasses.page, "pb-16")}>
         <div className={uiPageShellClasses.content}>
@@ -403,7 +422,7 @@ export default function WeeklyPlanPage() {
 
   return (
     <main className={cn(uiPageShellClasses.page, "pb-16")}>
-      <div className={uiPageShellClasses.content}>
+      <div className={cn(uiPageShellClasses.content, uiPageShellClasses.stack)}>
         <section className={cn(uiCardClasses.base, "p-6")}>
           <PageNavActions backAction={{ label: "Till hem", href: "/home" }} compact />
           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-emerald-700">
@@ -413,8 +432,9 @@ export default function WeeklyPlanPage() {
             Veckoplan
           </h1>
           <p className="mt-3 text-base leading-7 text-slate-700">
-            Den här planen hjälper AI:n att föreslå rätt pass under veckan.
+            Vi föreslår en enkel ram för veckan. Planen räknas om automatiskt när du tränar.
           </p>
+
           <div className="mt-5 flex flex-wrap gap-3">
             <button
               type="button"
@@ -429,13 +449,48 @@ export default function WeeklyPlanPage() {
               disabled={isSaving}
               className={uiButtonClasses.primary}
             >
-              {isSaving ? "Sparar..." : "Spara veckoplan"}
+              {isSaving ? "Sparar..." : "Spara ramar"}
             </button>
           </div>
+
           {saveMessage ? <p className="mt-4 text-sm text-emerald-700">{saveMessage}</p> : null}
           {planError ? <div className={cn(uiCardClasses.danger, "mt-4")}>{planError}</div> : null}
           {gymError ? <div className={cn(uiCardClasses.danger, "mt-4")}>{gymError}</div> : null}
           {pageError ? <div className={cn(uiCardClasses.danger, "mt-4")}>{pageError}</div> : null}
+        </section>
+
+        <section className={cn(uiCardClasses.base, "p-6")}>
+          <p className="text-sm font-semibold text-slate-900">Coachens förslag</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+            Rekommenderad veckoplan
+          </h2>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className={uiCardClasses.soft}>
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Miniminivå</p>
+              <p className="mt-2 text-lg font-semibold text-slate-950">
+                {weeklyPlanRecommendation.minimumSessionsPerWeek} pass per vecka
+              </p>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                För ditt mål är detta en bra miniminivå.
+              </p>
+            </div>
+            <div className={uiCardClasses.soft}>
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Rekommenderad nivå</p>
+              <p className="mt-2 text-lg font-semibold text-slate-950">
+                {weeklyPlanRecommendation.recommendedSessionsPerWeek} pass ·{" "}
+                {formatDurationRange(
+                  weeklyPlanRecommendation.recommendedMinutesRange.min,
+                  weeklyPlanRecommendation.recommendedMinutesRange.max,
+                )}
+              </p>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                Vill du träna mer går det bra, men appen försöker hålla progressionen rimlig.
+              </p>
+            </div>
+          </div>
+          <p className="mt-4 text-base leading-7 text-slate-700">
+            {weeklyPlanRecommendation.explanation}
+          </p>
         </section>
 
         <section className={cn(uiCardClasses.base, "p-6")}>
@@ -486,7 +541,10 @@ export default function WeeklyPlanPage() {
           </div>
 
           <div className="mt-5">
-            <p className="text-sm font-medium text-slate-700">Föredragna dagar</p>
+            <p className="text-sm font-medium text-slate-700">Föredragna träningsdagar</p>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              Det här är hjälpsamma riktmärken, inte hårda låsningar.
+            </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {WEEKDAY_OPTIONS.map((day) => {
                 const isSelected = planSettings.preferredDays.includes(day.value);
@@ -494,7 +552,16 @@ export default function WeeklyPlanPage() {
                   <button
                     key={day.value}
                     type="button"
-                    onClick={() => togglePreferredDay(day.value)}
+                    onClick={() => {
+                      const nextDays = planSettings.preferredDays.includes(day.value)
+                        ? planSettings.preferredDays.filter((value) => value !== day.value)
+                        : [...planSettings.preferredDays, day.value];
+
+                      setPlanSettings({
+                        ...planSettings,
+                        preferredDays: nextDays.length > 0 ? nextDays : [day.value],
+                      });
+                    }}
                     className={cn(
                       "min-h-[44px] rounded-full border px-4 py-2 text-sm font-medium transition",
                       isSelected
@@ -516,17 +583,11 @@ export default function WeeklyPlanPage() {
                 type="number"
                 min={10}
                 max={180}
-                value={planSettings.defaultDurationMinutes}
+                value={durationDrafts.defaultDurationMinutes}
                 onChange={(event) =>
-                  setPlanSettings({
-                    ...planSettings,
-                    defaultDurationMinutes: clampDuration(
-                      Number(event.target.value),
-                      10,
-                      180,
-                    ),
-                  })
+                  updateDurationDraft("defaultDurationMinutes", event.target.value)
                 }
+                onBlur={() => commitDurationDraft("defaultDurationMinutes")}
                 className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
               />
             </label>
@@ -536,13 +597,11 @@ export default function WeeklyPlanPage() {
                 type="number"
                 min={5}
                 max={120}
-                value={planSettings.minDurationMinutes}
+                value={durationDrafts.minDurationMinutes}
                 onChange={(event) =>
-                  setPlanSettings({
-                    ...planSettings,
-                    minDurationMinutes: clampDuration(Number(event.target.value), 5, 120),
-                  })
+                  updateDurationDraft("minDurationMinutes", event.target.value)
                 }
+                onBlur={() => commitDurationDraft("minDurationMinutes")}
                 className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
               />
             </label>
@@ -552,13 +611,11 @@ export default function WeeklyPlanPage() {
                 type="number"
                 min={10}
                 max={180}
-                value={planSettings.maxDurationMinutes}
+                value={durationDrafts.maxDurationMinutes}
                 onChange={(event) =>
-                  setPlanSettings({
-                    ...planSettings,
-                    maxDurationMinutes: clampDuration(Number(event.target.value), 10, 180),
-                  })
+                  updateDurationDraft("maxDurationMinutes", event.target.value)
                 }
+                onBlur={() => commitDurationDraft("maxDurationMinutes")}
                 className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
               />
             </label>
@@ -571,17 +628,17 @@ export default function WeeklyPlanPage() {
                 {
                   value: "strict",
                   title: "Strikt",
-                  description: "Håll planen nära valda dagar.",
+                  description: "Håll rekommendationerna nära dina valda dagar.",
                 },
                 {
                   value: "balanced",
                   title: "Balanserad",
-                  description: "Flytta pass inom någon dag vid behov.",
+                  description: "Låt pass flyta någon dag för bättre återhämtning.",
                 },
                 {
                   value: "flexible",
                   title: "Flexibel",
-                  description: "Anpassa veckan efter det du faktiskt hinner.",
+                  description: "Låt veckan anpassa sig efter det du faktiskt hinner.",
                 },
               ].map((option) => {
                 const isSelected = planSettings.flexibility === option.value;
@@ -609,148 +666,75 @@ export default function WeeklyPlanPage() {
               })}
             </div>
           </div>
-
-          <div className="mt-6">
-            <p className="text-sm font-medium text-slate-700">Prioriterade muskler</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {MUSCLE_OPTIONS.map((option) => {
-                const isSelected = planSettings.priorityMuscles.includes(option.value);
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => toggleMuscleList("priorityMuscles", option.value)}
-                    className={cn(
-                      "min-h-[44px] rounded-full border px-4 py-2 text-sm font-medium transition",
-                      isSelected
-                        ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                        : "border-slate-200 bg-white text-slate-700",
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <p className="text-sm font-medium text-slate-700">Muskler att ta det lugnt med</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {MUSCLE_OPTIONS.map((option) => {
-                const isSelected = planSettings.easyMuscles.includes(option.value);
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => toggleMuscleList("easyMuscles", option.value)}
-                    className={cn(
-                      "min-h-[44px] rounded-full border px-4 py-2 text-sm font-medium transition",
-                      isSelected
-                        ? "border-amber-300 bg-amber-50 text-amber-900"
-                        : "border-slate-200 bg-white text-slate-700",
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        <section className={cn(uiCardClasses.base, "p-6")}>
-          <h2 className="text-xl font-semibold tracking-tight text-slate-950">Aktuell vecka</h2>
-          <div className="mt-4 space-y-3">
-            {derivedPlanState.plannedSessions.map((session) => {
-              const postponeDate = dateDrafts[session.id] ?? session.plannedDate;
-              return (
-                <article
-                  key={session.id}
-                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-slate-500">
-                        {formatWeekdayLabel(session.weekday)}
-                      </p>
-                      <h3 className="mt-1 text-lg font-semibold text-slate-950">
-                        {session.targetDurationMinutes} min – {formatPlannedSessionFocus(session.focus)}
-                      </h3>
-                      <p className="mt-2 text-sm text-slate-700">
-                        Status: {getStatusLabel(session.status)}
-                      </p>
-                      {session.priorityMuscles.length > 0 ? (
-                        <p className="mt-1 text-sm text-slate-600">
-                          Fokus: {session.priorityMuscles.map((muscle) => formatMuscleLabel(muscle)).join(" · ")}
-                        </p>
-                      ) : null}
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => void handleCreatePlannedWorkout(session)}
-                      disabled={isGenerating === session.id}
-                      className={uiButtonClasses.primary}
-                    >
-                      {isGenerating === session.id ? "Skapar..." : "Skapa pass"}
-                    </button>
-                  </div>
-
-                  <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-                    <label className="block flex-1">
-                      <span className="mb-2 block text-sm font-medium text-slate-700">
-                        Flytta till
-                      </span>
-                      <input
-                        type="date"
-                        value={postponeDate}
-                        onChange={(event) =>
-                          setDateDrafts((previous) => ({
-                            ...previous,
-                            [session.id]: event.target.value,
-                          }))
-                        }
-                        className="min-h-[48px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => void handlePostponeSession(session, postponeDate)}
-                      className={uiButtonClasses.secondary}
-                    >
-                      Flytta
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextDate = new Date(`${session.plannedDate}T12:00:00`);
-                        nextDate.setDate(nextDate.getDate() + 1);
-                        void handlePostponeSession(
-                          session,
-                          `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}-${String(nextDate.getDate()).padStart(2, "0")}`,
-                        );
-                      }}
-                      className={uiButtonClasses.secondary}
-                    >
-                      Skjut upp en dag
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
         </section>
 
         <section className={cn(uiCardClasses.base, "p-6")}>
           <h2 className="text-xl font-semibold tracking-tight text-slate-950">Veckans läge</h2>
-          <div className="mt-4 space-y-3">
-            {feedbackLines.map((line) => (
-              <p key={line} className="text-base leading-7 text-slate-700">
-                {line}
+          <p className="mt-2 text-base leading-7 text-slate-700">
+            {weeklyPlanStatus.message}
+          </p>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className={uiCardClasses.soft}>
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Pass</p>
+              <p className="mt-2 text-lg font-semibold text-slate-950">
+                {weeklyPlanStatus.completedSessions} av {weeklyPlanStatus.plannedSessions}
               </p>
-            ))}
+            </div>
+            <div className={uiCardClasses.soft}>
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Återstår</p>
+              <p className="mt-2 text-lg font-semibold text-slate-950">
+                {weeklyPlanStatus.remainingSessions} pass
+              </p>
+            </div>
+            <div className={uiCardClasses.soft}>
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Minuter kvar</p>
+              <p className="mt-2 text-lg font-semibold text-slate-950">
+                {weeklyPlanStatus.remainingMinutes} min
+              </p>
+            </div>
           </div>
+
+          <div className={cn(uiCardClasses.soft, "mt-5")}>
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+              Nästa rekommenderade pass
+            </p>
+            <h3 className="mt-2 text-xl font-semibold text-slate-950">
+              {formatFocusLabel(weeklyPlanStatus.suggestedNextWorkoutFocus)}
+            </h3>
+            <p className="mt-2 text-base leading-7 text-slate-700">
+              Ungefär {formatSuggestedRange(weeklyPlanStatus.suggestedNextDurationMinutes, planSettings)}.
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleCreateRecommendedWorkout()}
+              disabled={isGenerating}
+              className={cn(uiButtonClasses.primary, "mt-4")}
+            >
+              {isGenerating ? "Skapar..." : "Skapa pass"}
+            </button>
+          </div>
+
+          {nextPlannedSessions.length > 0 ? (
+            <div className="mt-5 space-y-3">
+              {nextPlannedSessions.map((session) => (
+                <article
+                  key={session.id}
+                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                >
+                  <p className="text-sm font-medium text-slate-500">
+                    {formatWeekdayLabel(session.weekday)}
+                  </p>
+                  <h3 className="mt-1 text-lg font-semibold text-slate-950">
+                    {session.targetDurationMinutes} min – {formatPlannedSessionFocus(session.focus)}
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-700">
+                    Status: {getStatusLabel(session.status)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          ) : null}
         </section>
       </div>
     </main>
