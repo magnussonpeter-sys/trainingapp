@@ -160,6 +160,29 @@ type HomeWorkoutRecommendation = {
   source: "weekly_plan" | "adaptive_fallback";
 };
 
+type HomeAiCoachContext = {
+  usesWeeklyPlanIntention: boolean;
+  selectedPlanMode:
+    | "normal_training"
+    | "recovery"
+    | "recovery_mobility"
+    | "light_accessory"
+    | "selective_priority_accessory"
+    | null;
+  focusIntent: string | null;
+  targetMuscles: MuscleBudgetGroup[];
+  avoidMuscles: MuscleBudgetGroup[];
+  limitedMuscles: MuscleBudgetGroup[];
+  weeklyPlan:
+    | Array<{
+        date: string;
+        dayLabel: string;
+        focus: WorkoutFocus | null;
+        type: "training" | "recovery";
+      }>
+    | undefined;
+};
+
 type WeeklyPlanApiResponse = {
   ok?: boolean;
   settings?: WeeklyPlanSettings;
@@ -241,6 +264,51 @@ function buildHomeWorkoutRecommendation(params: {
     // Adaptive fallback används bara när veckoplanstatus saknas eller inte gick att läsa.
     source: "adaptive_fallback",
   } satisfies HomeWorkoutRecommendation;
+}
+
+function buildHomeAiCoachContext(params: {
+  homeRecommendation: HomeWorkoutRecommendation;
+  weeklyPlanContext: WeeklyPlanContext | null;
+  weeklyPlanStatus: WeeklyPlanStatus | null;
+  weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
+}) {
+  const usesWeeklyPlanIntention =
+    params.homeRecommendation.source === "weekly_plan" && Boolean(params.weeklyPlanContext);
+  const complementaryRecoveryLimitedMuscles = params.weeklyStructure.muscleBudget
+    .filter((entry) => entry.loadStatus === "high_risk" || entry.loadStatus === "over")
+    .map((entry) => entry.group);
+
+  if (usesWeeklyPlanIntention) {
+    return {
+      usesWeeklyPlanIntention: true,
+      // Veckoplanen är primär coachkälla när den finns. Vi skickar bara ett lätt
+      // återhämtningsläge här, inte äldre planintention från weeklyStructure.
+      selectedPlanMode:
+        params.weeklyPlanStatus?.suggestedNextWorkoutFocus === "recovery_strength"
+          ? "light_accessory"
+          : null,
+      focusIntent: params.weeklyPlanContext?.coachText ?? null,
+      targetMuscles: params.homeRecommendation.muscleGroups,
+      avoidMuscles: Array.from(
+        new Set([
+          ...(params.weeklyPlanContext?.recoveryLimitedMuscles ?? []),
+          ...complementaryRecoveryLimitedMuscles,
+        ]),
+      ),
+      limitedMuscles: [],
+      weeklyPlan: undefined,
+    } satisfies HomeAiCoachContext;
+  }
+
+  return {
+    usesWeeklyPlanIntention: false,
+    selectedPlanMode: params.weeklyStructure.selectedPlanMode,
+    focusIntent: params.weeklyStructure.focusIntent,
+    targetMuscles: params.weeklyStructure.targetMuscles,
+    avoidMuscles: params.weeklyStructure.avoidMuscles,
+    limitedMuscles: params.weeklyStructure.limitedMuscles,
+    weeklyPlan: params.weeklyStructure.upcomingDays,
+  } satisfies HomeAiCoachContext;
 }
 
 function getLastUsedGymId(userId: string, gymOptions: Array<{ id: string | number }>) {
@@ -1728,28 +1796,18 @@ export default function HomePage() {
       const lessOftenExerciseIds = getExercisePreferences(userId)
         .filter((entry) => entry.preference === "less_often")
         .map((entry) => entry.exerciseId);
-      const useAdaptivePlanHints =
-        homeRecommendation.source === "adaptive_fallback" ||
-        weeklyStructure.nextFocus === homeRecommendation.focus;
-      const effectiveSelectedPlanMode = useAdaptivePlanHints
-        ? weeklyStructure.selectedPlanMode
-        : weeklyPlanStatus?.suggestedNextWorkoutFocus === "recovery_strength"
-          ? "light_accessory"
-          : null;
-      const effectiveFocusIntent = useAdaptivePlanHints
-        ? weeklyStructure.focusIntent
-        : weeklyPlanContext?.coachText ?? null;
-      const effectiveTargetMuscles = useAdaptivePlanHints
-        ? weeklyStructure.targetMuscles
-        : homeRecommendation.muscleGroups;
-      const effectiveAvoidMuscles = useAdaptivePlanHints ? weeklyStructure.avoidMuscles : [];
-      const effectiveLimitedMuscles = useAdaptivePlanHints ? weeklyStructure.limitedMuscles : [];
-      const effectiveWeeklyPlan = useAdaptivePlanHints ? weeklyStructure.upcomingDays : undefined;
+      const aiCoachContext = buildHomeAiCoachContext({
+        homeRecommendation,
+        weeklyPlanContext,
+        weeklyPlanStatus,
+        weeklyStructure,
+      });
+      const requestedDuration = homeRecommendation.durationMinutes;
 
       const { workout } = await generateWorkout({
         userId,
         goal,
-        durationMinutes,
+        durationMinutes: requestedDuration,
         equipment,
         gym: gymId,
         gymLabel,
@@ -1768,12 +1826,12 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
           loadStatus: entry.loadStatus,
         })),
-        weeklyPlan: effectiveWeeklyPlan,
-        selectedPlanMode: effectiveSelectedPlanMode,
-        focusIntent: effectiveFocusIntent,
-        targetMuscles: effectiveTargetMuscles,
-        avoidMuscles: effectiveAvoidMuscles,
-        limitedMuscles: effectiveLimitedMuscles,
+        weeklyPlan: aiCoachContext.weeklyPlan,
+        selectedPlanMode: aiCoachContext.selectedPlanMode,
+        focusIntent: aiCoachContext.focusIntent,
+        targetMuscles: aiCoachContext.targetMuscles,
+        avoidMuscles: aiCoachContext.avoidMuscles,
+        limitedMuscles: aiCoachContext.limitedMuscles,
         weeklyPlanContext,
         trainingGap: weeklyStructure.trainingGap,
         lessOftenExerciseIds,
@@ -1783,7 +1841,7 @@ export default function HomePage() {
 
       // Spara en liten lokal debughistorik så analys/export kan jämföra flera AI-pass över tid.
       saveAiDebugGeneratedWorkoutSnapshot(userId, {
-        requestedDurationMinutes: durationMinutes,
+        requestedDurationMinutes: requestedDuration,
         goal,
         selectedGym: gymLabel,
         equipmentSeed: equipment,
@@ -1796,11 +1854,14 @@ export default function HomePage() {
           gymLabel,
           confidenceScore: weeklyStructure.confidenceScore,
           nextFocus: homeRecommendation.focus,
-          selectedPlanMode: effectiveSelectedPlanMode,
-          focusIntent: effectiveFocusIntent,
-          targetMuscles: effectiveTargetMuscles,
-          avoidMuscles: effectiveAvoidMuscles,
-          limitedMuscles: effectiveLimitedMuscles,
+          coachIntentionSource: aiCoachContext.usesWeeklyPlanIntention
+            ? "weekly_plan"
+            : "adaptive_fallback",
+          selectedPlanMode: aiCoachContext.selectedPlanMode,
+          focusIntent: aiCoachContext.focusIntent,
+          targetMuscles: aiCoachContext.targetMuscles,
+          avoidMuscles: aiCoachContext.avoidMuscles,
+          limitedMuscles: aiCoachContext.limitedMuscles,
           weeklyPlanContext,
           splitStyle: weeklyStructure.splitStyle,
           supersetPreference: settings?.superset_preference ?? null,
@@ -1816,7 +1877,7 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
           loadStatus: entry.loadStatus,
         })),
-        weeklyPlan: effectiveWeeklyPlan ?? [],
+        weeklyPlan: aiCoachContext.weeklyPlan ?? [],
         normalizedWorkout: workout,
         aiDebug: workout.aiDebug ?? null,
       });
@@ -1824,7 +1885,7 @@ export default function HomePage() {
       // Spara draft innan preview öppnas så run/preview kan återta samma flöde.
       saveWorkoutDraft(userId, {
         ...workout,
-        duration: durationMinutes,
+        duration: requestedDuration,
         gym: gymId,
         gymLabel,
         availableEquipment: equipment,
@@ -1869,25 +1930,13 @@ export default function HomePage() {
       const lessOftenExerciseIds = getExercisePreferences(userId)
         .filter((entry) => entry.preference === "less_often")
         .map((entry) => entry.exerciseId);
-      const useAdaptivePlanHints =
-        homeRecommendation.source === "adaptive_fallback" ||
-        weeklyStructure.nextFocus === homeRecommendation.focus;
-      const effectiveSelectedPlanMode = useAdaptivePlanHints
-        ? weeklyStructure.selectedPlanMode
-        : weeklyPlanStatus?.suggestedNextWorkoutFocus === "recovery_strength"
-          ? "light_accessory"
-          : null;
-      const effectiveFocusIntent = useAdaptivePlanHints
-        ? weeklyStructure.focusIntent
-        : weeklyPlanContext?.coachText ?? null;
-      const effectiveTargetMuscles = useAdaptivePlanHints
-        ? weeklyStructure.targetMuscles
-        : homeRecommendation.muscleGroups;
-      const effectiveAvoidMuscles = useAdaptivePlanHints ? weeklyStructure.avoidMuscles : [];
-      const effectiveLimitedMuscles = useAdaptivePlanHints ? weeklyStructure.limitedMuscles : [];
-      const effectiveWeeklyPlan = useAdaptivePlanHints ? weeklyStructure.upcomingDays : undefined;
-
-      const quickDuration = durationMinutes;
+      const aiCoachContext = buildHomeAiCoachContext({
+        homeRecommendation,
+        weeklyPlanContext,
+        weeklyPlanStatus,
+        weeklyStructure,
+      });
+      const quickDuration = homeRecommendation.durationMinutes;
 
       const { workout } = await generateWorkout({
         userId,
@@ -1911,12 +1960,12 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
           loadStatus: entry.loadStatus,
         })),
-        weeklyPlan: effectiveWeeklyPlan,
-        selectedPlanMode: effectiveSelectedPlanMode,
-        focusIntent: effectiveFocusIntent,
-        targetMuscles: effectiveTargetMuscles,
-        avoidMuscles: effectiveAvoidMuscles,
-        limitedMuscles: effectiveLimitedMuscles,
+        weeklyPlan: aiCoachContext.weeklyPlan,
+        selectedPlanMode: aiCoachContext.selectedPlanMode,
+        focusIntent: aiCoachContext.focusIntent,
+        targetMuscles: aiCoachContext.targetMuscles,
+        avoidMuscles: aiCoachContext.avoidMuscles,
+        limitedMuscles: aiCoachContext.limitedMuscles,
         weeklyPlanContext,
         trainingGap: weeklyStructure.trainingGap,
         lessOftenExerciseIds,
@@ -1939,11 +1988,14 @@ export default function HomePage() {
           gymLabel,
           confidenceScore: weeklyStructure.confidenceScore,
           nextFocus: homeRecommendation.focus,
-          selectedPlanMode: effectiveSelectedPlanMode,
-          focusIntent: effectiveFocusIntent,
-          targetMuscles: effectiveTargetMuscles,
-          avoidMuscles: effectiveAvoidMuscles,
-          limitedMuscles: effectiveLimitedMuscles,
+          coachIntentionSource: aiCoachContext.usesWeeklyPlanIntention
+            ? "weekly_plan"
+            : "adaptive_fallback",
+          selectedPlanMode: aiCoachContext.selectedPlanMode,
+          focusIntent: aiCoachContext.focusIntent,
+          targetMuscles: aiCoachContext.targetMuscles,
+          avoidMuscles: aiCoachContext.avoidMuscles,
+          limitedMuscles: aiCoachContext.limitedMuscles,
           weeklyPlanContext,
           splitStyle: weeklyStructure.splitStyle,
           supersetPreference: settings?.superset_preference ?? null,
@@ -1959,7 +2011,7 @@ export default function HomePage() {
           recent4WeekAvgSets: entry.recent4WeekAvgSets,
           loadStatus: entry.loadStatus,
         })),
-        weeklyPlan: effectiveWeeklyPlan ?? [],
+        weeklyPlan: aiCoachContext.weeklyPlan ?? [],
         normalizedWorkout: workout,
         aiDebug: workout.aiDebug ?? null,
       });

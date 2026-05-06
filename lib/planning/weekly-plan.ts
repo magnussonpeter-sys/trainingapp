@@ -77,6 +77,11 @@ export type WorkoutPlanCredit = {
   sessionCredit: number;
   minuteCredit: number;
   muscleSetCreditScale: number;
+  effectiveSetCount: number;
+  totalReps: number;
+  weightedSetCount: number;
+  durationCredit: number;
+  volumeCredit: number;
   reason: string;
   countsAsMeaningful: boolean;
 };
@@ -106,6 +111,7 @@ export type WeeklyPlanState = {
     targetSessionCreditThisWeek: number;
     muscleSetDeficits: Record<MuscleBudgetGroup, number>;
     totalRelevantDeficit: number;
+    recoveryLimitedMuscles: MuscleBudgetGroup[];
     suggestedNextFocus: PlannedSessionFocus;
     suggestedNextDurationMinutes: number;
     suggestedNextFocusReason: string;
@@ -126,6 +132,8 @@ export type WeeklyPlanContext = {
   suggestedNextDurationMinutes: number;
   priorityMuscles: MuscleBudgetGroup[];
   profilePriorityMuscles: MuscleBudgetGroup[];
+  longTermPriorityMuscles: MuscleBudgetGroup[];
+  recoveryLimitedMuscles: MuscleBudgetGroup[];
   easyMuscles: MuscleBudgetGroup[];
   muscleSetDeficits: Record<MuscleBudgetGroup, number>;
   isUserBehindPlan: boolean;
@@ -133,6 +141,8 @@ export type WeeklyPlanContext = {
   flexibility: WeeklyPlanFlexibility;
   preferredDays: Weekday[];
   preferredGymId?: string | null;
+  remainingNeedDuration: number;
+  typicalWorkoutDurationMinutes: number | null;
   coachText: string;
 };
 
@@ -159,6 +169,9 @@ export type WeeklyPlanDebug = {
     inferredFocus: PlannedSessionFocus;
     sessionCredit: number;
     minuteCredit: number;
+    effectiveSetCount: number;
+    totalReps: number;
+    weightedSetCount: number;
     reason: string;
     matchedSessionId: string | null;
     matchedSessionFocus: PlannedSessionFocus | null;
@@ -167,6 +180,9 @@ export type WeeklyPlanDebug = {
   }>;
   focusScores: Array<FocusRecommendationScore & { selected: boolean }>;
   goalReachedReason: string;
+  typicalWorkoutDurationMinutes: number | null;
+  remainingNeedDuration: number;
+  finalSuggestedDurationMinutes: number;
 };
 
 export type WeeklyPlanRecommendation = {
@@ -311,8 +327,135 @@ function getWorkoutDurationMinutes(log: WorkoutLog) {
   return Math.max(0, Math.round((log.durationSeconds ?? 0) / 60));
 }
 
-function getCompletedWorkingSetCount(log: WorkoutLog) {
-  return log.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
+function getSetEvidenceWeight(set: WorkoutLog["exercises"][number]["sets"][number]) {
+  const hasRepEvidence = typeof set.actualReps === "number" && set.actualReps > 0;
+  const hasDurationEvidence =
+    typeof set.actualDuration === "number" && set.actualDuration > 0;
+  const hasWeightEvidence =
+    typeof set.actualWeight === "number" && Number.isFinite(set.actualWeight);
+  const hasEffortEvidence = set.repsLeft !== null || set.timedEffort !== null;
+
+  // Kroppsvikts- och tidsövningar ska få kredit även utan vikt om faktisk prestation finns.
+  if (hasRepEvidence || hasDurationEvidence || hasWeightEvidence || hasEffortEvidence) {
+    return 1;
+  }
+
+  return typeof set.completedAt === "string" && set.completedAt.trim() ? 0.4 : 0;
+}
+
+function getWorkoutPerformanceEvidence(log: WorkoutLog) {
+  let effectiveSetCount = 0;
+  let weightedSetCount = 0;
+  let totalReps = 0;
+
+  for (const exercise of log.exercises) {
+    for (const set of exercise.sets) {
+      const evidenceWeight = getSetEvidenceWeight(set);
+      weightedSetCount += evidenceWeight;
+
+      if (evidenceWeight >= 0.5) {
+        effectiveSetCount += 1;
+      }
+
+      if (typeof set.actualReps === "number" && set.actualReps > 0) {
+        totalReps += set.actualReps;
+      }
+    }
+  }
+
+  return {
+    effectiveSetCount,
+    totalReps,
+    weightedSetCount: roundToSingleDecimal(weightedSetCount),
+  };
+}
+
+function getMedianValue(values: number[]) {
+  if (values.length === 0) {
+    return null;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+
+  if (sorted.length % 2 === 0) {
+    return Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+  }
+
+  return sorted[middle];
+}
+
+function getTypicalWorkoutDurationMinutes(params: {
+  workoutLogs: WorkoutLog[];
+  now: Date;
+  windowDays?: number;
+}) {
+  const windowDays = params.windowDays ?? 42;
+  const cutoffTime = params.now.getTime() - windowDays * 24 * 60 * 60 * 1000;
+  const durations = params.workoutLogs
+    .filter((log) => new Date(log.completedAt).getTime() >= cutoffTime)
+    .map((log) => ({
+      log,
+      credit: getWorkoutPlanCredit(log),
+    }))
+    .filter(({ credit }) => credit.countsAsMeaningful && credit.sessionCredit >= 0.25)
+    .map(({ log }) => getWorkoutDurationMinutes(log))
+    .filter((duration) => duration >= 8);
+
+  return getMedianValue(durations);
+}
+
+function blendSuggestedDuration(params: {
+  remainingNeedDuration: number;
+  typicalWorkoutDurationMinutes: number | null;
+  minDuration: number;
+  maxDuration: number;
+  remainingSessionCredit: number;
+}) {
+  if (!params.typicalWorkoutDurationMinutes) {
+    return clampNumber(
+      params.remainingNeedDuration,
+      params.minDuration,
+      params.maxDuration,
+    );
+  }
+
+  const urgencyWeight = params.remainingSessionCredit >= 2 ? 0.45 : 0.3;
+  const typicalWeight = 1 - urgencyWeight;
+  const blendedDuration =
+    params.remainingNeedDuration * urgencyWeight +
+    params.typicalWorkoutDurationMinutes * typicalWeight;
+
+  return clampNumber(
+    Math.round(blendedDuration),
+    params.minDuration,
+    params.maxDuration,
+  );
+}
+
+function getRecoveryLimitedMuscles(params: {
+  workoutAnalyses: Array<{
+    log: WorkoutLog;
+    stimulus: Record<MuscleBudgetGroup, number>;
+  }>;
+  now: Date;
+}) {
+  const recentStimulus = createMuscleRecord();
+  const cutoffTime = params.now.getTime() - 48 * 60 * 60 * 1000;
+
+  for (const analysis of params.workoutAnalyses) {
+    if (new Date(analysis.log.completedAt).getTime() < cutoffTime) {
+      continue;
+    }
+
+    for (const group of Object.keys(recentStimulus) as MuscleBudgetGroup[]) {
+      recentStimulus[group] += analysis.stimulus[group];
+    }
+  }
+
+  return (Object.keys(recentStimulus) as MuscleBudgetGroup[])
+    .filter((group) => recentStimulus[group] >= 2.5)
+    .sort((left, right) => recentStimulus[right] - recentStimulus[left]);
 }
 
 export function getWorkoutPlanCredit(
@@ -324,26 +467,40 @@ export function getWorkoutPlanCredit(
       sessionCredit: 0,
       minuteCredit: 0,
       muscleSetCreditScale: 0,
+      effectiveSetCount: 0,
+      totalReps: 0,
+      weightedSetCount: 0,
+      durationCredit: 0,
+      volumeCredit: 0,
       reason: "Passet är avbrutet eller exkluderat från analys.",
       countsAsMeaningful: false,
     };
   }
 
-  const completedSetCount = getCompletedWorkingSetCount(log);
   const durationMinutes = getWorkoutDurationMinutes(log);
+  const evidence = getWorkoutPerformanceEvidence(log);
 
   // Väldigt korta testpass ska inte kunna uppfylla veckan på egen hand.
-  if (durationMinutes < 5 && completedSetCount <= 1) {
+  if (
+    durationMinutes < 5 &&
+    evidence.effectiveSetCount <= 1 &&
+    evidence.weightedSetCount < 1.5
+  ) {
     return {
       sessionCredit: 0,
       minuteCredit: 0,
       muscleSetCreditScale: 0,
+      effectiveSetCount: evidence.effectiveSetCount,
+      totalReps: evidence.totalReps,
+      weightedSetCount: evidence.weightedSetCount,
+      durationCredit: 0,
+      volumeCredit: 0,
       reason: "Mycket kort testpass utan tydlig träningsvolym.",
       countsAsMeaningful: false,
     };
   }
 
-  const durationScore =
+  const durationCredit =
     durationMinutes >= 35
       ? 1
       : durationMinutes >= 25
@@ -355,16 +512,16 @@ export function getWorkoutPlanCredit(
             : durationMinutes >= 5
               ? 0.2
               : 0;
-  const setScore =
-    completedSetCount >= 10
+  const volumeCredit =
+    evidence.weightedSetCount >= 10
       ? 1
-      : completedSetCount >= 6
+      : evidence.weightedSetCount >= 6
         ? 0.85
-        : completedSetCount >= 4
+        : evidence.weightedSetCount >= 4
           ? 0.65
-          : completedSetCount >= 2
+          : evidence.weightedSetCount >= 2
             ? 0.4
-            : completedSetCount >= 1
+            : evidence.weightedSetCount >= 1
               ? 0.15
               : 0;
   const plannedDurationRatio =
@@ -373,23 +530,29 @@ export function getWorkoutPlanCredit(
       : null;
   let sessionCredit =
     plannedDurationRatio !== null
-      ? plannedDurationRatio * 0.4 + durationScore * 0.3 + setScore * 0.3
-      : durationScore * 0.55 + setScore * 0.45;
+      ? plannedDurationRatio * 0.35 + durationCredit * 0.25 + volumeCredit * 0.4
+      : durationCredit * 0.45 + volumeCredit * 0.55;
 
-  if (durationMinutes < 10 && completedSetCount < 3) {
+  if (durationMinutes < 10 && evidence.effectiveSetCount < 3) {
     sessionCredit = Math.min(sessionCredit, 0.5);
   }
 
   sessionCredit = roundToSingleDecimal(clampNumber(sessionCredit, 0, 1));
-  const countsAsMeaningful = sessionCredit >= 0.2 || durationMinutes >= 8 || completedSetCount >= 2;
+  const countsAsMeaningful =
+    sessionCredit >= 0.2 || durationMinutes >= 8 || evidence.effectiveSetCount >= 2;
 
   return {
     sessionCredit: countsAsMeaningful ? sessionCredit : 0,
     minuteCredit: countsAsMeaningful ? durationMinutes : 0,
     muscleSetCreditScale: countsAsMeaningful ? sessionCredit : 0,
+    effectiveSetCount: evidence.effectiveSetCount,
+    totalReps: evidence.totalReps,
+    weightedSetCount: evidence.weightedSetCount,
+    durationCredit: roundToSingleDecimal(durationCredit),
+    volumeCredit: roundToSingleDecimal(volumeCredit),
     reason:
       countsAsMeaningful && sessionCredit < 0.7
-        ? "Kortare eller lättare pass som räknas delvis i veckoplanen."
+        ? "Kortare eller lättare pass med verklig prestation som räknas delvis i veckoplanen."
         : countsAsMeaningful
           ? "Rimligt fullvärdigt träningspass för veckoplanen."
           : "För låg volym för att räknas meningsfullt i veckoplanen.",
@@ -940,6 +1103,9 @@ function matchLogsToPlannedSessions(
         inferredFocus: analysis.inferredFocus,
         sessionCredit: analysis.credit.sessionCredit,
         minuteCredit: analysis.credit.minuteCredit,
+        effectiveSetCount: analysis.credit.effectiveSetCount,
+        totalReps: analysis.credit.totalReps,
+        weightedSetCount: analysis.credit.weightedSetCount,
         reason: analysis.credit.reason,
         matchedSessionId: null,
         matchedSessionFocus: null,
@@ -966,6 +1132,9 @@ function matchLogsToPlannedSessions(
         inferredFocus: analysis.inferredFocus,
         sessionCredit: analysis.credit.sessionCredit,
         minuteCredit: analysis.credit.minuteCredit,
+        effectiveSetCount: analysis.credit.effectiveSetCount,
+        totalReps: analysis.credit.totalReps,
+        weightedSetCount: analysis.credit.weightedSetCount,
         reason: analysis.credit.reason,
         matchedSessionId: explicitSession.id,
         matchedSessionFocus: explicitSession.focus,
@@ -1012,6 +1181,9 @@ function matchLogsToPlannedSessions(
         inferredFocus: analysis.inferredFocus,
         sessionCredit: analysis.credit.sessionCredit,
         minuteCredit: analysis.credit.minuteCredit,
+        effectiveSetCount: analysis.credit.effectiveSetCount,
+        totalReps: analysis.credit.totalReps,
+        weightedSetCount: analysis.credit.weightedSetCount,
         reason: analysis.credit.reason,
         matchedSessionId: bestMatch.session.id,
         matchedSessionFocus: bestMatch.session.focus,
@@ -1029,6 +1201,9 @@ function matchLogsToPlannedSessions(
       inferredFocus: analysis.inferredFocus,
       sessionCredit: analysis.credit.sessionCredit,
       minuteCredit: analysis.credit.minuteCredit,
+      effectiveSetCount: analysis.credit.effectiveSetCount,
+      totalReps: analysis.credit.totalReps,
+      weightedSetCount: analysis.credit.weightedSetCount,
       reason: analysis.credit.reason,
       matchedSessionId: null,
       matchedSessionFocus: null,
@@ -1702,6 +1877,8 @@ export function buildWeeklyPlanContext(planState: WeeklyPlanState): WeeklyPlanCo
     suggestedNextDurationMinutes: suggestion.durationMinutes,
     priorityMuscles: suggestion.priorityMuscles,
     profilePriorityMuscles: planState.profilePriorityMuscles,
+    longTermPriorityMuscles: planState.profilePriorityMuscles,
+    recoveryLimitedMuscles: planState.remainingTrainingNeed.recoveryLimitedMuscles,
     easyMuscles: suggestion.easyMuscles,
     muscleSetDeficits: planState.remainingTrainingNeed.muscleSetDeficits,
     isUserBehindPlan: suggestion.isUserBehindPlan,
@@ -1709,6 +1886,9 @@ export function buildWeeklyPlanContext(planState: WeeklyPlanState): WeeklyPlanCo
     flexibility: planState.settings.flexibility,
     preferredDays: planState.settings.preferredDays,
     preferredGymId: planState.settings.preferredGymId ?? null,
+    remainingNeedDuration:
+      planState.debug?.remainingNeedDuration ?? planState.settings.defaultDurationMinutes,
+    typicalWorkoutDurationMinutes: planState.debug?.typicalWorkoutDurationMinutes ?? null,
     coachText: status.message,
   };
 }
@@ -1799,13 +1979,21 @@ export function deriveWeeklyPlanState(params: {
   });
   // Nästa fokus ska spegla bästa nästa pass från och med nu, inte bara dagens ursprungliga planrad.
   const suggestedNextFocus = focusRecommendation.focus;
-  const suggestedNextDurationMinutes = clampNumber(
+  const remainingNeedDuration =
     sessionsRemaining > 0
       ? Math.round(plannedMinutesRemaining / sessionsRemaining)
-      : params.settings.defaultDurationMinutes,
-    params.settings.minDurationMinutes,
-    params.settings.maxDurationMinutes,
-  );
+      : params.settings.defaultDurationMinutes;
+  const typicalWorkoutDurationMinutes = getTypicalWorkoutDurationMinutes({
+    workoutLogs: params.workoutLogs,
+    now,
+  });
+  const suggestedNextDurationMinutes = blendSuggestedDuration({
+    remainingNeedDuration,
+    typicalWorkoutDurationMinutes,
+    minDuration: params.settings.minDurationMinutes,
+    maxDuration: params.settings.maxDurationMinutes,
+    remainingSessionCredit,
+  });
   const totalRelevantDeficit = roundToSingleDecimal(
     (Object.keys(muscleSetDeficits) as MuscleBudgetGroup[]).reduce((sum, group) => {
       const weight = profilePriorityMuscles.includes(group)
@@ -1816,6 +2004,10 @@ export function deriveWeeklyPlanState(params: {
       return sum + muscleSetDeficits[group] * weight;
     }, 0),
   );
+  const recoveryLimitedMuscles = getRecoveryLimitedMuscles({
+    workoutAnalyses: completedWorkoutAnalyses,
+    now,
+  });
   const focusScores = buildFocusRecommendationScores({
     sessions: sessionsWithMissedStatus,
     workoutAnalyses: completedWorkoutAnalyses,
@@ -1852,6 +2044,7 @@ export function deriveWeeklyPlanState(params: {
       targetSessionCreditThisWeek,
       muscleSetDeficits,
       totalRelevantDeficit,
+      recoveryLimitedMuscles,
       suggestedNextFocus,
       suggestedNextDurationMinutes,
       suggestedNextFocusReason: focusRecommendation.reason,
@@ -1863,6 +2056,9 @@ export function deriveWeeklyPlanState(params: {
         selected: score.focus === suggestedNextFocus,
       })),
       goalReachedReason,
+      typicalWorkoutDurationMinutes,
+      remainingNeedDuration,
+      finalSuggestedDurationMinutes: suggestedNextDurationMinutes,
     },
   };
 }
