@@ -26,6 +26,7 @@ import {
   adaptNormalizedWorkoutToSimulationPlan,
   getScenarioSpontaneousFocus,
 } from "@/lib/simulation/full-app-chain-helpers";
+import { buildEffectiveSimulationUserProfile } from "@/lib/simulation/effective-user-profile";
 import {
   addDays,
   adjustScenarioWorkoutDuration,
@@ -143,19 +144,92 @@ function extractValidationDiagnostics(value: unknown) {
   const record = value as {
     validation?: {
       focusIntegrityScore?: number;
+      strengthSpecificityScore?: number;
       mustKeepViolations?: string[];
+      offFocusWarnings?: string[];
+      offFocusViolations?: string[];
       forbiddenExerciseViolations?: string[];
       lostMovementPatterns?: string[];
+      lostPrimaryRoles?: string[];
       lostPriorityMuscles?: string[];
+      deferredPriorityMuscles?: string[];
       removedPrimaryExercises?: string[];
       addedOffFocusExercises?: string[];
+      removedBecauseOffFocus?: string[];
+      removedBecauseRecovery?: string[];
+      removedBecauseDuplicateRole?: string[];
+      primaryLiftCount?: number;
+      loadedProgressionExerciseCount?: number;
+      bodyweightOnlyCount?: number;
+      mainLiftMissingWarnings?: string[];
+      repeatedPatternCount?: number;
+      repeatedVariantGroups?: string[];
+      plannedProgressionRepeats?: string[];
+      fallbackRepeats?: string[];
       normalizationLossScore?: number;
+      aiRawExercises?: Array<{
+        exerciseId?: string;
+        exerciseName?: string;
+        variantGroup?: string;
+        movementPattern?: string;
+        exerciseRole?: string;
+      }>;
+      afterCatalogMatch?: Array<{
+        exerciseId?: string;
+        exerciseName?: string;
+        variantGroup?: string;
+        movementPattern?: string;
+        exerciseRole?: string;
+      }>;
+      afterFocusRepair?: Array<{
+        exerciseId?: string;
+        exerciseName?: string;
+        variantGroup?: string;
+        movementPattern?: string;
+        exerciseRole?: string;
+      }>;
+      finalExercises?: Array<{
+        exerciseId?: string;
+        exerciseName?: string;
+        variantGroup?: string;
+        movementPattern?: string;
+        exerciseRole?: string;
+      }>;
+      rawToCatalogDiff?: Array<{
+        type?: "removed" | "added";
+        exerciseId?: string;
+        exerciseName?: string;
+        reason?: string;
+      }>;
+      catalogToFocusRepairDiff?: Array<{
+        type?: "removed" | "added";
+        exerciseId?: string;
+        exerciseName?: string;
+        reason?: string;
+      }>;
+      focusRepairToFinalDiff?: Array<{
+        type?: "removed" | "added";
+        exerciseId?: string;
+        exerciseName?: string;
+        reason?: string;
+      }>;
       beforeAfterDiff?: Array<{
         type?: "removed" | "added";
         exerciseId?: string;
         exerciseName?: string;
         reason?: string;
       }>;
+      validationContext?: {
+        plannedFocus?: string | null;
+        goal?: string;
+        experienceLevel?: string | null;
+        durationMinutes?: number;
+        priorityMuscles?: string[];
+        focusCompatiblePriorities?: string[];
+        deferredPriorities?: string[];
+        recoveryLimitedMuscles?: string[];
+        availableEquipment?: string[];
+      };
     };
   };
 
@@ -169,8 +243,18 @@ function extractValidationDiagnostics(value: unknown) {
       typeof validation.focusIntegrityScore === "number"
         ? validation.focusIntegrityScore
         : 0,
+    strengthSpecificityScore:
+      typeof validation.strengthSpecificityScore === "number"
+        ? validation.strengthSpecificityScore
+        : 0,
     mustKeepViolations: Array.isArray(validation.mustKeepViolations)
       ? validation.mustKeepViolations
+      : [],
+    offFocusWarnings: Array.isArray(validation.offFocusWarnings)
+      ? validation.offFocusWarnings
+      : [],
+    offFocusViolations: Array.isArray(validation.offFocusViolations)
+      ? validation.offFocusViolations
       : [],
     forbiddenExerciseViolations: Array.isArray(
       validation.forbiddenExerciseViolations,
@@ -180,8 +264,14 @@ function extractValidationDiagnostics(value: unknown) {
     lostMovementPatterns: Array.isArray(validation.lostMovementPatterns)
       ? validation.lostMovementPatterns
       : [],
+    lostPrimaryRoles: Array.isArray(validation.lostPrimaryRoles)
+      ? validation.lostPrimaryRoles
+      : [],
     lostPriorityMuscles: Array.isArray(validation.lostPriorityMuscles)
       ? validation.lostPriorityMuscles
+      : [],
+    deferredPriorityMuscles: Array.isArray(validation.deferredPriorityMuscles)
+      ? validation.deferredPriorityMuscles
       : [],
     removedPrimaryExercises: Array.isArray(validation.removedPrimaryExercises)
       ? validation.removedPrimaryExercises
@@ -189,10 +279,149 @@ function extractValidationDiagnostics(value: unknown) {
     addedOffFocusExercises: Array.isArray(validation.addedOffFocusExercises)
       ? validation.addedOffFocusExercises
       : [],
+    removedBecauseOffFocus: Array.isArray(validation.removedBecauseOffFocus)
+      ? validation.removedBecauseOffFocus
+      : [],
+    removedBecauseRecovery: Array.isArray(validation.removedBecauseRecovery)
+      ? validation.removedBecauseRecovery
+      : [],
+    removedBecauseDuplicateRole: Array.isArray(validation.removedBecauseDuplicateRole)
+      ? validation.removedBecauseDuplicateRole
+      : [],
+    primaryLiftCount:
+      typeof validation.primaryLiftCount === "number"
+        ? validation.primaryLiftCount
+        : 0,
+    loadedProgressionExerciseCount:
+      typeof validation.loadedProgressionExerciseCount === "number"
+        ? validation.loadedProgressionExerciseCount
+        : 0,
+    bodyweightOnlyCount:
+      typeof validation.bodyweightOnlyCount === "number"
+        ? validation.bodyweightOnlyCount
+        : 0,
+    mainLiftMissingWarnings: Array.isArray(validation.mainLiftMissingWarnings)
+      ? validation.mainLiftMissingWarnings
+      : [],
+    repeatedPatternCount:
+      typeof validation.repeatedPatternCount === "number"
+        ? validation.repeatedPatternCount
+        : 0,
+    repeatedVariantGroups: Array.isArray(validation.repeatedVariantGroups)
+      ? validation.repeatedVariantGroups
+      : [],
+    plannedProgressionRepeats: Array.isArray(validation.plannedProgressionRepeats)
+      ? validation.plannedProgressionRepeats
+      : [],
+    fallbackRepeats: Array.isArray(validation.fallbackRepeats)
+      ? validation.fallbackRepeats
+      : [],
     normalizationLossScore:
       typeof validation.normalizationLossScore === "number"
         ? validation.normalizationLossScore
         : 0,
+    aiRawExercises: Array.isArray(validation.aiRawExercises)
+      ? validation.aiRawExercises.filter(
+          (entry): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["aiRawExercises"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.exerciseId === "string" &&
+                typeof entry.exerciseName === "string" &&
+                typeof entry.variantGroup === "string" &&
+                typeof entry.movementPattern === "string" &&
+                typeof entry.exerciseRole === "string",
+            ),
+        )
+      : [],
+    afterCatalogMatch: Array.isArray(validation.afterCatalogMatch)
+      ? validation.afterCatalogMatch.filter(
+          (entry): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["afterCatalogMatch"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.exerciseId === "string" &&
+                typeof entry.exerciseName === "string" &&
+                typeof entry.variantGroup === "string" &&
+                typeof entry.movementPattern === "string" &&
+                typeof entry.exerciseRole === "string",
+            ),
+        )
+      : [],
+    afterFocusRepair: Array.isArray(validation.afterFocusRepair)
+      ? validation.afterFocusRepair.filter(
+          (entry): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["afterFocusRepair"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.exerciseId === "string" &&
+                typeof entry.exerciseName === "string" &&
+                typeof entry.variantGroup === "string" &&
+                typeof entry.movementPattern === "string" &&
+                typeof entry.exerciseRole === "string",
+            ),
+        )
+      : [],
+    finalExercises: Array.isArray(validation.finalExercises)
+      ? validation.finalExercises.filter(
+          (entry): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["finalExercises"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.exerciseId === "string" &&
+                typeof entry.exerciseName === "string" &&
+                typeof entry.variantGroup === "string" &&
+                typeof entry.movementPattern === "string" &&
+                typeof entry.exerciseRole === "string",
+            ),
+        )
+      : [],
+    rawToCatalogDiff: Array.isArray(validation.rawToCatalogDiff)
+      ? validation.rawToCatalogDiff.filter(
+          (entry): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["rawToCatalogDiff"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.type === "string" &&
+                typeof entry.exerciseId === "string" &&
+                typeof entry.exerciseName === "string" &&
+                typeof entry.reason === "string",
+            ),
+        )
+      : [],
+    catalogToFocusRepairDiff: Array.isArray(validation.catalogToFocusRepairDiff)
+      ? validation.catalogToFocusRepairDiff.filter(
+          (entry): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["catalogToFocusRepairDiff"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.type === "string" &&
+                typeof entry.exerciseId === "string" &&
+                typeof entry.exerciseName === "string" &&
+                typeof entry.reason === "string",
+            ),
+        )
+      : [],
+    focusRepairToFinalDiff: Array.isArray(validation.focusRepairToFinalDiff)
+      ? validation.focusRepairToFinalDiff.filter(
+          (entry): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["focusRepairToFinalDiff"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.type === "string" &&
+                typeof entry.exerciseId === "string" &&
+                typeof entry.exerciseName === "string" &&
+                typeof entry.reason === "string",
+            ),
+        )
+      : [],
     beforeAfterDiff: Array.isArray(validation.beforeAfterDiff)
       ? validation.beforeAfterDiff
           .filter(
@@ -207,10 +436,55 @@ function extractValidationDiagnostics(value: unknown) {
                   typeof entry.type === "string" &&
                   typeof entry.exerciseId === "string" &&
                   typeof entry.exerciseName === "string" &&
-                  typeof entry.reason === "string",
+                typeof entry.reason === "string",
               ),
           )
       : [],
+    validationContext:
+      validation.validationContext &&
+      typeof validation.validationContext === "object"
+        ? {
+            plannedFocus:
+              typeof validation.validationContext.plannedFocus === "string"
+                ? validation.validationContext.plannedFocus
+                : null,
+            goal:
+              typeof validation.validationContext.goal === "string"
+                ? validation.validationContext.goal
+                : "health",
+            experienceLevel:
+              typeof validation.validationContext.experienceLevel === "string"
+                ? validation.validationContext.experienceLevel
+                : null,
+            durationMinutes:
+              typeof validation.validationContext.durationMinutes === "number"
+                ? validation.validationContext.durationMinutes
+                : 0,
+            priorityMuscles: Array.isArray(validation.validationContext.priorityMuscles)
+              ? validation.validationContext.priorityMuscles
+              : [],
+            focusCompatiblePriorities: Array.isArray(
+              validation.validationContext.focusCompatiblePriorities,
+            )
+              ? validation.validationContext.focusCompatiblePriorities
+              : [],
+            deferredPriorities: Array.isArray(
+              validation.validationContext.deferredPriorities,
+            )
+              ? validation.validationContext.deferredPriorities
+              : [],
+            recoveryLimitedMuscles: Array.isArray(
+              validation.validationContext.recoveryLimitedMuscles,
+            )
+              ? validation.validationContext.recoveryLimitedMuscles
+              : [],
+            availableEquipment: Array.isArray(
+              validation.validationContext.availableEquipment,
+            )
+              ? validation.validationContext.availableEquipment
+              : [],
+          }
+        : undefined,
   } satisfies NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>;
 }
 
@@ -227,7 +501,34 @@ export async function runFullAppChainSimulation(params?: {
   });
   const profile = scenarioProfile.profile;
   const random = createSeededRandom(config.randomSeed);
-  const plannedWeekDays = buildPlannedWorkoutDaySet({ config, profile });
+  const plannedWeekDays = buildPlannedWorkoutDaySet({
+    config,
+    profile: scenarioProfile.profile,
+  });
+  const plannedWorkoutDayIndices = Array.from(plannedWeekDays).sort(
+    (left, right) => left - right,
+  );
+  const effectiveProfileBundle = buildEffectiveSimulationUserProfile({
+    profile,
+    plannedWorkoutDayIndices,
+    profilePresetId: params?.profilePreset ?? profile.id,
+  });
+  const effectiveSimulationProfile: SimulationUserProfile = {
+    ...profile,
+    age: effectiveProfileBundle.effectiveUserProfile.effectiveAge ?? profile.age,
+    heightCm:
+      effectiveProfileBundle.effectiveUserProfile.effectiveHeightCm ?? profile.heightCm,
+    weightKg:
+      effectiveProfileBundle.effectiveUserProfile.effectiveWeightKg ?? profile.weightKg,
+    goal: effectiveProfileBundle.effectiveUserProfile.effectiveGoal,
+    experienceLevel:
+      effectiveProfileBundle.effectiveUserProfile.effectiveExperienceLevel,
+    preferredSessionDurationMin:
+      effectiveProfileBundle.effectiveUserProfile
+        .effectivePreferredDurationMinutes ?? profile.preferredSessionDurationMin,
+    availableEquipmentIds:
+      effectiveProfileBundle.effectiveUserProfile.effectiveEquipment,
+  };
   const dailySnapshots: SimulationDailySnapshot[] = [];
   const plannerDebug: SimulationPlannerDebugEntry[] = [];
   const notes = [
@@ -237,18 +538,19 @@ export async function runFullAppChainSimulation(params?: {
     }),
     ...scenarioProfile.notes,
     "full_app_chain använder riktig veckoplanering, training history context och den delade AI-genereringskärnan. Själva passutförandet simuleras lokalt.",
+    ...effectiveProfileBundle.effectiveUserProfile.warnings,
   ];
-  let state = createInitialSimulationState(profile);
+  let state = createInitialSimulationState(effectiveSimulationProfile);
   let plannedWorkoutOrdinal = 0;
   let aiGeneratedWorkoutCount = 0;
   let aiFallbackWorkoutCount = 0;
   let aiLimitReached = false;
 
   for (let dayIndex = 0; dayIndex < config.totalDays; dayIndex += 1) {
-    const dayPlan = buildDayPlan({ config, dayIndex, plannedWeekDays, profile });
-    const stateBefore = normalizeSimulationState({ ...state, dayIndex }, profile, config);
+    const dayPlan = buildDayPlan({ config, dayIndex, plannedWeekDays, profile: effectiveSimulationProfile });
+    const stateBefore = normalizeSimulationState({ ...state, dayIndex }, effectiveSimulationProfile, config);
     const workoutLogs = buildSimulationWorkoutLogsFromSnapshots({
-      profile,
+      profile: effectiveSimulationProfile,
       snapshots: dailySnapshots,
     });
     let stateAfter = stateBefore;
@@ -263,8 +565,19 @@ export async function runFullAppChainSimulation(params?: {
         config.scenario ?? "normal",
       );
       const weeklySettings: WeeklyPlanSettings = buildSimulationWeeklyPlanSettings({
-        profile,
-        plannedWorkoutDayIndices: Array.from(plannedWeekDays),
+        profile: {
+          ...effectiveSimulationProfile,
+          goal: effectiveProfileBundle.effectiveUserProfile.effectiveGoal,
+          experienceLevel:
+            effectiveProfileBundle.effectiveUserProfile.effectiveExperienceLevel,
+          preferredSessionDurationMin:
+            effectiveProfileBundle.effectiveUserProfile
+              .effectivePreferredDurationMinutes ??
+            profile.preferredSessionDurationMin,
+          availableEquipmentIds:
+            effectiveProfileBundle.effectiveUserProfile.effectiveEquipment,
+        },
+        plannedWorkoutDayIndices,
         priorityMuscles: simulationPriorityMuscles,
         nowIso: dayPlan.date,
       });
@@ -277,7 +590,7 @@ export async function runFullAppChainSimulation(params?: {
         plannedSessions,
         workoutLogs,
         now: currentDate,
-        goal: profile.goal,
+        goal: effectiveSimulationProfile.goal,
         priorityMuscles: simulationPriorityMuscles,
       });
       const weeklyPlanStatus = buildWeeklyPlanStatus(weeklyPlanState);
@@ -299,7 +612,7 @@ export async function runFullAppChainSimulation(params?: {
       });
       const adherence = forcedMiss
         ? { train: false, skipReason: "random" as const }
-        : shouldTrainToday({ config, profile, random, state: stateBefore });
+        : shouldTrainToday({ config, profile: effectiveSimulationProfile, random, state: stateBefore });
       plannedWorkoutOrdinal += 1;
 
       if (adherence.train) {
@@ -307,6 +620,10 @@ export async function runFullAppChainSimulation(params?: {
           ...dayPlan,
           targetDurationMin: weeklyPlanStatus.suggestedNextDurationMinutes,
         };
+        const selectedPlanMode =
+          weeklyPlanStatus.suggestedNextWorkoutFocus === "recovery_strength"
+            ? "recovery"
+            : null;
         const aiWorkoutFocus: WorkoutFocus =
           weeklyPlanStatus.suggestedNextWorkoutFocus === "recovery_strength"
             ? "full_body"
@@ -321,21 +638,22 @@ export async function runFullAppChainSimulation(params?: {
             trainingHistoryContext.mediumTermTrainingSummary.typicalWorkoutDurationMinutes,
         });
         const settingsSummary = buildSimulationSettingsSummary({
-          profile,
+          profile: effectiveSimulationProfile,
           scenario: config.scenario ?? "normal",
+          baseSettings: effectiveProfileBundle.settingsSummary,
         });
         const canUseRealAi =
           aiGeneratedWorkoutCount < (config.maxAiGeneratedWorkouts ?? 4);
 
         if (canUseRealAi) {
           const generatedWorkout = await generateWorkoutWithAiCore({
-            goal: profile.goal,
+            goal: effectiveSimulationProfile.goal,
             durationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
-            equipment: profile.availableEquipmentIds,
+            equipment: effectiveSimulationProfile.availableEquipmentIds,
             gymEquipmentDetails: [],
             gym:
-              typeof profile.availableGymId === "number"
-                ? String(profile.availableGymId)
+              typeof effectiveSimulationProfile.availableGymId === "number"
+                ? String(effectiveSimulationProfile.availableGymId)
                 : null,
             gymLabel: null,
             confidenceScore: null,
@@ -343,7 +661,7 @@ export async function runFullAppChainSimulation(params?: {
             splitStyle: null,
             weeklyBudget: buildWeeklyBudgetPromptItems(weeklyPlanState),
             weeklyPlan: buildWeeklyPlanPromptItems(plannedSessions),
-            selectedPlanMode: null,
+            selectedPlanMode,
             focusIntent: weeklyPlanContext.coachText,
             targetMuscles: weeklyPlanContext.priorityMuscles,
             avoidMuscles: weeklyPlanContext.recoveryLimitedMuscles,
@@ -367,7 +685,7 @@ export async function runFullAppChainSimulation(params?: {
             workoutResult = simulateWorkout({
               dayPlan: plannerDayPlan,
               plannedExercises,
-              profile,
+              profile: effectiveSimulationProfile,
               random,
               state: stateBefore,
             });
@@ -381,7 +699,7 @@ export async function runFullAppChainSimulation(params?: {
                 random,
               }),
             };
-            stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
+            stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
             dayEvent = "planned_training";
             generatedWorkoutSummary = {
               workoutId: workoutResult.workoutId,
@@ -461,7 +779,7 @@ export async function runFullAppChainSimulation(params?: {
             aiFallbackWorkoutCount += 1;
             const plannedExercises = buildSyntheticWorkoutPlan({
               dayPlan: plannerDayPlan,
-              profile,
+              profile: effectiveSimulationProfile,
               random,
               state: stateBefore,
               focusHint: aiWorkoutFocus,
@@ -469,7 +787,7 @@ export async function runFullAppChainSimulation(params?: {
             workoutResult = simulateWorkout({
               dayPlan: plannerDayPlan,
               plannedExercises,
-              profile,
+              profile: effectiveSimulationProfile,
               random,
               state: stateBefore,
             });
@@ -485,7 +803,7 @@ export async function runFullAppChainSimulation(params?: {
                 random,
               }),
             };
-            stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
+            stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
             dayEvent = "planned_training";
             generatedWorkoutSummary = {
               workoutId: workoutResult.workoutId,
@@ -554,7 +872,7 @@ export async function runFullAppChainSimulation(params?: {
           aiFallbackWorkoutCount += 1;
           const plannedExercises = buildSyntheticWorkoutPlan({
             dayPlan: plannerDayPlan,
-            profile,
+            profile: effectiveSimulationProfile,
             random,
             state: stateBefore,
             focusHint: aiWorkoutFocus,
@@ -562,7 +880,7 @@ export async function runFullAppChainSimulation(params?: {
           workoutResult = simulateWorkout({
             dayPlan: plannerDayPlan,
             plannedExercises,
-            profile,
+            profile: effectiveSimulationProfile,
             random,
             state: stateBefore,
           });
@@ -578,7 +896,7 @@ export async function runFullAppChainSimulation(params?: {
               random,
             }),
           };
-          stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
+          stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
           dayEvent = "planned_training";
           generatedWorkoutSummary = {
             workoutId: workoutResult.workoutId,
@@ -647,10 +965,10 @@ export async function runFullAppChainSimulation(params?: {
             ...dayPlan,
             targetDurationMin: weeklyPlanStatus.suggestedNextDurationMinutes,
           },
-          profile,
+          profile: effectiveSimulationProfile,
           skipReason: adherence.skipReason ?? "random",
         });
-        stateAfter = applyMissedWorkoutState(stateBefore, profile, config);
+        stateAfter = applyMissedWorkoutState(stateBefore, effectiveSimulationProfile, config);
         dayEvent = "missed_planned";
       }
     } else if (
@@ -663,11 +981,16 @@ export async function runFullAppChainSimulation(params?: {
     ) {
       const spontaneousPlan = {
         ...dayPlan,
-        targetDurationMin: Math.max(20, Math.round(profile.preferredSessionDurationMin * 0.75)),
+        targetDurationMin: Math.max(
+          20,
+          Math.round(
+            effectiveSimulationProfile.preferredSessionDurationMin * 0.75,
+          ),
+        ),
       };
       const spontaneousExercises = buildSyntheticWorkoutPlan({
         dayPlan: spontaneousPlan,
-        profile,
+        profile: effectiveSimulationProfile,
         random,
         state: stateBefore,
         focusHint: getScenarioSpontaneousFocus(),
@@ -675,7 +998,7 @@ export async function runFullAppChainSimulation(params?: {
       workoutResult = simulateWorkout({
         dayPlan: spontaneousPlan,
         plannedExercises: spontaneousExercises,
-        profile,
+        profile: effectiveSimulationProfile,
         random,
         state: stateBefore,
       });
@@ -689,7 +1012,7 @@ export async function runFullAppChainSimulation(params?: {
           random,
         }),
       };
-      stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
+      stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
       dayEvent = "spontaneous_training";
       generatedWorkoutSummary = {
         workoutId: workoutResult.workoutId,
@@ -702,7 +1025,7 @@ export async function runFullAppChainSimulation(params?: {
         passGenerationMode: "mock_synthetic",
       };
     } else {
-      stateAfter = applyRestDayRecovery(stateBefore, profile, config);
+      stateAfter = applyRestDayRecovery(stateBefore, effectiveSimulationProfile, config);
     }
 
     dailySnapshots.push({
@@ -727,13 +1050,14 @@ export async function runFullAppChainSimulation(params?: {
 
   const timeSeries = buildTimeSeries(dailySnapshots);
   const exerciseAggregates = buildExerciseAggregates(dailySnapshots);
-  const evaluation = evaluateSimulation({ dailySnapshots, profile });
+  const evaluation = evaluateSimulation({ dailySnapshots, profile: effectiveSimulationProfile });
 
   return {
     config,
     profile,
-    plannedWorkoutDayIndices: Array.from(plannedWeekDays).sort((left, right) => left - right),
-    plannedWorkoutDayLabels: formatPlannedWorkoutDayLabels(Array.from(plannedWeekDays)),
+    effectiveUserProfile: effectiveProfileBundle.effectiveUserProfile,
+    plannedWorkoutDayIndices,
+    plannedWorkoutDayLabels: formatPlannedWorkoutDayLabels(plannedWorkoutDayIndices),
     aiGeneratedWorkoutCount,
     aiFallbackWorkoutCount,
     notes,

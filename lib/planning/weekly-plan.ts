@@ -183,6 +183,12 @@ export type WeeklyPlanDebug = {
   typicalWorkoutDurationMinutes: number | null;
   remainingNeedDuration: number;
   finalSuggestedDurationMinutes: number;
+  lastPlannedWorkoutDate?: string | null;
+  lastPlannedWorkoutStatus?: PlannedSessionStatus | null;
+  missedSinceLastGeneratedWorkout?: boolean;
+  missedTextReason?: string | null;
+  plannedSlotsSinceLastWorkout?: number;
+  spontaneousSinceLastPlannedWorkout?: number;
 };
 
 export type WeeklyPlanRecommendation = {
@@ -1828,6 +1834,31 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     completedMinutes < targetMinutes * 0.7;
   const missedSessionsCount = planState.missedSessions.length;
   const spontaneousSessionsCount = planState.spontaneousWorkoutLogIds.length;
+  const completedPlannedSessions = planState.plannedSessions
+    .filter((session) => session.status === "completed" || session.status === "replaced_by_spontaneous")
+    .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate));
+  const lastCompletedPlannedSession =
+    completedPlannedSessions[completedPlannedSessions.length - 1] ?? null;
+  const missedAfterLastCompleted = planState.missedSessions
+    .filter((session) =>
+      lastCompletedPlannedSession
+        ? session.plannedDate > lastCompletedPlannedSession.plannedDate
+        : true,
+    )
+    .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate));
+  const latestPastPlannedSession = [...planState.plannedSessions]
+    .filter((session) => session.status !== "planned")
+    .sort((left, right) => right.plannedDate.localeCompare(left.plannedDate))[0] ?? null;
+  const plannedSlotsSinceLastWorkout = planState.plannedSessions.filter((session) =>
+    lastCompletedPlannedSession
+      ? session.plannedDate > lastCompletedPlannedSession.plannedDate
+      : true,
+  ).length;
+  const spontaneousSinceLastPlannedWorkout = planState.spontaneousWorkoutLogIds.length;
+  const missedSinceLastGeneratedWorkout = missedAfterLastCompleted.length > 0;
+  const missedTextReason = missedSinceLastGeneratedWorkout
+    ? `Missat planerat pass ${missedAfterLastCompleted[0]?.plannedDate ?? ""} efter senaste genomförda planerade pass.`
+    : null;
   const suggestedNextWorkoutFocus = goalReached
     ? "recovery_strength"
     : mapPlannedFocusToWorkoutFocus(planState.remainingTrainingNeed.suggestedNextFocus);
@@ -1848,11 +1879,14 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
       `Du missade minst ett planerat pass men fick ändå in ett spontant pass. Vi kompenserar inte med något onödigt hårt, utan fyller de viktigaste luckorna med ett realistiskt ${formatPlannedSessionFocus(
         planState.remainingTrainingNeed.suggestedNextFocus,
       ).toLowerCase()}pass.`;
-  } else if (missedSessionsCount >= 1) {
+  } else if (missedSinceLastGeneratedWorkout) {
     message =
       `Du missade förra passet, men vi jagar inte igen allt på en gång. Nästa ${formatPlannedSessionFocus(
         planState.remainingTrainingNeed.suggestedNextFocus,
       ).toLowerCase()}pass ska fylla de viktigaste luckorna på ett rimligt sätt.`;
+  } else if (missedSessionsCount >= 1) {
+    message =
+      "Det finns ett tidigare planerat pass som inte blev av under veckan, men vi låter nästa rekommendation styras av det viktigaste behovet just nu.";
   } else if (shortSessionPattern) {
     message =
       `Du har tränat ${completedSessions} gånger den här veckan, men passen blev kortare än planerat. För målet behöver vi prioritera basövningarna i ett ${formatPlannedSessionFocus(
@@ -1864,6 +1898,15 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
   } else if (remainingSessions > 0) {
     message =
       `För att hålla veckan rimlig återstår ungefär ${remainingSessions} pass på cirka ${planState.remainingTrainingNeed.suggestedNextDurationMinutes} minuter.`;
+  }
+
+  if (planState.debug) {
+    planState.debug.lastPlannedWorkoutDate = latestPastPlannedSession?.plannedDate ?? null;
+    planState.debug.lastPlannedWorkoutStatus = latestPastPlannedSession?.status ?? null;
+    planState.debug.missedSinceLastGeneratedWorkout = missedSinceLastGeneratedWorkout;
+    planState.debug.missedTextReason = missedTextReason;
+    planState.debug.plannedSlotsSinceLastWorkout = plannedSlotsSinceLastWorkout;
+    planState.debug.spontaneousSinceLastPlannedWorkout = spontaneousSinceLastPlannedWorkout;
   }
 
   return {

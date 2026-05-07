@@ -785,6 +785,7 @@ export async function generateWorkoutWithAiCore(
           ...trainingHistoryContext.mediumTermTrainingSummary.recoveryLimitedMuscles,
         ]),
       ),
+      availableEquipment: params.equipment,
     } satisfies GeneratedWorkoutValidationFocusContext,
     availableEquipment: params.equipment,
     candidate: parsed,

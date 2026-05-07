@@ -101,6 +101,30 @@ export type SimulationUserProfile = {
   dislikedExerciseIds?: string[];
 };
 
+export type SimulationEffectiveUserProfile = {
+  sourceProfile: string;
+  presetProfileId: string | null;
+  effectiveGoal: SimulationGoal;
+  effectiveExperienceLevel: SimulationExperienceLevel;
+  effectiveAge: number | null;
+  effectiveHeightCm: number | null;
+  effectiveWeightKg: number | null;
+  effectivePlannedTrainingDays: number[];
+  effectivePreferredDurationMinutes: number | null;
+  effectiveEquipment: string[];
+  sourceByField: {
+    goal: "preset" | "override" | "fallback";
+    experienceLevel: "preset" | "override" | "fallback";
+    age: "preset" | "override" | "fallback";
+    heightCm: "preset" | "override" | "fallback";
+    weightKg: "preset" | "override" | "fallback";
+    plannedTrainingDays: "preset" | "override" | "fallback";
+    preferredDurationMinutes: "preset" | "override" | "fallback";
+    equipment: "preset" | "override" | "fallback";
+  };
+  warnings: string[];
+};
+
 export type SimulationUserState = {
   dayIndex: number;
   readiness: number;
@@ -200,19 +224,92 @@ export type SimulationPlannerDebugEntry = {
   };
   validationDiagnostics?: {
     focusIntegrityScore: number;
+    strengthSpecificityScore: number;
     mustKeepViolations: string[];
+    offFocusWarnings: string[];
+    offFocusViolations: string[];
     forbiddenExerciseViolations: string[];
     lostMovementPatterns: string[];
+    lostPrimaryRoles: string[];
     lostPriorityMuscles: string[];
+    deferredPriorityMuscles: string[];
     removedPrimaryExercises: string[];
     addedOffFocusExercises: string[];
+    removedBecauseOffFocus: string[];
+    removedBecauseRecovery: string[];
+    removedBecauseDuplicateRole: string[];
+    primaryLiftCount: number;
+    loadedProgressionExerciseCount: number;
+    bodyweightOnlyCount: number;
+    mainLiftMissingWarnings: string[];
+    repeatedPatternCount: number;
+    repeatedVariantGroups: string[];
+    plannedProgressionRepeats: string[];
+    fallbackRepeats: string[];
     normalizationLossScore: number;
+    aiRawExercises: Array<{
+      exerciseId: string;
+      exerciseName: string;
+      variantGroup: string;
+      movementPattern: string;
+      exerciseRole: string;
+    }>;
+    afterCatalogMatch: Array<{
+      exerciseId: string;
+      exerciseName: string;
+      variantGroup: string;
+      movementPattern: string;
+      exerciseRole: string;
+    }>;
+    afterFocusRepair: Array<{
+      exerciseId: string;
+      exerciseName: string;
+      variantGroup: string;
+      movementPattern: string;
+      exerciseRole: string;
+    }>;
+    finalExercises: Array<{
+      exerciseId: string;
+      exerciseName: string;
+      variantGroup: string;
+      movementPattern: string;
+      exerciseRole: string;
+    }>;
+    rawToCatalogDiff: Array<{
+      type: "removed" | "added";
+      exerciseId: string;
+      exerciseName: string;
+      reason: string;
+    }>;
+    catalogToFocusRepairDiff: Array<{
+      type: "removed" | "added";
+      exerciseId: string;
+      exerciseName: string;
+      reason: string;
+    }>;
+    focusRepairToFinalDiff: Array<{
+      type: "removed" | "added";
+      exerciseId: string;
+      exerciseName: string;
+      reason: string;
+    }>;
     beforeAfterDiff: Array<{
       type: "removed" | "added";
       exerciseId: string;
       exerciseName: string;
       reason: string;
     }>;
+    validationContext?: {
+      plannedFocus: string | null;
+      goal: string;
+      experienceLevel: string | null;
+      durationMinutes: number;
+      priorityMuscles: string[];
+      focusCompatiblePriorities: string[];
+      deferredPriorities: string[];
+      recoveryLimitedMuscles: string[];
+      availableEquipment: string[];
+    };
   };
 };
 
@@ -284,6 +381,7 @@ export type SimulationEvaluation = {
 export type SimulationReport = {
   config: SimulationConfig;
   profile: SimulationUserProfile;
+  effectiveUserProfile?: SimulationEffectiveUserProfile;
   plannedWorkoutDayIndices: number[];
   plannedWorkoutDayLabels: string[];
   aiGeneratedWorkoutCount?: number;

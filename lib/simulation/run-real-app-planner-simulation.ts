@@ -4,6 +4,7 @@ import { buildExerciseAggregates, evaluateSimulation } from "@/lib/simulation/ev
 import { getSimulationProfilePreset } from "@/lib/simulation/profile-presets";
 import { createSeededRandom } from "@/lib/simulation/random";
 import { DEFAULT_SIMULATION_CONFIG } from "@/lib/simulation/run-simulation";
+import { buildEffectiveSimulationUserProfile } from "@/lib/simulation/effective-user-profile";
 import {
   addDays,
   adjustScenarioWorkoutDuration,
@@ -132,6 +133,30 @@ export async function runRealAppPlannerSimulation(params?: {
   const profile = scenarioProfile.profile;
   const random = createSeededRandom(config.randomSeed);
   const plannedWeekDays = buildPlannedWorkoutDaySet({ config, profile });
+  const plannedWorkoutDayIndices = Array.from(plannedWeekDays).sort(
+    (left, right) => left - right,
+  );
+  const effectiveProfileBundle = buildEffectiveSimulationUserProfile({
+    profile,
+    plannedWorkoutDayIndices,
+    profilePresetId: params?.profilePreset ?? profile.id,
+  });
+  const effectiveSimulationProfile: SimulationUserProfile = {
+    ...profile,
+    age: effectiveProfileBundle.effectiveUserProfile.effectiveAge ?? profile.age,
+    heightCm:
+      effectiveProfileBundle.effectiveUserProfile.effectiveHeightCm ?? profile.heightCm,
+    weightKg:
+      effectiveProfileBundle.effectiveUserProfile.effectiveWeightKg ?? profile.weightKg,
+    goal: effectiveProfileBundle.effectiveUserProfile.effectiveGoal,
+    experienceLevel:
+      effectiveProfileBundle.effectiveUserProfile.effectiveExperienceLevel,
+    preferredSessionDurationMin:
+      effectiveProfileBundle.effectiveUserProfile
+        .effectivePreferredDurationMinutes ?? profile.preferredSessionDurationMin,
+    availableEquipmentIds:
+      effectiveProfileBundle.effectiveUserProfile.effectiveEquipment,
+  };
   const dailySnapshots: SimulationDailySnapshot[] = [];
   const plannerDebug: SimulationPlannerDebugEntry[] = [];
   const notes = [
@@ -141,15 +166,25 @@ export async function runRealAppPlannerSimulation(params?: {
     }),
     ...scenarioProfile.notes,
     "real_app_planner använder riktiga weekly-plan-helpers dag för dag. Själva passutförandet är tills vidare syntetiskt mockat.",
+    ...effectiveProfileBundle.effectiveUserProfile.warnings,
   ];
-  let state = createInitialSimulationState(profile);
+  let state = createInitialSimulationState(effectiveSimulationProfile);
   let plannedWorkoutOrdinal = 0;
 
   for (let dayIndex = 0; dayIndex < config.totalDays; dayIndex += 1) {
-    const dayPlan = buildDayPlan({ config, dayIndex, plannedWeekDays, profile });
-    const stateBefore = normalizeSimulationState({ ...state, dayIndex }, profile, config);
+    const dayPlan = buildDayPlan({
+      config,
+      dayIndex,
+      plannedWeekDays,
+      profile: effectiveSimulationProfile,
+    });
+    const stateBefore = normalizeSimulationState(
+      { ...state, dayIndex },
+      effectiveSimulationProfile,
+      config,
+    );
     const workoutLogs = buildSimulationWorkoutLogsFromSnapshots({
-      profile,
+      profile: effectiveSimulationProfile,
       snapshots: dailySnapshots,
     });
     let stateAfter = stateBefore;
@@ -164,8 +199,19 @@ export async function runRealAppPlannerSimulation(params?: {
         config.scenario ?? "normal",
       );
       const weeklySettings: WeeklyPlanSettings = buildSimulationWeeklyPlanSettings({
-        profile,
-        plannedWorkoutDayIndices: Array.from(plannedWeekDays),
+        profile: {
+          ...effectiveSimulationProfile,
+          goal: effectiveProfileBundle.effectiveUserProfile.effectiveGoal,
+          experienceLevel:
+            effectiveProfileBundle.effectiveUserProfile.effectiveExperienceLevel,
+          preferredSessionDurationMin:
+            effectiveProfileBundle.effectiveUserProfile
+              .effectivePreferredDurationMinutes ??
+            effectiveSimulationProfile.preferredSessionDurationMin,
+          availableEquipmentIds:
+            effectiveProfileBundle.effectiveUserProfile.effectiveEquipment,
+        },
+        plannedWorkoutDayIndices,
         priorityMuscles: simulationPriorityMuscles,
         nowIso: dayPlan.date,
       });
@@ -178,7 +224,7 @@ export async function runRealAppPlannerSimulation(params?: {
         plannedSessions,
         workoutLogs,
         now: currentDate,
-        goal: profile.goal,
+        goal: effectiveSimulationProfile.goal,
         priorityMuscles: simulationPriorityMuscles,
       });
       const weeklyPlanStatus = buildWeeklyPlanStatus(weeklyPlanState);
@@ -201,7 +247,12 @@ export async function runRealAppPlannerSimulation(params?: {
       });
       const adherence = forcedMiss
         ? { train: false, skipReason: "random" as const }
-        : shouldTrainToday({ config, profile, random, state: stateBefore });
+        : shouldTrainToday({
+            config,
+            profile: effectiveSimulationProfile,
+            random,
+            state: stateBefore,
+          });
       plannedWorkoutOrdinal += 1;
 
       if (adherence.train) {
@@ -212,7 +263,7 @@ export async function runRealAppPlannerSimulation(params?: {
         };
         const plannedExercises = buildSuggestedSyntheticExercises({
           dayPlan: plannerDayPlan,
-          profile,
+          profile: effectiveSimulationProfile,
           random,
           state: stateBefore,
           focus: plannedFocus,
@@ -220,7 +271,7 @@ export async function runRealAppPlannerSimulation(params?: {
         workoutResult = simulateWorkout({
           dayPlan: plannerDayPlan,
           plannedExercises,
-          profile,
+          profile: effectiveSimulationProfile,
           random,
           state: stateBefore,
         });
@@ -236,7 +287,12 @@ export async function runRealAppPlannerSimulation(params?: {
             random,
           }),
         };
-        stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
+        stateAfter = applyWorkoutFatigue(
+          stateBefore,
+          workoutResult,
+          effectiveSimulationProfile,
+          config,
+        );
         dayEvent = "planned_training";
         generatedWorkoutSummary = {
           workoutId: workoutResult.workoutId,
@@ -253,10 +309,14 @@ export async function runRealAppPlannerSimulation(params?: {
             ...dayPlan,
             targetDurationMin: weeklyPlanStatus.suggestedNextDurationMinutes,
           },
-          profile,
+          profile: effectiveSimulationProfile,
           skipReason: adherence.skipReason ?? "random",
         });
-        stateAfter = applyMissedWorkoutState(stateBefore, profile, config);
+        stateAfter = applyMissedWorkoutState(
+          stateBefore,
+          effectiveSimulationProfile,
+          config,
+        );
         dayEvent = "missed_planned";
       }
 
@@ -307,11 +367,14 @@ export async function runRealAppPlannerSimulation(params?: {
     ) {
       const spontaneousPlan = {
         ...dayPlan,
-        targetDurationMin: Math.max(20, Math.round(profile.preferredSessionDurationMin * 0.75)),
+        targetDurationMin: Math.max(
+          20,
+          Math.round(effectiveSimulationProfile.preferredSessionDurationMin * 0.75),
+        ),
       };
       workoutResult = simulateWorkout({
         dayPlan: spontaneousPlan,
-        profile,
+        profile: effectiveSimulationProfile,
         random,
         state: stateBefore,
       });
@@ -325,7 +388,12 @@ export async function runRealAppPlannerSimulation(params?: {
           random,
         }),
       };
-      stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
+      stateAfter = applyWorkoutFatigue(
+        stateBefore,
+        workoutResult,
+        effectiveSimulationProfile,
+        config,
+      );
       dayEvent = "spontaneous_training";
       generatedWorkoutSummary = {
         workoutId: workoutResult.workoutId,
@@ -337,7 +405,11 @@ export async function runRealAppPlannerSimulation(params?: {
         plannerNote: "Scenario lade in ett spontant pass på vilodag.",
       };
     } else {
-      stateAfter = applyRestDayRecovery(stateBefore, profile, config);
+      stateAfter = applyRestDayRecovery(
+        stateBefore,
+        effectiveSimulationProfile,
+        config,
+      );
     }
 
     dailySnapshots.push({
@@ -356,13 +428,17 @@ export async function runRealAppPlannerSimulation(params?: {
 
   const timeSeries = buildTimeSeries(dailySnapshots);
   const exerciseAggregates = buildExerciseAggregates(dailySnapshots);
-  const evaluation = evaluateSimulation({ dailySnapshots, profile });
+  const evaluation = evaluateSimulation({
+    dailySnapshots,
+    profile: effectiveSimulationProfile,
+  });
 
   return {
     config,
     profile,
-    plannedWorkoutDayIndices: Array.from(plannedWeekDays).sort((left, right) => left - right),
-    plannedWorkoutDayLabels: formatPlannedWorkoutDayLabels(Array.from(plannedWeekDays)),
+    effectiveUserProfile: effectiveProfileBundle.effectiveUserProfile,
+    plannedWorkoutDayIndices,
+    plannedWorkoutDayLabels: formatPlannedWorkoutDayLabels(plannedWorkoutDayIndices),
     notes,
     dailySnapshots,
     timeSeries,

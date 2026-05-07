@@ -102,6 +102,7 @@ function inferBaseLoadScore(exerciseId: string) {
 export function buildSimulationSettingsSummary(params: {
   profile: SimulationUserProfile;
   scenario: SimulationScenario;
+  baseSettings?: UserSettingsSummary | null;
 }) {
   const priorityMuscles =
     params.scenario === "priority_upper_body"
@@ -109,15 +110,17 @@ export function buildSimulationSettingsSummary(params: {
       : [];
 
   return {
-    sex: params.profile.sex,
-    age: params.profile.age,
-    weight_kg: params.profile.weightKg,
-    height_cm: params.profile.heightCm,
-    experience_level: params.profile.experienceLevel,
-    training_goal: params.profile.goal,
-    sport_focus: "none",
-    avoid_supersets: false,
-    superset_preference: "allowed",
+    ...(params.baseSettings ?? {
+      sex: params.profile.sex,
+      age: params.profile.age,
+      weight_kg: params.profile.weightKg,
+      height_cm: params.profile.heightCm,
+      experience_level: params.profile.experienceLevel,
+      training_goal: params.profile.goal,
+      sport_focus: "none",
+      avoid_supersets: false,
+      superset_preference: "allowed",
+    }),
     primary_priority_muscle: priorityMuscles[0] ?? null,
     secondary_priority_muscle: priorityMuscles[1] ?? null,
     tertiary_priority_muscle: priorityMuscles[2] ?? null,
