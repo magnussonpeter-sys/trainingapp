@@ -81,6 +81,7 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     `- Antal dagar: ${report.config.totalDays}`,
     `- Seed: ${report.config.randomSeed}`,
     `- Planerade träningsdagar: ${report.plannedWorkoutDayLabels.join(", ") || "inga"}`,
+    `- Tillgänglig utrustning: ${report.profile.availableEquipmentIds.join(", ") || "okänd"}`,
     `- Max AI-pass: ${report.config.maxAiGeneratedWorkouts ?? "n/a"}`,
     `- Faktiska AI-anrop: ${report.aiGeneratedWorkoutCount ?? 0}`,
     `- AI-fallback/mock: ${report.aiFallbackWorkoutCount ?? 0}`,

@@ -35,6 +35,13 @@ type ApiGym = {
   }>;
 };
 
+const SIMULATION_ONLY_GYM: SimulationGymOption = {
+  id: "simulation:dumbbells-bench-rings",
+  name: "Simulation: Hantlar, bänk och ringar",
+  // Ett fast simulationsgym gör det lätt att reproducera samma utrustningsmiljö.
+  equipmentIds: ["dumbbells", "bench", "rings"],
+};
+
 function clampSimulationDays(value: number) {
   // Tillåt korta veckotester när simulationen använder riktiga AI-anrop.
   if (!Number.isFinite(value)) {
@@ -117,17 +124,21 @@ export default function SimulationPage() {
         }
 
         setGymOptions(
-          data.gyms.map((gym) => ({
-            id: String(gym.id),
-            name: gym.name,
-            // Gymutrustning översätts till samma EquipmentId-nivå som generatorn använder.
-            equipmentIds: extractEquipmentIdsFromRecords(gym.equipment ?? [], {
-              includeBodyweightFallback: true,
-            }),
-          })),
+          [
+            SIMULATION_ONLY_GYM,
+            ...data.gyms.map((gym) => ({
+              id: String(gym.id),
+              name: gym.name,
+              // Gymutrustning översätts till samma EquipmentId-nivå som generatorn använder.
+              equipmentIds: extractEquipmentIdsFromRecords(gym.equipment ?? [], {
+                includeBodyweightFallback: true,
+              }),
+            })),
+          ],
         );
       } catch {
         // Simuleringen ska fungera även när användaren inte är inloggad eller DB saknas.
+        setGymOptions([SIMULATION_ONLY_GYM]);
       }
     }
 
