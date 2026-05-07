@@ -94,6 +94,13 @@ export function applyScenarioProfileTweaks(params: {
     notes.push("Scenariot drar ned följsamheten på planerade träningsdagar.");
   }
 
+  if (params.scenario === "realistic_user") {
+    profile.adherenceProfile = "medium";
+    profile.recoveryProfile = "average";
+    profile.lifeStressBase = Math.max(profile.lifeStressBase, 48);
+    notes.push("Scenariot blandar realistiskt vardagsbeteende: några missade pass, vissa kortare pass och ibland spontana extrapass.");
+  }
+
   if (params.scenario === "high_fatigue") {
     profile.recoveryProfile = "poor";
     profile.energyTrend = "declining";
@@ -126,6 +133,10 @@ export function buildScenarioNotes(params: {
     notes.push("Scenariot kortar ned genomförda pass för att testa delvis uppfyllda planerade dagar.");
   }
 
+  if (params.scenario === "realistic_user") {
+    notes.push("Scenariot låter simuleringen bete sig mer som en verklig användare över veckan.");
+  }
+
   if (params.scenario === "missed_workouts") {
     notes.push("Scenariot missar vissa planerade pass deterministiskt.");
   }
@@ -141,6 +152,10 @@ export function shouldForceMissPlannedWorkout(params: {
   scenario: SimulationScenario;
   plannedWorkoutOrdinal: number;
 }) {
+  if (params.scenario === "realistic_user") {
+    return params.plannedWorkoutOrdinal % 5 === 4;
+  }
+
   if (params.scenario === "missed_workouts") {
     return params.plannedWorkoutOrdinal % 2 === 1;
   }
@@ -158,7 +173,10 @@ export function shouldAddSpontaneousWorkout(params: {
   plannedWeekDays: Set<number>;
   random: SeededRandom;
 }) {
-  if (params.scenario !== "spontaneous_lower_before_planned_lower") {
+  if (
+    params.scenario !== "spontaneous_lower_before_planned_lower" &&
+    params.scenario !== "realistic_user"
+  ) {
     return false;
   }
 
@@ -168,17 +186,38 @@ export function shouldAddSpontaneousWorkout(params: {
   }
 
   const restDaysPerWeek = Math.max(1, 7 - params.plannedWeekDays.size);
+  const weeklyProbability =
+    params.scenario === "realistic_user" ? 0.65 : 1;
 
   // Seedad sannolikhet ger reproducerbara spontana extrapass och landar i snitt runt ett per vecka.
-  return params.random.chance(1 / restDaysPerWeek);
+  return params.random.chance(weeklyProbability / restDaysPerWeek);
 }
 
 export function adjustScenarioWorkoutDuration(params: {
   scenario: SimulationScenario;
   plannedDurationMin: number;
   actualDurationMin: number;
+  random?: SeededRandom;
 }) {
   if (params.scenario !== "short_sessions") {
+    if (params.scenario !== "realistic_user") {
+      return params.actualDurationMin;
+    }
+
+    if (!params.random) {
+      return params.actualDurationMin;
+    }
+
+    if (params.random.chance(0.35)) {
+      return Math.max(
+        10,
+        Math.min(
+          params.actualDurationMin,
+          Math.round(params.plannedDurationMin * params.random.between(0.55, 0.85)),
+        ),
+      );
+    }
+
     return params.actualDurationMin;
   }
 

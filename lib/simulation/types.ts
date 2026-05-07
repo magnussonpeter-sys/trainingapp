@@ -12,6 +12,7 @@ export type SimulationPlannerMode =
 
 export type SimulationScenario =
   | "normal"
+  | "realistic_user"
   | "missed_workouts"
   | "short_sessions"
   | "spontaneous_lower_before_planned_lower"

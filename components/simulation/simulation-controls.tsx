@@ -58,6 +58,7 @@ const PRESETS = [
 
 const SCENARIOS: Array<[SimulationScenario, string]> = [
   ["normal", "Normal vecka"],
+  ["realistic_user", "Verklig användare"],
   ["missed_workouts", "Missade pass"],
   ["short_sessions", "Korta pass"],
   ["spontaneous_lower_before_planned_lower", "Spontant extrapass"],

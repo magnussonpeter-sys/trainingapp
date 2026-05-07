@@ -181,6 +181,7 @@ export function runSimulation(params?: {
             scenario: config.scenario ?? "normal",
             plannedDurationMin: workoutResult.plannedDurationMin,
             actualDurationMin: workoutResult.actualDurationMin,
+            random,
           }),
         };
         stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
@@ -247,6 +248,12 @@ export function runSimulation(params?: {
       workoutResult = {
         ...workoutResult,
         workoutName: "Spontant pass före planerad träningsdag",
+        actualDurationMin: adjustScenarioWorkoutDuration({
+          scenario: config.scenario ?? "normal",
+          plannedDurationMin: workoutResult.plannedDurationMin,
+          actualDurationMin: workoutResult.actualDurationMin,
+          random,
+        }),
       };
       stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
       dayEvent = "spontaneous_training";
