@@ -226,10 +226,6 @@ export function buildPromptContextSummary(params: {
   return `Fokus ${params.suggestedFocus}, cirka ${params.suggestedDurationMinutes} min, prioritet ${params.priorityMuscles.join(", ") || "inga"}, begränsa ${params.recoveryLimitedMuscles.join(", ") || "inga"}${typeof params.typicalWorkoutDurationMinutes === "number" ? `, typisk längd ${params.typicalWorkoutDurationMinutes} min` : ""}.`;
 }
 
-export function getScenarioSpontaneousFocus(scenario: SimulationScenario) {
-  if (scenario === "spontaneous_lower_before_planned_lower") {
-    return "lower_body" as const;
-  }
-
+export function getScenarioSpontaneousFocus() {
   return undefined;
 }

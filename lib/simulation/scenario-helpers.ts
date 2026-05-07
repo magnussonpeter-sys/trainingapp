@@ -4,6 +4,7 @@ import type {
   SimulationScenario,
   SimulationUserProfile,
 } from "@/lib/simulation/types";
+import type { SeededRandom } from "@/lib/simulation/random";
 
 const WEEKDAY_LABELS = [
   "Söndag",
@@ -130,7 +131,7 @@ export function buildScenarioNotes(params: {
   }
 
   if (params.scenario === "spontaneous_lower_before_planned_lower") {
-    notes.push("Scenariot lägger in ett spontant pass dagen före vissa planerade träningsdagar.");
+    notes.push("Scenariot lägger ibland in ett spontant, realistiskt extrapass på vilodagar.");
   }
 
   return notes;
@@ -153,20 +154,23 @@ export function shouldForceMissPlannedWorkout(params: {
 
 export function shouldAddSpontaneousWorkout(params: {
   scenario: SimulationScenario;
-  dayIndex: number;
   date: string;
   plannedWeekDays: Set<number>;
+  random: SeededRandom;
 }) {
   if (params.scenario !== "spontaneous_lower_before_planned_lower") {
     return false;
   }
 
-  const tomorrow = addDays(params.date, 1);
-  const tomorrowWeekday = getWeekdayIndexForDate(tomorrow);
+  const currentWeekday = getWeekdayIndexForDate(params.date);
+  if (params.plannedWeekDays.has(currentWeekday)) {
+    return false;
+  }
 
-  return !params.plannedWeekDays.has(getWeekdayIndexForDate(params.date)) &&
-    params.plannedWeekDays.has(tomorrowWeekday) &&
-    params.dayIndex % 7 <= 4;
+  const restDaysPerWeek = Math.max(1, 7 - params.plannedWeekDays.size);
+
+  // Seedad sannolikhet ger reproducerbara spontana extrapass och landar i snitt runt ett per vecka.
+  return params.random.chance(1 / restDaysPerWeek);
 }
 
 export function adjustScenarioWorkoutDuration(params: {

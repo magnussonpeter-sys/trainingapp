@@ -299,9 +299,9 @@ export async function runRealAppPlannerSimulation(params?: {
     } else if (
       shouldAddSpontaneousWorkout({
         scenario: config.scenario ?? "normal",
-        dayIndex,
         date: dayPlan.date,
         plannedWeekDays,
+        random,
       })
     ) {
       const spontaneousPlan = {

@@ -570,9 +570,9 @@ export async function runFullAppChainSimulation(params?: {
     } else if (
       shouldAddSpontaneousWorkout({
         scenario: config.scenario ?? "normal",
-        dayIndex,
         date: dayPlan.date,
         plannedWeekDays,
+        random,
       })
     ) {
       const spontaneousPlan = {
@@ -584,7 +584,7 @@ export async function runFullAppChainSimulation(params?: {
         profile,
         random,
         state: stateBefore,
-        focusHint: getScenarioSpontaneousFocus(config.scenario ?? "normal"),
+        focusHint: getScenarioSpontaneousFocus(),
       });
       workoutResult = simulateWorkout({
         dayPlan: spontaneousPlan,

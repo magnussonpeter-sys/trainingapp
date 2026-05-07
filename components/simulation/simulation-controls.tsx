@@ -60,7 +60,7 @@ const SCENARIOS: Array<[SimulationScenario, string]> = [
   ["normal", "Normal vecka"],
   ["missed_workouts", "Missade pass"],
   ["short_sessions", "Korta pass"],
-  ["spontaneous_lower_before_planned_lower", "Spontant pass före planerad dag"],
+  ["spontaneous_lower_before_planned_lower", "Spontant extrapass"],
   ["high_fatigue", "Hög trötthet"],
   ["low_adherence", "Låg följsamhet"],
   ["priority_upper_body", "Prioritet överkropp"],
