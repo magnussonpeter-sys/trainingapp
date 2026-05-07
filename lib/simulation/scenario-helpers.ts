@@ -64,7 +64,11 @@ export function formatPlannedWorkoutDayLabels(indices: number[]) {
 export function normalizeSimulationPlannerMode(
   mode: SimulationPlannerMode | undefined,
 ) {
-  if (mode === "hybrid_ai" || mode === "real_app_planner") {
+  if (
+    mode === "hybrid_ai" ||
+    mode === "real_app_planner" ||
+    mode === "full_app_chain"
+  ) {
     return mode;
   }
 
@@ -111,6 +115,10 @@ export function buildScenarioNotes(params: {
 
   if (params.plannerMode === "real_app_planner") {
     notes.push("real_app_planner använder appens riktiga weekly-plan-helpers för planeringsbeslut.");
+  }
+
+  if (params.plannerMode === "full_app_chain") {
+    notes.push("full_app_chain använder riktig veckoplanering, training history context och riktig AI-generering.");
   }
 
   if (params.scenario === "short_sessions") {

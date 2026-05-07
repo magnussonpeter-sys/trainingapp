@@ -28,6 +28,10 @@ function plannerLabel(source?: PlannerSource) {
     return "Riktig planner";
   }
 
+  if (source === "full_app_chain") {
+    return "Full app-kedja";
+  }
+
   if (source === "synthetic") {
     return "Syntetisk";
   }
@@ -136,8 +140,13 @@ export default function SimulationDebugTable({
                       Prioritet: {entry.realAppPlanner.priorityMuscles.join(", ") || "inga"} · Begränsa: {entry.realAppPlanner.recoveryLimitedMuscles.join(", ") || "inga"}
                     </p>
                     <p className="mt-1 leading-5">
-                      Passgenerering: mockad syntetisk · Goal reached: {entry.realAppPlanner.goalReached ? "ja" : "nej"}
+                      Passgenerering: {entry.realAppPlanner.passGenerationMode === "real_ai" ? "riktig AI" : entry.realAppPlanner.passGenerationMode === "fallback_mock" ? "fallback/mock" : "mockad syntetisk"} · Goal reached: {entry.realAppPlanner.goalReached ? "ja" : "nej"}
                     </p>
+                    {entry.realAppPlanner.promptContextSummary ? (
+                      <p className="mt-1 leading-5">
+                        Kontext: {entry.realAppPlanner.promptContextSummary}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
                 {entry.trainingHistoryContextSummary ? (

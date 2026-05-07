@@ -8,6 +8,7 @@ function getPlannerStats(report: SimulationReport) {
   return {
     total: summaries.length,
     ai: summaries.filter((summary) => summary.plannerSource === "ai").length,
+    fullAppChain: summaries.filter((summary) => summary.plannerSource === "full_app_chain").length,
     fallback: summaries.filter((summary) => summary.plannerSource === "ai_fallback").length,
     synthetic: summaries.filter((summary) => summary.plannerSource === "synthetic").length,
     realAppPlanner: summaries.filter((summary) => summary.plannerSource === "real_app_planner").length,
@@ -25,11 +26,13 @@ export default function SimulationPlannerStatusCard({
     ? report.plannedWorkoutDayLabels
     : [];
   const modeLabel =
-    report.config.plannerMode === "hybrid_ai"
-      ? "Hybrid: AI föreslår pass"
-      : report.config.plannerMode === "real_app_planner"
-        ? "Riktig planner-kedja"
-        : "Syntetisk snabbmodell";
+    report.config.plannerMode === "full_app_chain"
+      ? "Full app-kedja – veckoplan + AI-pass"
+      : report.config.plannerMode === "hybrid_ai"
+        ? "Hybrid AI-labb"
+        : report.config.plannerMode === "real_app_planner"
+          ? "Riktig veckoplanering – mockat pass"
+          : "Syntetisk snabbmodell";
 
   return (
     <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
@@ -41,7 +44,7 @@ export default function SimulationPlannerStatusCard({
       </h2>
       <div className="mt-4 grid grid-cols-3 gap-2 text-center">
         <div className="rounded-2xl bg-emerald-50 px-3 py-3">
-          <p className="text-2xl font-semibold text-emerald-800">{stats.ai}</p>
+          <p className="text-2xl font-semibold text-emerald-800">{stats.ai + stats.fullAppChain}</p>
           <p className="text-xs text-emerald-900">AI-pass</p>
         </div>
         <div className="rounded-2xl bg-amber-50 px-3 py-3">
@@ -57,6 +60,7 @@ export default function SimulationPlannerStatusCard({
         Planerade träningspass i körningen: {stats.total}. Planerade veckodagar:{" "}
         {plannedWorkoutDayLabels.join(", ").toLowerCase() || "inga"}.{" "}
         {stats.realAppPlanner > 0 ? `Riktig planner: ${stats.realAppPlanner}. ` : ""}
+        {stats.fullAppChain > 0 ? `Full app-kedja: ${stats.fullAppChain}. ` : ""}
         {stats.lastNote ? `Senaste status: ${stats.lastNote}` : null}
       </p>
       {report.notes?.length ? (

@@ -7,7 +7,8 @@ export type SimulationGoal =
 export type SimulationPlannerMode =
   | "synthetic"
   | "hybrid_ai"
-  | "real_app_planner";
+  | "real_app_planner"
+  | "full_app_chain";
 
 export type SimulationScenario =
   | "normal"
@@ -139,8 +140,14 @@ export type SimulationDailySnapshot = {
     blockCount: number;
     exerciseCount: number;
     estimatedVolumeScore: number;
-    plannerSource?: "synthetic" | "ai" | "ai_fallback" | "real_app_planner";
+    plannerSource?:
+      | "synthetic"
+      | "ai"
+      | "ai_fallback"
+      | "real_app_planner"
+      | "full_app_chain";
     plannerNote?: string;
+    passGenerationMode?: "mock_synthetic" | "real_ai" | "fallback_mock";
   };
   workoutResult?: SimulationWorkoutResult;
   stateAfter: SimulationUserState;
@@ -159,7 +166,12 @@ export type SimulationPlannerDebugEntry = {
   weekday: string;
   isPlannedTrainingDay: boolean;
   plannerMode: SimulationPlannerMode;
-  source: "synthetic" | "ai" | "ai_fallback" | "real_app_planner";
+  source:
+    | "synthetic"
+    | "ai"
+    | "ai_fallback"
+    | "real_app_planner"
+    | "full_app_chain";
   beforeNormalization: SimulationPlannerDebugExercise[];
   afterNormalization: SimulationPlannerDebugExercise[];
   repeatedAggregationKeys: string[];
@@ -174,7 +186,9 @@ export type SimulationPlannerDebugEntry = {
     priorityMuscles: string[];
     recoveryLimitedMuscles: string[];
     muscleSetDeficits: Record<string, number>;
-    passGenerationMode: "mock_synthetic";
+    passGenerationMode: "mock_synthetic" | "real_ai" | "fallback_mock";
+    aiRequestUsed?: boolean;
+    promptContextSummary?: string;
   };
   trainingHistoryContextSummary?: {
     recentWorkoutsCount: number;
@@ -198,6 +212,7 @@ export type SimulationConfig = {
   enableDeloadDetection: boolean;
   minRestDayProbability: number;
   plannedWorkoutDayIndices?: number[];
+  maxAiGeneratedWorkouts?: number;
   maxFatigue: number;
   maxSoreness: number;
   deloadFatigueThreshold: number;
@@ -254,6 +269,8 @@ export type SimulationReport = {
   profile: SimulationUserProfile;
   plannedWorkoutDayIndices: number[];
   plannedWorkoutDayLabels: string[];
+  aiGeneratedWorkoutCount?: number;
+  aiFallbackWorkoutCount?: number;
   notes?: string[];
   dailySnapshots: SimulationDailySnapshot[];
   timeSeries: SimulationSeriesPoint[];

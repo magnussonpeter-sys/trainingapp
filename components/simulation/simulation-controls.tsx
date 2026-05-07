@@ -14,12 +14,12 @@ export type SimulationGymOption = {
 };
 
 function clampDays(value: number) {
-  // Samma gräns som simulationsmotorn använder, så fältet inte visar ett annat värde.
+  // Tillåt kortare körningar så full app-kedja kan testas utan för många AI-anrop.
   if (!Number.isFinite(value)) {
-    return 56;
+    return 14;
   }
 
-  return Math.min(84, Math.max(28, Math.round(value)));
+  return Math.min(84, Math.max(7, Math.round(value)));
 }
 
 type SimulationControlsProps = {
@@ -31,6 +31,7 @@ type SimulationControlsProps = {
   onDaysChange: (days: number) => void;
   onGoalChange: (goal: SimulationGoal) => void;
   onGymChange: (gymId: string) => void;
+  onMaxAiGeneratedWorkoutsChange: (value: number) => void;
   onPlannerModeChange: (mode: SimulationPlannerMode) => void;
   onPresetChange: (preset: string) => void;
   onRun: () => void;
@@ -45,6 +46,7 @@ type SimulationControlsProps = {
   seed: number;
   onSeedChange: (seed: number) => void;
   startDate: string;
+  maxAiGeneratedWorkouts: number;
 };
 
 const PRESETS = [
@@ -150,9 +152,9 @@ export default function SimulationControls(props: SimulationControlsProps) {
         </label>
 
         <label className="grid gap-2 text-sm font-medium text-slate-700">
-          Antal dagar (28-84)
+          Antal dagar (7-84)
           <input
-            min={28}
+            min={7}
             max={84}
             type="number"
             value={props.days}
@@ -200,14 +202,42 @@ export default function SimulationControls(props: SimulationControlsProps) {
             className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
           >
             <option value="synthetic">Syntetisk snabbmodell</option>
-            <option value="hybrid_ai">Hybrid: AI föreslår pass</option>
-            <option value="real_app_planner">Riktig planner-kedja</option>
+            <option value="hybrid_ai">Hybrid AI-labb</option>
+            <option value="real_app_planner">Riktig veckoplanering – mockat pass</option>
+            <option value="full_app_chain">Full app-kedja: veckoplan + AI-pass</option>
           </select>
           <span className="text-xs font-normal text-slate-500">
-            Hybrid använder OpenAI på planerade passdagar och kan därför ta längre tid.
+            {props.plannerMode === "full_app_chain"
+              ? "Detta läge använder riktiga AI-anrop och är långsammare samt dyrare än övriga lägen."
+              : props.plannerMode === "real_app_planner"
+                ? "Använder appens riktiga veckoplanering och historikcontext. Själva passet simuleras."
+                : props.plannerMode === "hybrid_ai"
+                  ? "Använder simulationens egen AI-planner. Bra för AI-tendenser, men inte hela appkedjan."
+                  : "Snabb lokal simulering utan AI. Bra för grova mönster."}
           </span>
         </label>
       </div>
+
+      {props.plannerMode === "full_app_chain" ? (
+        <div className="mt-4 grid gap-2 sm:max-w-xs">
+          <label className="grid gap-2 text-sm font-medium text-slate-700">
+            Max AI-genererade pass
+            <input
+              min={1}
+              max={10}
+              type="number"
+              value={props.maxAiGeneratedWorkouts}
+              onChange={(event) =>
+                props.onMaxAiGeneratedWorkoutsChange(Number(event.target.value))
+              }
+              className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+            />
+            <span className="text-xs font-normal text-slate-500">
+              Begränsar hur många riktiga AI-pass som får genereras i en körning.
+            </span>
+          </label>
+        </div>
+      ) : null}
 
       <div className="mt-5">
         <p className="text-sm font-medium text-slate-700">Planerade träningsdagar</p>
@@ -256,11 +286,13 @@ export default function SimulationControls(props: SimulationControlsProps) {
         <p className="mt-3 text-xs text-slate-500">
           Senaste körning: {props.report.config.totalDays} dagar, seed{" "}
           {props.report.config.randomSeed}, start {props.report.config.startDate},{" "}
-          {props.report.config.plannerMode === "hybrid_ai"
-            ? "hybrid AI"
-            : props.report.config.plannerMode === "real_app_planner"
-              ? "real planner-fallback"
-              : "syntetisk modell"}
+          {props.report.config.plannerMode === "full_app_chain"
+            ? "full app-kedja"
+            : props.report.config.plannerMode === "hybrid_ai"
+              ? "hybrid AI"
+              : props.report.config.plannerMode === "real_app_planner"
+                ? "riktig veckoplanering"
+                : "syntetisk modell"}
           .
         </p>
       ) : null}

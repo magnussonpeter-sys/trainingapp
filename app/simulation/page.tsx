@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import SimulationControls from "@/components/simulation/simulation-controls";
 import SimulationDebugTable from "@/components/simulation/simulation-debug-table";
@@ -13,6 +13,7 @@ import SimulationReadinessChart from "@/components/simulation/simulation-readine
 import SimulationSummaryCards from "@/components/simulation/simulation-summary-cards";
 import type { SimulationGymOption } from "@/components/simulation/simulation-controls";
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
+import { buildSimulationAnalysisExport } from "@/lib/simulation/build-analysis-export";
 import { getSimulationProfilePreset } from "@/lib/simulation/profile-presets";
 import { runSimulation } from "@/lib/simulation/run-simulation";
 import type {
@@ -35,12 +36,12 @@ type ApiGym = {
 };
 
 function clampSimulationDays(value: number) {
-  // Håll UI och API i samma intervall så användaren ser exakt vad som körs.
+  // Tillåt korta veckotester när simulationen använder riktiga AI-anrop.
   if (!Number.isFinite(value)) {
-    return 56;
+    return 14;
   }
 
-  return Math.min(84, Math.max(28, Math.round(value)));
+  return Math.min(84, Math.max(7, Math.round(value)));
 }
 
 function normalizeSimulationReport(report: SimulationReport): SimulationReport {
@@ -62,7 +63,7 @@ function buildInitialSimulationReport(): SimulationReport | null {
       runSimulation({
         profilePreset: "beginner_hypertrophy",
         config: {
-          totalDays: 56,
+          totalDays: 14,
           randomSeed: 42,
           startDate: new Date().toISOString().slice(0, 10),
           scenario: "normal",
@@ -79,7 +80,7 @@ function buildInitialSimulationReport(): SimulationReport | null {
 
 export default function SimulationPage() {
   const [preset, setPreset] = useState("beginner_hypertrophy");
-  const [days, setDays] = useState(56);
+  const [days, setDays] = useState(14);
   const [seed, setSeed] = useState(42);
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [scenario, setScenario] = useState<SimulationScenario>("normal");
@@ -87,9 +88,16 @@ export default function SimulationPage() {
   const [gymOptions, setGymOptions] = useState<SimulationGymOption[]>([]);
   const [selectedGymId, setSelectedGymId] = useState("");
   const [plannerMode, setPlannerMode] = useState<SimulationPlannerMode>("synthetic");
+  const [maxAiGeneratedWorkouts, setMaxAiGeneratedWorkouts] = useState(4);
   const [plannedWorkoutDayIndices, setPlannedWorkoutDayIndices] = useState<number[]>([1, 3, 5]);
   const [loading, setLoading] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
+  const [showExport, setShowExport] = useState(false);
   const [report, setReport] = useState<SimulationReport | null>(buildInitialSimulationReport);
+  const analysisExport = useMemo(
+    () => (report ? buildSimulationAnalysisExport(report) : ""),
+    [report],
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -135,6 +143,15 @@ export default function SimulationPage() {
     setGoal(profile.goal);
   }, [preset]);
 
+  function handlePlannerModeChange(mode: SimulationPlannerMode) {
+    setPlannerMode(mode);
+
+    if (mode === "full_app_chain" && days > 14) {
+      // Håll första körningen kort när riktiga AI-anrop används.
+      setDays(14);
+    }
+  }
+
   async function runRemoteSimulation() {
     setLoading(true);
 
@@ -167,6 +184,7 @@ export default function SimulationPage() {
             startDate,
             scenario,
             plannedWorkoutDayIndices,
+            maxAiGeneratedWorkouts,
           },
         }),
       });
@@ -176,9 +194,19 @@ export default function SimulationPage() {
         const normalizedReport = normalizeSimulationReport(data.report);
         setDays(normalizedReport.config.totalDays);
         setReport(normalizedReport);
+        setCopyStatus("idle");
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleCopyAnalysisExport() {
+    try {
+      await navigator.clipboard.writeText(analysisExport);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("error");
     }
   }
 
@@ -194,11 +222,13 @@ export default function SimulationPage() {
           onDaysChange={setDays}
           onGoalChange={setGoal}
           onGymChange={setSelectedGymId}
-          onPlannerModeChange={setPlannerMode}
+          onMaxAiGeneratedWorkoutsChange={setMaxAiGeneratedWorkouts}
+          onPlannerModeChange={handlePlannerModeChange}
           onPresetChange={setPreset}
           onRun={runRemoteSimulation}
           onScenarioChange={setScenario}
           onStartDateChange={setStartDate}
+          maxAiGeneratedWorkouts={maxAiGeneratedWorkouts}
           plannerMode={plannerMode}
           plannedWorkoutDayIndices={plannedWorkoutDayIndices}
           preset={preset}
@@ -215,6 +245,44 @@ export default function SimulationPage() {
             <SimulationSummaryCards evaluation={report.evaluation} />
             <SimulationPlannerStatusCard report={report} />
             <SimulationFlagsPanel evaluation={report.evaluation} />
+            <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-950">Analys-export</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Kopiera en kompakt export för att låta ChatGPT granska veckoplanering, AI-pass och historik.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowExport((value) => !value)}
+                    className="min-h-11 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-medium text-slate-700"
+                  >
+                    {showExport ? "Dölj export" : "Visa export"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyAnalysisExport}
+                    className="min-h-11 rounded-2xl bg-emerald-700 px-4 text-sm font-semibold text-white"
+                  >
+                    Kopiera analys-export
+                  </button>
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-slate-500">
+                {copyStatus === "copied"
+                  ? "Exporten kopierades."
+                  : copyStatus === "error"
+                    ? "Kunde inte kopiera exporten automatiskt."
+                    : `Planner mode: ${report.config.plannerMode}. AI-pass: ${report.aiGeneratedWorkoutCount ?? 0}, fallback/mock: ${report.aiFallbackWorkoutCount ?? 0}.`}
+              </p>
+              {showExport ? (
+                <pre className="mt-4 max-h-[420px] overflow-auto rounded-3xl border border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-700 whitespace-pre-wrap">
+                  {analysisExport}
+                </pre>
+              ) : null}
+            </section>
             <div className="grid gap-5 lg:grid-cols-2">
               <SimulationReadinessChart points={report.timeSeries} />
               <SimulationProgressChart points={report.timeSeries} />

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { runFullAppChainSimulation } from "@/lib/simulation/run-full-app-chain-simulation";
 import { runHybridSimulation } from "@/lib/simulation/run-hybrid-simulation";
 import { runRealAppPlannerSimulation } from "@/lib/simulation/run-real-app-planner-simulation";
 import { runSimulation } from "@/lib/simulation/run-simulation";
@@ -14,23 +15,29 @@ export async function POST(request: Request) {
     };
 
     const report =
-      body.config?.plannerMode === "real_app_planner"
-        ? await runRealAppPlannerSimulation({
+      body.config?.plannerMode === "full_app_chain"
+        ? await runFullAppChainSimulation({
             profilePreset: body.profilePreset,
             profile: body.profile,
             config: body.config,
           })
-        : body.config?.plannerMode === "hybrid_ai"
-          ? await runHybridSimulation({
-            profilePreset: body.profilePreset,
-            profile: body.profile,
-            config: body.config,
-          })
-          : runSimulation({
-            profilePreset: body.profilePreset,
-            profile: body.profile,
-            config: body.config,
-          });
+        : body.config?.plannerMode === "real_app_planner"
+          ? await runRealAppPlannerSimulation({
+              profilePreset: body.profilePreset,
+              profile: body.profile,
+              config: body.config,
+            })
+          : body.config?.plannerMode === "hybrid_ai"
+            ? await runHybridSimulation({
+                profilePreset: body.profilePreset,
+                profile: body.profile,
+                config: body.config,
+              })
+            : runSimulation({
+                profilePreset: body.profilePreset,
+                profile: body.profile,
+                config: body.config,
+              });
 
     return NextResponse.json({ ok: true, report });
   } catch (error) {

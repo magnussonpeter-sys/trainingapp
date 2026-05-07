@@ -56,6 +56,7 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
   enableWeightProgressionEstimate: true,
   enableDeloadDetection: true,
   minRestDayProbability: 0.08,
+  maxAiGeneratedWorkouts: 6,
   maxFatigue: 100,
   maxSoreness: 100,
   deloadFatigueThreshold: 82,
