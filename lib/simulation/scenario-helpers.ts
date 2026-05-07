@@ -110,8 +110,7 @@ export function buildScenarioNotes(params: {
   const notes: string[] = [];
 
   if (params.plannerMode === "real_app_planner") {
-    // TODO: När riktigt planner-läge finns ska simulation använda appens skarpa planner.
-    notes.push("real_app_planner finns förberett men faller i nuläget tillbaka till hybrid_ai.");
+    notes.push("real_app_planner använder appens riktiga weekly-plan-helpers för planeringsbeslut.");
   }
 
   if (params.scenario === "short_sessions") {

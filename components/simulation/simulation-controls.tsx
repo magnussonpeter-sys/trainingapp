@@ -201,7 +201,7 @@ export default function SimulationControls(props: SimulationControlsProps) {
           >
             <option value="synthetic">Syntetisk snabbmodell</option>
             <option value="hybrid_ai">Hybrid: AI föreslår pass</option>
-            <option value="real_app_planner">Förberett: riktig planner</option>
+            <option value="real_app_planner">Riktig planner-kedja</option>
           </select>
           <span className="text-xs font-normal text-slate-500">
             Hybrid använder OpenAI på planerade passdagar och kan därför ta längre tid.

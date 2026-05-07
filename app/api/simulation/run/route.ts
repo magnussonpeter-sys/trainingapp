@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { runHybridSimulation } from "@/lib/simulation/run-hybrid-simulation";
+import { runRealAppPlannerSimulation } from "@/lib/simulation/run-real-app-planner-simulation";
 import { runSimulation } from "@/lib/simulation/run-simulation";
 import type { SimulationConfig, SimulationUserProfile } from "@/lib/simulation/types";
 
@@ -13,14 +14,19 @@ export async function POST(request: Request) {
     };
 
     const report =
-      body.config?.plannerMode === "hybrid_ai" ||
       body.config?.plannerMode === "real_app_planner"
-        ? await runHybridSimulation({
+        ? await runRealAppPlannerSimulation({
             profilePreset: body.profilePreset,
             profile: body.profile,
             config: body.config,
           })
-        : runSimulation({
+        : body.config?.plannerMode === "hybrid_ai"
+          ? await runHybridSimulation({
+            profilePreset: body.profilePreset,
+            profile: body.profile,
+            config: body.config,
+          })
+          : runSimulation({
             profilePreset: body.profilePreset,
             profile: body.profile,
             config: body.config,

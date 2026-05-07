@@ -43,6 +43,40 @@ function clampSimulationDays(value: number) {
   return Math.min(84, Math.max(28, Math.round(value)));
 }
 
+function normalizeSimulationReport(report: SimulationReport): SimulationReport {
+  return {
+    ...report,
+    plannedWorkoutDayIndices: Array.isArray(report.plannedWorkoutDayIndices)
+      ? report.plannedWorkoutDayIndices
+      : [],
+    plannedWorkoutDayLabels: Array.isArray(report.plannedWorkoutDayLabels)
+      ? report.plannedWorkoutDayLabels
+      : [],
+    notes: Array.isArray(report.notes) ? report.notes : [],
+  };
+}
+
+function buildInitialSimulationReport(): SimulationReport | null {
+  try {
+    return normalizeSimulationReport(
+      runSimulation({
+        profilePreset: "beginner_hypertrophy",
+        config: {
+          totalDays: 56,
+          randomSeed: 42,
+          startDate: new Date().toISOString().slice(0, 10),
+          scenario: "normal",
+          plannedWorkoutDayIndices: [1, 3, 5],
+        },
+      }),
+    );
+  } catch (error) {
+    // En simulationssida ska falla tillbaka till tomt läge hellre än att hela sidan kraschar.
+    console.error("Could not build initial simulation report:", error);
+    return null;
+  }
+}
+
 export default function SimulationPage() {
   const [preset, setPreset] = useState("beginner_hypertrophy");
   const [days, setDays] = useState(56);
@@ -55,18 +89,7 @@ export default function SimulationPage() {
   const [plannerMode, setPlannerMode] = useState<SimulationPlannerMode>("synthetic");
   const [plannedWorkoutDayIndices, setPlannedWorkoutDayIndices] = useState<number[]>([1, 3, 5]);
   const [loading, setLoading] = useState(false);
-  const [report, setReport] = useState<SimulationReport | null>(() =>
-    runSimulation({
-      profilePreset: "beginner_hypertrophy",
-      config: {
-        totalDays: 56,
-        randomSeed: 42,
-        startDate: new Date().toISOString().slice(0, 10),
-        scenario: "normal",
-        plannedWorkoutDayIndices: [1, 3, 5],
-      },
-    }),
-  );
+  const [report, setReport] = useState<SimulationReport | null>(buildInitialSimulationReport);
 
   useEffect(() => {
     let isMounted = true;
@@ -150,8 +173,9 @@ export default function SimulationPage() {
       const data = (await response.json()) as { ok?: boolean; report?: SimulationReport };
 
       if (data.ok && data.report) {
-        setDays(data.report.config.totalDays);
-        setReport(data.report);
+        const normalizedReport = normalizeSimulationReport(data.report);
+        setDays(normalizedReport.config.totalDays);
+        setReport(normalizedReport);
       }
     } finally {
       setLoading(false);

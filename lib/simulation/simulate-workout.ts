@@ -8,6 +8,7 @@ import type {
   SimulationUserState,
   SimulationWorkoutResult,
 } from "@/lib/simulation/types";
+import type { WorkoutFocus } from "@/types/workout";
 
 const SYNTHETIC_EXERCISES: Array<Omit<SyntheticExercisePlan, "plannedSets" | "plannedReps" | "plannedWeightKg" | "plannedDurationSec"> & {
   goals: SimulationGoal[];
@@ -37,18 +38,66 @@ function canUseExercise(exercise: (typeof SYNTHETIC_EXERCISES)[number], equipmen
   return exercise.equipment.some((item) => equipment.includes(item));
 }
 
-function buildSyntheticWorkout(params: {
+function matchesFocusHint(
+  exercise: (typeof SYNTHETIC_EXERCISES)[number],
+  focusHint: WorkoutFocus | undefined,
+) {
+  if (!focusHint || focusHint === "full_body") {
+    return true;
+  }
+
+  if (focusHint === "core") {
+    return exercise.category === "core" || exercise.exerciseId === "walking_lunge";
+  }
+
+  const lowerBodyIds = new Set([
+    "deadlift",
+    "barbell_squat",
+    "romanian_deadlift",
+    "split_squat",
+    "barbell_hip_thrust",
+    "goblet_squat",
+    "walking_lunge",
+  ]);
+  const upperBodyIds = new Set([
+    "bench_press",
+    "overhead_press",
+    "barbell_row",
+    "pull_up",
+    "dumbbell_row",
+    "dumbbell_bench_press",
+    "dumbbell_shoulder_press",
+    "lat_pulldown",
+    "face_pull",
+    "push_up",
+  ]);
+
+  if (focusHint === "lower_body") {
+    return lowerBodyIds.has(exercise.exerciseId) || exercise.category === "core";
+  }
+
+  return upperBodyIds.has(exercise.exerciseId) || exercise.category === "core";
+}
+
+export function buildSyntheticWorkoutPlan(params: {
   dayPlan: SimulationDayPlan;
   profile: SimulationUserProfile;
   random: SeededRandom;
   state: SimulationUserState;
+  focusHint?: WorkoutFocus;
 }) {
-  const { dayPlan, profile, random, state } = params;
+  const { dayPlan, profile, random, state, focusHint } = params;
   const targetExerciseCount = clamp(Math.round(dayPlan.targetDurationMin / 12), 2, 6);
-  const pool = SYNTHETIC_EXERCISES.filter((exercise) => {
-    return exercise.goals.includes(profile.goal) && canUseExercise(exercise, profile.availableEquipmentIds);
+  const focusPool = SYNTHETIC_EXERCISES.filter((exercise) =>
+    matchesFocusHint(exercise, focusHint),
+  );
+  const pool = focusPool.filter((exercise) => {
+    return (
+      exercise.goals.includes(profile.goal) &&
+      canUseExercise(exercise, profile.availableEquipmentIds)
+    );
   });
-  const fallbackPool = SYNTHETIC_EXERCISES.filter((exercise) =>
+  const fallbackPool = focusPool.filter((exercise) =>
     canUseExercise(exercise, profile.availableEquipmentIds),
   );
   const candidates =
@@ -103,7 +152,7 @@ export function simulateWorkout(params: {
   state: SimulationUserState;
 }) {
   const { dayPlan, profile, random, state } = params;
-  const exercises = params.plannedExercises ?? buildSyntheticWorkout(params);
+  const exercises = params.plannedExercises ?? buildSyntheticWorkoutPlan(params);
   const exerciseResults = exercises.map((exercise) =>
     simulateExercise({ exercise, profile, random, state }),
   );

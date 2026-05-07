@@ -10,6 +10,7 @@ function getPlannerStats(report: SimulationReport) {
     ai: summaries.filter((summary) => summary.plannerSource === "ai").length,
     fallback: summaries.filter((summary) => summary.plannerSource === "ai_fallback").length,
     synthetic: summaries.filter((summary) => summary.plannerSource === "synthetic").length,
+    realAppPlanner: summaries.filter((summary) => summary.plannerSource === "real_app_planner").length,
     lastNote: [...summaries].reverse().find((summary) => summary.plannerNote)?.plannerNote,
   };
 }
@@ -20,12 +21,15 @@ export default function SimulationPlannerStatusCard({
   report: SimulationReport;
 }) {
   const stats = getPlannerStats(report);
+  const plannedWorkoutDayLabels = Array.isArray(report.plannedWorkoutDayLabels)
+    ? report.plannedWorkoutDayLabels
+    : [];
   const modeLabel =
     report.config.plannerMode === "hybrid_ai"
       ? "Hybrid: AI föreslår pass"
       : report.config.plannerMode === "real_app_planner"
-        ? "Förberett: riktig planner (fallback)"
-      : "Syntetisk snabbmodell";
+        ? "Riktig planner-kedja"
+        : "Syntetisk snabbmodell";
 
   return (
     <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
@@ -51,7 +55,8 @@ export default function SimulationPlannerStatusCard({
       </div>
       <p className="mt-3 text-sm leading-6 text-slate-600">
         Planerade träningspass i körningen: {stats.total}. Planerade veckodagar:{" "}
-        {report.plannedWorkoutDayLabels.join(", ").toLowerCase() || "inga"}.{" "}
+        {plannedWorkoutDayLabels.join(", ").toLowerCase() || "inga"}.{" "}
+        {stats.realAppPlanner > 0 ? `Riktig planner: ${stats.realAppPlanner}. ` : ""}
         {stats.lastNote ? `Senaste status: ${stats.lastNote}` : null}
       </p>
       {report.notes?.length ? (

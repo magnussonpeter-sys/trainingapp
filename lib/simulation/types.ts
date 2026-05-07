@@ -139,7 +139,7 @@ export type SimulationDailySnapshot = {
     blockCount: number;
     exerciseCount: number;
     estimatedVolumeScore: number;
-    plannerSource?: "synthetic" | "ai" | "ai_fallback";
+    plannerSource?: "synthetic" | "ai" | "ai_fallback" | "real_app_planner";
     plannerNote?: string;
   };
   workoutResult?: SimulationWorkoutResult;
@@ -159,11 +159,30 @@ export type SimulationPlannerDebugEntry = {
   weekday: string;
   isPlannedTrainingDay: boolean;
   plannerMode: SimulationPlannerMode;
-  source: "synthetic" | "ai" | "ai_fallback";
+  source: "synthetic" | "ai" | "ai_fallback" | "real_app_planner";
   beforeNormalization: SimulationPlannerDebugExercise[];
   afterNormalization: SimulationPlannerDebugExercise[];
   repeatedAggregationKeys: string[];
   note?: string;
+  realAppPlanner?: {
+    weekStartDate: string;
+    suggestedNextFocus: string;
+    suggestedNextWorkoutFocus: string;
+    suggestedNextDurationMinutes: number;
+    coachText: string;
+    goalReached: boolean;
+    priorityMuscles: string[];
+    recoveryLimitedMuscles: string[];
+    muscleSetDeficits: Record<string, number>;
+    passGenerationMode: "mock_synthetic";
+  };
+  trainingHistoryContextSummary?: {
+    recentWorkoutsCount: number;
+    progressionMemoryExerciseCount: number;
+    mediumTermWindowDays: number;
+    dataQuality: "rich" | "mixed" | "limited";
+    typicalWorkoutDurationMinutes: number | null;
+  };
 };
 
 export type SimulationConfig = {

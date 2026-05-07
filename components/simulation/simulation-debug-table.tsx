@@ -11,6 +11,10 @@ function format(value: number) {
   return Math.round(value * 10) / 10;
 }
 
+function getSnapshotWeekday(snapshot: SimulationDailySnapshot) {
+  return snapshot.plannedTraining?.weekday || "-";
+}
+
 function plannerLabel(source?: PlannerSource) {
   if (source === "ai") {
     return "AI";
@@ -18,6 +22,10 @@ function plannerLabel(source?: PlannerSource) {
 
   if (source === "ai_fallback") {
     return "Fallback";
+  }
+
+  if (source === "real_app_planner") {
+    return "Riktig planner";
   }
 
   if (source === "synthetic") {
@@ -61,7 +69,7 @@ export default function SimulationDebugTable({
               <tr key={snapshot.dayIndex}>
                 <td className="px-3 py-3 text-slate-600">{snapshot.dayIndex + 1}</td>
                 <td className="px-3 py-3 text-slate-800">{snapshot.date}</td>
-                <td className="px-3 py-3 text-slate-700">{snapshot.plannedTraining.weekday}</td>
+                <td className="px-3 py-3 text-slate-700">{getSnapshotWeekday(snapshot)}</td>
                 <td className="px-3 py-3">{format(snapshot.stateBefore.readiness)}</td>
                 <td className="px-3 py-3">{format(snapshot.stateBefore.fatigue)}</td>
                 <td className="px-3 py-3">
@@ -118,6 +126,31 @@ export default function SimulationDebugTable({
                 <p className="mt-1 text-slate-500">
                   {entry.isPlannedTrainingDay ? "Planerad träningsdag" : "Ej planerad träningsdag"}
                 </p>
+                {entry.realAppPlanner ? (
+                  <div className="mt-2 rounded-2xl bg-slate-50 p-3 text-slate-600">
+                    <p className="font-semibold text-slate-800">
+                      Veckoplan: {entry.realAppPlanner.suggestedNextWorkoutFocus} · {entry.realAppPlanner.suggestedNextDurationMinutes} min
+                    </p>
+                    <p className="mt-1 leading-5">{entry.realAppPlanner.coachText}</p>
+                    <p className="mt-1 leading-5">
+                      Prioritet: {entry.realAppPlanner.priorityMuscles.join(", ") || "inga"} · Begränsa: {entry.realAppPlanner.recoveryLimitedMuscles.join(", ") || "inga"}
+                    </p>
+                    <p className="mt-1 leading-5">
+                      Passgenerering: mockad syntetisk · Goal reached: {entry.realAppPlanner.goalReached ? "ja" : "nej"}
+                    </p>
+                  </div>
+                ) : null}
+                {entry.trainingHistoryContextSummary ? (
+                  <p className="mt-2 leading-5 text-slate-500">
+                    Historikcontext: {entry.trainingHistoryContextSummary.recentWorkoutsCount} recent,{" "}
+                    {entry.trainingHistoryContextSummary.progressionMemoryExerciseCount} progression,{" "}
+                    {entry.trainingHistoryContextSummary.mediumTermWindowDays} dagar, data {entry.trainingHistoryContextSummary.dataQuality}
+                    {typeof entry.trainingHistoryContextSummary.typicalWorkoutDurationMinutes === "number"
+                      ? `, typisk längd ${entry.trainingHistoryContextSummary.typicalWorkoutDurationMinutes} min`
+                      : ""}
+                    .
+                  </p>
+                ) : null}
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   <div>
                     <p className="font-semibold text-slate-700">Före</p>
