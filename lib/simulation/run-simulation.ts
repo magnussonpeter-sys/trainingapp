@@ -2,6 +2,21 @@ import { shouldTrainToday } from "@/lib/simulation/adherence";
 import { buildTimeSeries } from "@/lib/simulation/build-time-series";
 import { toPlannerDebugExercise } from "@/lib/simulation/exercise-identity";
 import {
+  addDays,
+  adjustScenarioWorkoutDuration,
+  applyScenarioProfileTweaks,
+  buildPlannedWorkoutDaySet,
+  buildScenarioNotes,
+  getWeekdayIndexForDate,
+  getWeekdayLabel,
+  normalizeSimulationPlannerMode,
+  normalizeSimulationScenario,
+  shouldAddSpontaneousWorkout,
+  shouldForceMissPlannedWorkout,
+  formatPlannedWorkoutDayLabels,
+  normalizePlannedWorkoutDayIndices,
+} from "@/lib/simulation/scenario-helpers";
+import {
   buildExerciseAggregates,
   evaluateSimulation,
 } from "@/lib/simulation/evaluate-simulation";
@@ -47,12 +62,6 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
   lowReadinessThreshold: 38,
 };
 
-function addDays(date: string, days: number) {
-  const value = new Date(`${date}T00:00:00`);
-  value.setDate(value.getDate() + days);
-  return value.toISOString().slice(0, 10);
-}
-
 function getRecentExerciseDebug(
   snapshots: SimulationDailySnapshot[],
 ): SimulationPlannerDebugExercise[] {
@@ -83,28 +92,15 @@ function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
     totalDays,
     randomSeed: Math.max(1, Math.round(config?.randomSeed ?? DEFAULT_SIMULATION_CONFIG.randomSeed)),
     startDate: config?.startDate?.trim() || DEFAULT_SIMULATION_CONFIG.startDate,
+    plannerMode: normalizeSimulationPlannerMode(config?.plannerMode),
+    scenario: normalizeSimulationScenario(config?.scenario),
     minRestDayProbability: Math.min(Math.max(config?.minRestDayProbability ?? 0.08, 0), 0.6),
     maxFatigue: Math.max(60, config?.maxFatigue ?? 100),
     maxSoreness: Math.max(60, config?.maxSoreness ?? 100),
+    plannedWorkoutDayIndices: normalizePlannedWorkoutDayIndices(
+      config?.plannedWorkoutDayIndices,
+    ),
   };
-}
-
-function getPlannedWorkoutDays(profile: SimulationUserProfile, config: SimulationConfig) {
-  if (config.plannedWorkoutDayIndices?.length) {
-    return new Set(config.plannedWorkoutDayIndices.map((day) => day % 7));
-  }
-
-  const templates: Record<number, number[]> = {
-    1: [1],
-    2: [1, 4],
-    3: [1, 3, 5],
-    4: [1, 2, 4, 6],
-    5: [1, 2, 3, 5, 6],
-    6: [0, 1, 2, 3, 5, 6],
-    7: [0, 1, 2, 3, 4, 5, 6],
-  };
-
-  return new Set(templates[Math.min(Math.max(profile.preferredWorkoutDaysPerWeek, 1), 7)]);
 }
 
 function buildDayPlan(params: {
@@ -115,12 +111,14 @@ function buildDayPlan(params: {
 }) {
   const { config, dayIndex, plannedWeekDays, profile } = params;
   const date = addDays(config.startDate, dayIndex);
-  const weekday = new Date(`${date}T00:00:00`).getDay();
+  const weekdayIndex = getWeekdayIndexForDate(date);
 
   return {
     dayIndex,
     date,
-    isPlannedTrainingDay: plannedWeekDays.has(weekday),
+    weekdayIndex,
+    weekday: getWeekdayLabel(weekdayIndex),
+    isPlannedTrainingDay: plannedWeekDays.has(weekdayIndex),
     targetDurationMin: profile.preferredSessionDurationMin,
   } satisfies SimulationDayPlan;
 }
@@ -131,12 +129,25 @@ export function runSimulation(params?: {
   profilePreset?: string;
 }): SimulationReport {
   const config = normalizeConfig(params?.config);
-  const profile = params?.profile ?? getSimulationProfilePreset(params?.profilePreset);
+  const profileSeed = params?.profile ?? getSimulationProfilePreset(params?.profilePreset);
+  const scenarioProfile = applyScenarioProfileTweaks({
+    profile: profileSeed,
+    scenario: config.scenario ?? "normal",
+  });
+  const profile = scenarioProfile.profile;
   const random = createSeededRandom(config.randomSeed);
-  const plannedWeekDays = getPlannedWorkoutDays(profile, config);
+  const plannedWeekDays = buildPlannedWorkoutDaySet({ config, profile });
   const dailySnapshots: SimulationDailySnapshot[] = [];
   const plannerDebug: SimulationPlannerDebugEntry[] = [];
+  const notes = [
+    ...buildScenarioNotes({
+      plannerMode: config.plannerMode ?? "synthetic",
+      scenario: config.scenario ?? "normal",
+    }),
+    ...scenarioProfile.notes,
+  ];
   let state = createInitialSimulationState(profile);
+  let plannedWorkoutOrdinal = 0;
 
   for (let dayIndex = 0; dayIndex < config.totalDays; dayIndex += 1) {
     const dayPlan = buildDayPlan({ config, dayIndex, plannedWeekDays, profile });
@@ -148,14 +159,31 @@ export function runSimulation(params?: {
     let stateAfter = stateBefore;
     let workoutResult;
     let generatedWorkoutSummary: GeneratedWorkoutSummary | undefined;
+    let dayEvent: SimulationDailySnapshot["dayEvent"] = "rest";
 
     if (dayPlan.isPlannedTrainingDay) {
-      const adherence = shouldTrainToday({ config, profile, random, state: stateBefore });
+      const forcedMiss = shouldForceMissPlannedWorkout({
+        scenario: config.scenario ?? "normal",
+        plannedWorkoutOrdinal,
+      });
+      const adherence = forcedMiss
+        ? { train: false, skipReason: "random" as const }
+        : shouldTrainToday({ config, profile, random, state: stateBefore });
+      plannedWorkoutOrdinal += 1;
 
       if (adherence.train) {
         const recentExercises = getRecentExerciseDebug(dailySnapshots);
         workoutResult = simulateWorkout({ dayPlan, profile, random, state: stateBefore });
+        workoutResult = {
+          ...workoutResult,
+          actualDurationMin: adjustScenarioWorkoutDuration({
+            scenario: config.scenario ?? "normal",
+            plannedDurationMin: workoutResult.plannedDurationMin,
+            actualDurationMin: workoutResult.actualDurationMin,
+          }),
+        };
         stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
+        dayEvent = "planned_training";
         generatedWorkoutSummary = {
           workoutId: workoutResult.workoutId,
           workoutName: workoutResult.workoutName,
@@ -174,6 +202,8 @@ export function runSimulation(params?: {
           plannerDebug.push({
             dayIndex,
             date: dayPlan.date,
+            weekday: dayPlan.weekday,
+            isPlannedTrainingDay: dayPlan.isPlannedTrainingDay,
             plannerMode: "synthetic",
             source: "synthetic",
             // Syntetisk modell skapar redan simulatornormaliserade övningar.
@@ -193,7 +223,41 @@ export function runSimulation(params?: {
           skipReason: adherence.skipReason ?? "random",
         });
         stateAfter = applyMissedWorkoutState(stateBefore, profile, config);
+        dayEvent = "missed_planned";
       }
+    } else if (
+      shouldAddSpontaneousWorkout({
+        scenario: config.scenario ?? "normal",
+        dayIndex,
+        date: dayPlan.date,
+        plannedWeekDays,
+      })
+    ) {
+      const spontaneousPlan = {
+        ...dayPlan,
+        targetDurationMin: Math.max(20, Math.round(profile.preferredSessionDurationMin * 0.75)),
+      };
+      workoutResult = simulateWorkout({
+        dayPlan: spontaneousPlan,
+        profile,
+        random,
+        state: stateBefore,
+      });
+      workoutResult = {
+        ...workoutResult,
+        workoutName: "Spontant pass före planerad träningsdag",
+      };
+      stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, profile, config);
+      dayEvent = "spontaneous_training";
+      generatedWorkoutSummary = {
+        workoutId: workoutResult.workoutId,
+        workoutName: workoutResult.workoutName,
+        blockCount: workoutResult.exerciseResults.length > 3 ? 2 : 1,
+        exerciseCount: workoutResult.exerciseResults.length,
+        estimatedVolumeScore: workoutResult.estimatedLoadScore,
+        plannerSource: "synthetic",
+        plannerNote: "Scenario lade in ett spontant pass på vilodag.",
+      };
     } else {
       stateAfter = applyRestDayRecovery(stateBefore, profile, config);
     }
@@ -220,6 +284,7 @@ export function runSimulation(params?: {
     dailySnapshots.push({
       dayIndex,
       date: dayPlan.date,
+      dayEvent,
       stateBefore,
       plannedTraining: dayPlan,
       generatedWorkoutSummary,
@@ -237,6 +302,9 @@ export function runSimulation(params?: {
   return {
     config,
     profile,
+    plannedWorkoutDayIndices: Array.from(plannedWeekDays).sort((left, right) => left - right),
+    plannedWorkoutDayLabels: formatPlannedWorkoutDayLabels(Array.from(plannedWeekDays)),
+    notes,
     dailySnapshots,
     timeSeries,
     exerciseAggregates,

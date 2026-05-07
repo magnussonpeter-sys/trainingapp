@@ -1,6 +1,11 @@
 "use client";
 
-import type { SimulationGoal, SimulationReport } from "@/lib/simulation/types";
+import type {
+  SimulationGoal,
+  SimulationPlannerMode,
+  SimulationReport,
+  SimulationScenario,
+} from "@/lib/simulation/types";
 
 export type SimulationGymOption = {
   id: string;
@@ -22,18 +27,24 @@ type SimulationControlsProps = {
   goal: SimulationGoal;
   gymOptions: SimulationGymOption[];
   loading: boolean;
+  onPlannedWorkoutDayIndicesChange: (indices: number[]) => void;
   onDaysChange: (days: number) => void;
   onGoalChange: (goal: SimulationGoal) => void;
   onGymChange: (gymId: string) => void;
-  onPlannerModeChange: (mode: "synthetic" | "hybrid_ai") => void;
+  onPlannerModeChange: (mode: SimulationPlannerMode) => void;
   onPresetChange: (preset: string) => void;
   onRun: () => void;
-  plannerMode: "synthetic" | "hybrid_ai";
+  onScenarioChange: (scenario: SimulationScenario) => void;
+  onStartDateChange: (startDate: string) => void;
+  plannerMode: SimulationPlannerMode;
+  plannedWorkoutDayIndices: number[];
   preset: string;
   report: SimulationReport | null;
+  scenario: SimulationScenario;
   selectedGymId: string;
   seed: number;
   onSeedChange: (seed: number) => void;
+  startDate: string;
 };
 
 const PRESETS = [
@@ -41,6 +52,26 @@ const PRESETS = [
   ["intermediate_strength", "Intermediate strength"],
   ["busy_inconsistent", "Busy inconsistent"],
   ["low_recovery_stressed", "Low recovery stressed"],
+];
+
+const SCENARIOS: Array<[SimulationScenario, string]> = [
+  ["normal", "Normal vecka"],
+  ["missed_workouts", "Missade pass"],
+  ["short_sessions", "Korta pass"],
+  ["spontaneous_lower_before_planned_lower", "Spontant pass före planerad dag"],
+  ["high_fatigue", "Hög trötthet"],
+  ["low_adherence", "Låg följsamhet"],
+  ["priority_upper_body", "Prioritet överkropp"],
+];
+
+const WEEKDAY_OPTIONS = [
+  { index: 1, shortLabel: "Mån" },
+  { index: 2, shortLabel: "Tis" },
+  { index: 3, shortLabel: "Ons" },
+  { index: 4, shortLabel: "Tor" },
+  { index: 5, shortLabel: "Fre" },
+  { index: 6, shortLabel: "Lör" },
+  { index: 0, shortLabel: "Sön" },
 ];
 
 export default function SimulationControls(props: SimulationControlsProps) {
@@ -53,7 +84,7 @@ export default function SimulationControls(props: SimulationControlsProps) {
         Modelltest över tid
       </h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        Kör en deterministisk virtuell användare dag för dag. Första versionen använder en intern syntetisk träningsmodell.
+        Kör en deterministisk virtuell användare dag för dag. Startdatum gör veckodagstester reproducerbara.
       </p>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -88,6 +119,19 @@ export default function SimulationControls(props: SimulationControlsProps) {
           </select>
           <span className="text-xs font-normal text-slate-500">
             Valet påverkar den syntetiska övningspoolen i simuleringen.
+          </span>
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Startdatum
+          <input
+            type="date"
+            value={props.startDate}
+            onChange={(event) => props.onStartDateChange(event.target.value)}
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          />
+          <span className="text-xs font-normal text-slate-500">
+            Välj startdatum för att kunna testa samma veckodagsupplägg igen.
           </span>
         </label>
 
@@ -130,21 +174,73 @@ export default function SimulationControls(props: SimulationControlsProps) {
         </label>
 
         <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Scenario
+          <select
+            value={props.scenario}
+            onChange={(event) =>
+              props.onScenarioChange(event.target.value as SimulationScenario)
+            }
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          >
+            {SCENARIOS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
           Planeringsläge
           <select
             value={props.plannerMode}
             onChange={(event) =>
-              props.onPlannerModeChange(event.target.value as "synthetic" | "hybrid_ai")
+              props.onPlannerModeChange(event.target.value as SimulationPlannerMode)
             }
             className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
           >
             <option value="synthetic">Syntetisk snabbmodell</option>
             <option value="hybrid_ai">Hybrid: AI föreslår pass</option>
+            <option value="real_app_planner">Förberett: riktig planner</option>
           </select>
           <span className="text-xs font-normal text-slate-500">
             Hybrid använder OpenAI på planerade passdagar och kan därför ta längre tid.
           </span>
         </label>
+      </div>
+
+      <div className="mt-5">
+        <p className="text-sm font-medium text-slate-700">Planerade träningsdagar</p>
+        <p className="mt-1 text-xs text-slate-500">
+          Välj veckodagar för att testa hur passen sprids över datum.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {WEEKDAY_OPTIONS.map((day) => {
+            const selected = props.plannedWorkoutDayIndices.includes(day.index);
+
+            return (
+              <button
+                key={day.index}
+                type="button"
+                onClick={() => {
+                  const next = selected
+                    ? props.plannedWorkoutDayIndices.filter((value) => value !== day.index)
+                    : [...props.plannedWorkoutDayIndices, day.index].sort(
+                        (left, right) => left - right,
+                      );
+                  props.onPlannedWorkoutDayIndicesChange(next);
+                }}
+                className={`min-h-11 rounded-2xl border px-4 text-sm font-medium transition ${
+                  selected
+                    ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                    : "border-slate-200 bg-slate-50 text-slate-700"
+                }`}
+              >
+                {day.shortLabel}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <button
@@ -159,8 +255,13 @@ export default function SimulationControls(props: SimulationControlsProps) {
       {props.report ? (
         <p className="mt-3 text-xs text-slate-500">
           Senaste körning: {props.report.config.totalDays} dagar, seed{" "}
-          {props.report.config.randomSeed},{" "}
-          {props.report.config.plannerMode === "hybrid_ai" ? "hybrid AI" : "syntetisk modell"}.
+          {props.report.config.randomSeed}, start {props.report.config.startDate},{" "}
+          {props.report.config.plannerMode === "hybrid_ai"
+            ? "hybrid AI"
+            : props.report.config.plannerMode === "real_app_planner"
+              ? "real planner-fallback"
+              : "syntetisk modell"}
+          .
         </p>
       ) : null}
     </section>

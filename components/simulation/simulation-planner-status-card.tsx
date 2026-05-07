@@ -23,6 +23,8 @@ export default function SimulationPlannerStatusCard({
   const modeLabel =
     report.config.plannerMode === "hybrid_ai"
       ? "Hybrid: AI föreslår pass"
+      : report.config.plannerMode === "real_app_planner"
+        ? "Förberett: riktig planner (fallback)"
       : "Syntetisk snabbmodell";
 
   return (
@@ -48,10 +50,15 @@ export default function SimulationPlannerStatusCard({
         </div>
       </div>
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        Planerade träningspass i körningen: {stats.total}.{" "}
+        Planerade träningspass i körningen: {stats.total}. Planerade veckodagar:{" "}
+        {report.plannedWorkoutDayLabels.join(", ").toLowerCase() || "inga"}.{" "}
         {stats.lastNote ? `Senaste status: ${stats.lastNote}` : null}
       </p>
+      {report.notes?.length ? (
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          {report.notes.join(" ")}
+        </p>
+      ) : null}
     </section>
   );
 }
-

@@ -13,7 +13,8 @@ export async function POST(request: Request) {
     };
 
     const report =
-      body.config?.plannerMode === "hybrid_ai"
+      body.config?.plannerMode === "hybrid_ai" ||
+      body.config?.plannerMode === "real_app_planner"
         ? await runHybridSimulation({
             profilePreset: body.profilePreset,
             profile: body.profile,

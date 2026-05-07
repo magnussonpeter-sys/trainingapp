@@ -42,10 +42,13 @@ export default function SimulationDebugTable({
         <table className="min-w-[760px] w-full text-left text-sm">
           <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
+              <th className="px-3 py-3">Dag</th>
               <th className="px-3 py-3">Datum</th>
+              <th className="px-3 py-3">Veckodag</th>
               <th className="px-3 py-3">Readiness före</th>
               <th className="px-3 py-3">Fatigue före</th>
               <th className="px-3 py-3">Plan</th>
+              <th className="px-3 py-3">Utfall</th>
               <th className="px-3 py-3">Källa</th>
               <th className="px-3 py-3">Resultat</th>
               <th className="px-3 py-3">Load</th>
@@ -56,10 +59,23 @@ export default function SimulationDebugTable({
           <tbody className="divide-y divide-slate-100">
             {snapshots.map((snapshot) => (
               <tr key={snapshot.dayIndex}>
+                <td className="px-3 py-3 text-slate-600">{snapshot.dayIndex + 1}</td>
                 <td className="px-3 py-3 text-slate-800">{snapshot.date}</td>
+                <td className="px-3 py-3 text-slate-700">{snapshot.plannedTraining.weekday}</td>
                 <td className="px-3 py-3">{format(snapshot.stateBefore.readiness)}</td>
                 <td className="px-3 py-3">{format(snapshot.stateBefore.fatigue)}</td>
-                <td className="px-3 py-3">{snapshot.plannedTraining.isPlannedTrainingDay ? "Träning" : "Vila"}</td>
+                <td className="px-3 py-3">
+                  {snapshot.plannedTraining.isPlannedTrainingDay ? "Planerad träning" : "Vilodag"}
+                </td>
+                <td className="px-3 py-3 text-slate-700">
+                  {snapshot.dayEvent === "planned_training"
+                    ? "Planerat pass"
+                    : snapshot.dayEvent === "missed_planned"
+                      ? "Missat pass"
+                      : snapshot.dayEvent === "spontaneous_training"
+                        ? "Spontant pass"
+                        : "Vila"}
+                </td>
                 <td
                   className="px-3 py-3 text-xs font-semibold text-slate-600"
                   title={snapshot.generatedWorkoutSummary?.plannerNote}
@@ -93,10 +109,15 @@ export default function SimulationDebugTable({
             {plannerDebug.map((entry) => (
               <div key={`${entry.dayIndex}-${entry.source}`} className="rounded-2xl bg-white p-3 text-xs text-slate-600">
                 <div className="flex flex-wrap items-center justify-between gap-2 font-semibold text-slate-900">
-                  <span>Dag {entry.dayIndex + 1} · {entry.date} · {plannerLabel(entry.source)}</span>
+                  <span>
+                    Dag {entry.dayIndex + 1} · {entry.date} · {entry.weekday} · {plannerLabel(entry.source)}
+                  </span>
                   <span>{entry.repeatedAggregationKeys.length} nyligen upprepade</span>
                 </div>
                 <p className="mt-2 text-slate-500">{entry.note}</p>
+                <p className="mt-1 text-slate-500">
+                  {entry.isPlannedTrainingDay ? "Planerad träningsdag" : "Ej planerad träningsdag"}
+                </p>
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   <div>
                     <p className="font-semibold text-slate-700">Före</p>

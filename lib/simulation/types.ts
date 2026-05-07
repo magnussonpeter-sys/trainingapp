@@ -4,6 +4,20 @@ export type SimulationGoal =
   | "body_composition"
   | "health";
 
+export type SimulationPlannerMode =
+  | "synthetic"
+  | "hybrid_ai"
+  | "real_app_planner";
+
+export type SimulationScenario =
+  | "normal"
+  | "missed_workouts"
+  | "short_sessions"
+  | "spontaneous_lower_before_planned_lower"
+  | "high_fatigue"
+  | "low_adherence"
+  | "priority_upper_body";
+
 export type SimulationExperienceLevel =
   | "beginner"
   | "intermediate"
@@ -107,6 +121,8 @@ export type SimulationUserState = {
 export type SimulationDayPlan = {
   dayIndex: number;
   date: string;
+  weekdayIndex: number;
+  weekday: string;
   isPlannedTrainingDay: boolean;
   targetDurationMin: number;
 };
@@ -114,6 +130,7 @@ export type SimulationDayPlan = {
 export type SimulationDailySnapshot = {
   dayIndex: number;
   date: string;
+  dayEvent: "planned_training" | "missed_planned" | "spontaneous_training" | "rest";
   stateBefore: SimulationUserState;
   plannedTraining: SimulationDayPlan;
   generatedWorkoutSummary?: {
@@ -139,7 +156,9 @@ export type SimulationPlannerDebugExercise = {
 export type SimulationPlannerDebugEntry = {
   dayIndex: number;
   date: string;
-  plannerMode: "synthetic" | "hybrid_ai";
+  weekday: string;
+  isPlannedTrainingDay: boolean;
+  plannerMode: SimulationPlannerMode;
   source: "synthetic" | "ai" | "ai_fallback";
   beforeNormalization: SimulationPlannerDebugExercise[];
   afterNormalization: SimulationPlannerDebugExercise[];
@@ -151,7 +170,8 @@ export type SimulationConfig = {
   totalDays: number;
   startDate: string;
   randomSeed: number;
-  plannerMode?: "synthetic" | "hybrid_ai";
+  plannerMode?: SimulationPlannerMode;
+  scenario?: SimulationScenario;
   enablePlannerDebug?: boolean;
   enableMissedWorkouts: boolean;
   enableFatigueModel: boolean;
@@ -213,6 +233,9 @@ export type SimulationEvaluation = {
 export type SimulationReport = {
   config: SimulationConfig;
   profile: SimulationUserProfile;
+  plannedWorkoutDayIndices: number[];
+  plannedWorkoutDayLabels: string[];
+  notes?: string[];
   dailySnapshots: SimulationDailySnapshot[];
   timeSeries: SimulationSeriesPoint[];
   exerciseAggregates: SimulationExerciseAggregate[];

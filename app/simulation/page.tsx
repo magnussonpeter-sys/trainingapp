@@ -15,7 +15,12 @@ import type { SimulationGymOption } from "@/components/simulation/simulation-con
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
 import { getSimulationProfilePreset } from "@/lib/simulation/profile-presets";
 import { runSimulation } from "@/lib/simulation/run-simulation";
-import type { SimulationGoal, SimulationReport } from "@/lib/simulation/types";
+import type {
+  SimulationGoal,
+  SimulationPlannerMode,
+  SimulationReport,
+  SimulationScenario,
+} from "@/lib/simulation/types";
 
 type ApiGym = {
   id: number | string;
@@ -42,13 +47,25 @@ export default function SimulationPage() {
   const [preset, setPreset] = useState("beginner_hypertrophy");
   const [days, setDays] = useState(56);
   const [seed, setSeed] = useState(42);
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [scenario, setScenario] = useState<SimulationScenario>("normal");
   const [goal, setGoal] = useState<SimulationGoal>("hypertrophy");
   const [gymOptions, setGymOptions] = useState<SimulationGymOption[]>([]);
   const [selectedGymId, setSelectedGymId] = useState("");
-  const [plannerMode, setPlannerMode] = useState<"synthetic" | "hybrid_ai">("synthetic");
+  const [plannerMode, setPlannerMode] = useState<SimulationPlannerMode>("synthetic");
+  const [plannedWorkoutDayIndices, setPlannedWorkoutDayIndices] = useState<number[]>([1, 3, 5]);
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<SimulationReport | null>(() =>
-    runSimulation({ profilePreset: "beginner_hypertrophy", config: { totalDays: 56, randomSeed: 42 } }),
+    runSimulation({
+      profilePreset: "beginner_hypertrophy",
+      config: {
+        totalDays: 56,
+        randomSeed: 42,
+        startDate: new Date().toISOString().slice(0, 10),
+        scenario: "normal",
+        plannedWorkoutDayIndices: [1, 3, 5],
+      },
+    }),
   );
 
   useEffect(() => {
@@ -124,7 +141,9 @@ export default function SimulationPage() {
             randomSeed: seed,
             plannerMode,
             enablePlannerDebug: true,
-            startDate: new Date().toISOString().slice(0, 10),
+            startDate,
+            scenario,
+            plannedWorkoutDayIndices,
           },
         }),
       });
@@ -147,18 +166,24 @@ export default function SimulationPage() {
           goal={goal}
           gymOptions={gymOptions}
           loading={loading}
+          onPlannedWorkoutDayIndicesChange={setPlannedWorkoutDayIndices}
           onDaysChange={setDays}
           onGoalChange={setGoal}
           onGymChange={setSelectedGymId}
           onPlannerModeChange={setPlannerMode}
           onPresetChange={setPreset}
           onRun={runRemoteSimulation}
+          onScenarioChange={setScenario}
+          onStartDateChange={setStartDate}
           plannerMode={plannerMode}
+          plannedWorkoutDayIndices={plannedWorkoutDayIndices}
           preset={preset}
           report={report}
+          scenario={scenario}
           selectedGymId={selectedGymId}
           seed={seed}
           onSeedChange={setSeed}
+          startDate={startDate}
         />
 
         {report ? (
