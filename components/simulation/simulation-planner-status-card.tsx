@@ -71,8 +71,8 @@ export default function SimulationPlannerStatusCard({
           </p>
           <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
             <p>
-              <span className="font-medium text-slate-900">Preset:</span>{" "}
-              {effectiveProfile.presetProfileId ?? report.profile.id}
+              <span className="font-medium text-slate-900">Profilkälla:</span>{" "}
+              {effectiveProfile.presetProfileId ? effectiveProfile.presetProfileId : "Manuella val"}
             </p>
             <p>
               <span className="font-medium text-slate-900">Mål:</span>{" "}

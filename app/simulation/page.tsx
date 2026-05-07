@@ -14,7 +14,6 @@ import SimulationSummaryCards from "@/components/simulation/simulation-summary-c
 import type { SimulationGymOption } from "@/components/simulation/simulation-controls";
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
 import { buildSimulationAnalysisExport } from "@/lib/simulation/build-analysis-export";
-import { getSimulationProfilePreset } from "@/lib/simulation/profile-presets";
 import { runSimulation } from "@/lib/simulation/run-simulation";
 import type {
   SimulationGoal,
@@ -89,7 +88,6 @@ function buildInitialSimulationReport(): SimulationReport | null {
 }
 
 export default function SimulationPage() {
-  const [preset, setPreset] = useState("beginner_hypertrophy");
   const [days, setDays] = useState(14);
   const [seed, setSeed] = useState(42);
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
@@ -162,26 +160,6 @@ export default function SimulationPage() {
     };
   }, []);
 
-  useEffect(() => {
-    const profile = getSimulationProfilePreset(preset);
-    setGoal(profile.goal);
-    // Preset fyller samma typ av profilfält som riktiga användarinställningar använder.
-    setSex(profile.sex);
-    setAge(profile.age);
-    setHeightCm(profile.heightCm);
-    setWeightKg(profile.weightKg);
-    setExperienceLevel(profile.experienceLevel);
-    setPreferredSessionDurationMin(profile.preferredSessionDurationMin);
-    setSportFocus(profile.sportFocus ?? "none");
-    setPriorityMuscles(
-      [
-        profile.primaryPriorityMuscle ?? null,
-        profile.secondaryPriorityMuscle ?? null,
-        profile.tertiaryPriorityMuscle ?? null,
-      ].filter((value): value is SimulationPriorityMuscle => value !== null),
-    );
-  }, [preset]);
-
   function handlePlannerModeChange(mode: SimulationPlannerMode) {
     setPlannerMode(mode);
 
@@ -199,7 +177,8 @@ export default function SimulationPage() {
       const normalizedExperienceLevel: SimulationExperienceLevel =
         experienceLevel === "novice" ? "beginner" : experienceLevel;
       const profile = {
-        ...getSimulationProfilePreset(preset),
+        id: "manual_simulation_profile",
+        name: "Manuell simulationsprofil",
         goal,
         sex,
         age,
@@ -212,6 +191,17 @@ export default function SimulationPage() {
         tertiaryPriorityMuscle: priorityMuscles[2] ?? null,
         preferredSessionDurationMin,
         preferredWorkoutDaysPerWeek: Math.max(1, plannedWorkoutDayIndices.length),
+        adherenceProfile: "medium" as const,
+        recoveryProfile: "average" as const,
+        energyTrend: "stable" as const,
+        motivationBase: 65,
+        recoveryCapacity: 62,
+        lifeStressBase: 40,
+        strengthBase: normalizedExperienceLevel === "intermediate" ? 64 : normalizedExperienceLevel === "advanced" ? 74 : 50,
+        hypertrophyResponsiveness: goal === "hypertrophy" ? 70 : 58,
+        skillLearningRate: normalizedExperienceLevel === "beginner" ? 76 : normalizedExperienceLevel === "intermediate" ? 64 : 52,
+        availableGymId: null,
+        availableEquipmentIds: ["bodyweight", "bench", "dumbbells", "cable_machine", "machines"],
       };
       const selectedGym = gymOptions.find((gym) => gym.id === selectedGymId);
       const simulationProfile = selectedGym
@@ -282,7 +272,6 @@ export default function SimulationPage() {
           onHeightCmChange={setHeightCm}
           onMaxAiGeneratedWorkoutsChange={setMaxAiGeneratedWorkouts}
           onPlannerModeChange={handlePlannerModeChange}
-          onPresetChange={setPreset}
           onPriorityMusclesChange={setPriorityMuscles}
           onRun={runRemoteSimulation}
           onScenarioChange={setScenario}
@@ -294,7 +283,6 @@ export default function SimulationPage() {
           maxAiGeneratedWorkouts={maxAiGeneratedWorkouts}
           plannerMode={plannerMode}
           plannedWorkoutDayIndices={plannedWorkoutDayIndices}
-          preset={preset}
           preferredSessionDurationMin={preferredSessionDurationMin}
           priorityMuscles={priorityMuscles}
           report={report}

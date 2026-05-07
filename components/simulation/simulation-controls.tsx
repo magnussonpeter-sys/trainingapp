@@ -42,7 +42,6 @@ type SimulationControlsProps = {
   onHeightCmChange: (heightCm: number) => void;
   onMaxAiGeneratedWorkoutsChange: (value: number) => void;
   onPlannerModeChange: (mode: SimulationPlannerMode) => void;
-  onPresetChange: (preset: string) => void;
   onPriorityMusclesChange: (muscles: SimulationPriorityMuscle[]) => void;
   onPreferredSessionDurationMinChange: (minutes: number) => void;
   onRun: () => void;
@@ -53,7 +52,6 @@ type SimulationControlsProps = {
   onWeightKgChange: (weightKg: number) => void;
   plannerMode: SimulationPlannerMode;
   plannedWorkoutDayIndices: number[];
-  preset: string;
   preferredSessionDurationMin: number;
   priorityMuscles: SimulationPriorityMuscle[];
   report: SimulationReport | null;
@@ -67,13 +65,6 @@ type SimulationControlsProps = {
   maxAiGeneratedWorkouts: number;
   weightKg: number;
 };
-
-const PRESETS = [
-  ["beginner_hypertrophy", "Beginner hypertrophy"],
-  ["intermediate_strength", "Intermediate strength"],
-  ["busy_inconsistent", "Busy inconsistent"],
-  ["low_recovery_stressed", "Low recovery stressed"],
-];
 
 const SCENARIOS: Array<[SimulationScenario, string]> = [
   ["normal", "Normal vecka"],
@@ -145,21 +136,6 @@ export default function SimulationControls(props: SimulationControlsProps) {
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="grid gap-2 text-sm font-medium text-slate-700">
-          Profil
-          <select
-            value={props.preset}
-            onChange={(event) => props.onPresetChange(event.target.value)}
-            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
-          >
-            {PRESETS.map(([id, label]) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="grid gap-2 text-sm font-medium text-slate-700">
           Gym
           <select
             value={props.selectedGymId}
@@ -219,7 +195,7 @@ export default function SimulationControls(props: SimulationControlsProps) {
             <option value="other">Annat / vill ej ange</option>
           </select>
           <span className="text-xs font-normal text-slate-500">
-            Preseten fyller startvärden, men du kan skriva över dem här för att efterlikna en riktig användare bättre.
+            Samma typ av profilfält som i inställningar. Simulationen använder de manuella värdena du anger här.
           </span>
         </label>
 
