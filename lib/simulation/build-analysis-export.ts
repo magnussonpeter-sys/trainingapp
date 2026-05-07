@@ -136,6 +136,24 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       `- Före normalisering: ${debug?.beforeNormalization.map((exercise) => exercise.exerciseName).join(", ") || "saknas"}`,
       `- Efter normalisering: ${debug?.afterNormalization.map((exercise) => exercise.exerciseName).join(", ") || "saknas"}`,
       validationDiagnostics
+        ? `- AI huvudövningar: mål ${validationDiagnostics.targetMainExerciseCount ?? "-"}, AI föreslog ${validationDiagnostics.actualMainExerciseCountFromAi ?? "-"}, finalt ${validationDiagnostics.finalMainExerciseCount ?? "-"}, bonus ${validationDiagnostics.optionalBonusExerciseCount ?? 0}`
+        : "- AI huvudövningar: saknas",
+      validationDiagnostics?.trimmedBecauseTooManyExercises
+        ? `- AI-trimning: ja (${validationDiagnostics.trimmedExercises?.map((entry) => `${entry.name} [${entry.role ?? "okänd roll"}] -> ${entry.trimReason}`).join("; ") || "okänd trimning"})`
+        : "- AI-trimning: nej",
+      validationDiagnostics?.keptExerciseRoles?.length
+        ? `- Behållna AI-roller: ${validationDiagnostics.keptExerciseRoles.join(", ")}`
+        : "- Behållna AI-roller: saknas",
+      validationDiagnostics?.lostExerciseRoles?.length
+        ? `- Tappade AI-roller vid trimning: ${validationDiagnostics.lostExerciseRoles.join(", ")}`
+        : "- Tappade AI-roller vid trimning: inga",
+      typeof validationDiagnostics?.fallbackAddedDespiteEnoughAiExercises === "boolean"
+        ? `- Fallback trots tillräckligt många AI-övningar: ${validationDiagnostics.fallbackAddedDespiteEnoughAiExercises ? "ja" : "nej"}`
+        : "- Fallback trots tillräckligt många AI-övningar: okänt",
+      validationDiagnostics?.bonusExercisesRejectedReason?.length
+        ? `- Bonusövningar utanför huvudpasset: ${validationDiagnostics.bonusExercisesRejectedReason.join("; ")}`
+        : "- Bonusövningar utanför huvudpasset: inga eller saknas",
+      validationDiagnostics
         ? `- Focus integrity: ${validationDiagnostics.focusIntegrityScore}/100 (loss ${validationDiagnostics.normalizationLossScore})`
         : "- Focus integrity: saknas",
       validationDiagnostics
@@ -198,6 +216,9 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       validationDiagnostics?.durationTrimReason
         ? `- Duration trim: ${validationDiagnostics.durationTrimReason}`
         : "- Duration trim: ingen särskild trimning",
+      validationDiagnostics?.durationTrimWarnings?.length
+        ? `- Duration trim-varningar: ${validationDiagnostics.durationTrimWarnings.join("; ")}`
+        : "- Duration trim-varningar: inga",
       validationDiagnostics?.roleTrimReason
         ? `- Rolltrimning: ${validationDiagnostics.roleTrimReason}`
         : "- Rolltrimning: ingen särskild rollförlust",

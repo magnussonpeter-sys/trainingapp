@@ -300,12 +300,34 @@ export type SimulationPlannerDebugEntry = {
     priorityMuscleResolutionStatus: Array<{
       muscle: string;
       status:
-        | "addressed"
+        | "addressed_primary"
+        | "addressed_secondary"
         | "partially_addressed"
         | "deferred_due_to_focus"
         | "deferred_due_to_recovery"
-        | "deferred_due_to_duration"
-        | "dropped_by_normalization";
+        | "dropped_by_catalog_resolution"
+        | "dropped_by_focus_repair"
+        | "dropped_by_duration_trim"
+        | "not_relevant_for_today";
+      reason: string;
+    }>;
+    qualityPenaltyBreakdown: Array<{
+      code: string;
+      amount: number;
+      reason: string;
+    }>;
+    droppedHighValueExercises: string[];
+    roleMismatchReplacements: string[];
+    genericFallbacksAdded: string[];
+    finalQualityWarnings: string[];
+    recoveryLimitedSeverityByMuscle: Array<{
+      muscle: string;
+      severity: "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery";
+    }>;
+    blockedByRecoveryHard: string[];
+    allowedAsLightRecovery: string[];
+    rejectedDueToRecoveryReason: Array<{
+      exerciseName: string;
       reason: string;
     }>;
     primaryLiftCount: number;
@@ -385,6 +407,25 @@ export type SimulationPlannerDebugEntry = {
       availableEquipment: string[];
       sportFocus?: string | null;
     };
+    targetMainExerciseCount?: number;
+    actualMainExerciseCountFromAi?: number;
+    finalMainExerciseCount?: number;
+    optionalBonusExerciseCount?: number;
+    bonusExercisesUsed?: number;
+    bonusExercisesRejectedReason?: string[];
+    trimmedBecauseTooManyExercises?: boolean;
+    trimmedExercises?: Array<{
+      name: string;
+      role: string | null;
+      priorityRank: number;
+      canDropIfShort: boolean;
+      reason: string | null;
+      trimReason: string;
+    }>;
+    keptExerciseRoles?: string[];
+    lostExerciseRoles?: string[];
+    fallbackAddedDespiteEnoughAiExercises?: boolean;
+    durationTrimWarnings?: string[];
   };
 };
 

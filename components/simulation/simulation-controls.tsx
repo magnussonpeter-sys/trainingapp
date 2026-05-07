@@ -469,7 +469,6 @@ export default function SimulationControls(props: SimulationControlsProps) {
             Max AI-genererade pass
             <input
               min={1}
-              max={10}
               type="number"
               value={props.maxAiGeneratedWorkouts}
               onChange={(event) =>

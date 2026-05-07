@@ -22,7 +22,11 @@ type AiGeneratedExerciseCandidate = {
   rest?: number;
   movementPattern?: string;
   intensityTag?: "primary" | "secondary" | "accessory" | "finisher";
+  role?: string;
+  priorityRank?: number;
+  canDropIfShort?: boolean;
   rationale?: string;
+  reason?: string;
 };
 
 type AiGeneratedBlockCandidate = {
@@ -49,6 +53,7 @@ export type AiGeneratedWorkoutCandidate = {
   superset_reason?: string;
   blocks?: AiGeneratedBlockCandidate[];
   exercises?: AiGeneratedExerciseCandidate[];
+  optionalBonusExercises?: AiGeneratedExerciseCandidate[];
 };
 
 export type ValidateGeneratedWorkoutResult = {
@@ -62,6 +67,25 @@ export type ValidateGeneratedWorkoutResult = {
     targetExerciseCount: number;
     requestedRestAdjustments: number;
     qualityScore: number;
+    targetMainExerciseCount: number;
+    actualMainExerciseCountFromAi: number;
+    finalMainExerciseCount: number;
+    optionalBonusExerciseCount: number;
+    bonusExercisesUsed: number;
+    bonusExercisesRejectedReason: string[];
+    trimmedBecauseTooManyExercises: boolean;
+    trimmedExercises: Array<{
+      name: string;
+      role: string | null;
+      priorityRank: number;
+      canDropIfShort: boolean;
+      reason: string | null;
+      trimReason: string;
+    }>;
+    keptExerciseRoles: string[];
+    lostExerciseRoles: string[];
+    fallbackAddedDespiteEnoughAiExercises: boolean;
+    durationTrimWarnings: string[];
     warnings: string[];
     validation: ReturnType<typeof validateAndNormalizeAiExercises>["debug"];
   };
@@ -122,28 +146,99 @@ function clampInteger(value: number, min: number, max: number) {
   return Math.min(Math.max(Math.round(value), min), max);
 }
 
-function getTargetExerciseCount(durationMinutes: number) {
-  if (durationMinutes <= 20) {
-    return 3;
+function getTargetExerciseCount(
+  durationMinutes: number,
+  goal: GoalType,
+  focus: GeneratedWorkoutValidationFocusContext["plannedFocus"] | null | undefined,
+) {
+  if (focus === "recovery_strength") {
+    return durationMinutes <= 15 ? 3 : 4;
   }
 
-  if (durationMinutes <= 35) {
+  if (goal === "strength") {
+    if (durationMinutes <= 15) return 2;
+    if (durationMinutes <= 20) return 3;
+    if (durationMinutes <= 30) return 4;
+    if (durationMinutes <= 40) return 4;
+    if (durationMinutes <= 50) return 5;
+    return 6;
+  }
+
+  if (goal === "hypertrophy") {
+    if (durationMinutes <= 20) return 3;
+    if (durationMinutes <= 30) return 4;
+    if (durationMinutes <= 40) return 5;
+    if (durationMinutes <= 50) return 6;
+    return 7;
+  }
+
+  if (goal === "body_composition") {
+    if (durationMinutes <= 20) return 3;
+    if (durationMinutes <= 30) return 4;
+    if (durationMinutes <= 40) return 5;
+    if (durationMinutes <= 50) return 6;
+    return 7;
+  }
+
+  if (durationMinutes <= 20) return 3;
+  if (durationMinutes <= 35) return 4;
+  if (durationMinutes <= 50) return 5;
+  return 6;
+}
+
+function normalizeGoalForTarget(value: GoalType) {
+  return value;
+}
+
+export function getTargetMainExerciseCount(
+  durationMinutes: number,
+  goal: GoalType,
+  focus: GeneratedWorkoutValidationFocusContext["plannedFocus"] | null | undefined,
+) {
+  const normalizedGoal = normalizeGoalForTarget(goal);
+
+  if (durationMinutes <= 15) {
+    return normalizedGoal === "strength" ? 2 : 3;
+  }
+
+  if (durationMinutes <= 20) {
+    return normalizedGoal === "strength" ? 3 : 3;
+  }
+
+  if (durationMinutes <= 30) {
+    if (normalizedGoal === "strength") {
+      return 4;
+    }
     return 4;
   }
 
-  if (durationMinutes <= 50) {
-    return 5;
+  if (durationMinutes <= 40) {
+    return normalizedGoal === "strength" ? 4 : 5;
   }
 
-  return 6;
+  if (durationMinutes <= 50) {
+    return normalizedGoal === "strength" ? 5 : 6;
+  }
+
+  if (focus === "recovery_strength") {
+    return 4;
+  }
+
+  return normalizedGoal === "strength" ? 6 : normalizedGoal === "hypertrophy" ? 7 : 7;
 }
 
 function getEffectiveTargetExerciseCount(params: {
   durationMinutes: number;
+  goal: GoalType;
+  focus: GeneratedWorkoutValidationFocusContext["plannedFocus"] | null | undefined;
   rawBlocks: AiGeneratedBlockCandidate[];
   supersetPreference?: SupersetPreference;
 }) {
-  const defaultTargetExerciseCount = getTargetExerciseCount(params.durationMinutes);
+  const defaultTargetExerciseCount = getTargetExerciseCount(
+    params.durationMinutes,
+    params.goal,
+    params.focus,
+  );
 
   if (params.supersetPreference === "avoid_all" || params.durationMinutes > 20) {
     return defaultTargetExerciseCount;
@@ -222,6 +317,294 @@ function getRawBlocks(candidate: AiGeneratedWorkoutCandidate) {
   }
 
   return [];
+}
+
+function getRawBonusExercises(candidate: AiGeneratedWorkoutCandidate) {
+  return Array.isArray(candidate.optionalBonusExercises)
+    ? candidate.optionalBonusExercises
+    : [];
+}
+
+function normalizeRequestedRole(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function getRoleBucket(value: string | null) {
+  if (!value) return "unknown";
+  if (value.includes("push")) return "push";
+  if (value.includes("pull")) return "pull";
+  if (value.includes("triceps")) return "triceps";
+  if (value.includes("biceps")) return "biceps";
+  if (value.includes("shoulder")) return "shoulder";
+  if (value.includes("squat") || value.includes("lunge")) return "lower_base";
+  if (value.includes("hinge")) return "hinge";
+  if (value.includes("core")) return "core";
+  if (value.includes("carry")) return "carry";
+  if (value.includes("calves")) return "calves";
+  return value;
+}
+
+function buildMinimumRoleBuckets(params: {
+  durationMinutes: number;
+  goal: GoalType;
+  focusContext?: GeneratedWorkoutValidationFocusContext | null;
+}) {
+  const focus = params.focusContext?.plannedFocus ?? null;
+  const duration = params.durationMinutes;
+  const surf = params.focusContext?.sportFocus === "surf_sports";
+
+  if (focus === "upper_body") {
+    if (duration <= 20) {
+      return surf ? ["push", "pull", "arm_or_shoulder"] : ["push", "pull", "arm_or_shoulder"];
+    }
+
+    if (duration <= 30) {
+      return surf
+        ? ["push", "pull", "arm_or_shoulder", "core_or_carry"]
+        : ["push", "pull", "arm_or_shoulder"];
+    }
+
+    return ["push", "pull", "secondary_upper", "arm_or_shoulder"];
+  }
+
+  if (focus === "lower_body") {
+    if (duration <= 25) {
+      return ["lower_base", "hinge", "lower_support"];
+    }
+
+    return ["lower_base", "hinge", "lower_support", "core_or_calves"];
+  }
+
+  if (focus === "full_body") {
+    if (duration <= 30) {
+      return ["lower_base", "push", "pull", surf ? "hinge_or_core" : "hinge_or_core"];
+    }
+    return ["lower_base", "push", "pull", "hinge_or_core"];
+  }
+
+  if (focus === "recovery_strength") {
+    return ["safe_drag", "safe_press_or_glute", "safe_core_or_glute"];
+  }
+
+  return [];
+}
+
+function exerciseMatchesMinimumBucket(
+  exercise: AiGeneratedExerciseCandidate,
+  bucket: string,
+) {
+  const role = normalizeRequestedRole(exercise.role);
+  const pattern = typeof exercise.movementPattern === "string" ? exercise.movementPattern : "";
+
+  if (bucket === "push") {
+    return role?.includes("push") || pattern.includes("push");
+  }
+  if (bucket === "pull") {
+    return role?.includes("pull") || pattern.includes("pull");
+  }
+  if (bucket === "arm_or_shoulder") {
+    return Boolean(
+      role &&
+        (role.includes("biceps") ||
+          role.includes("triceps") ||
+          role.includes("shoulder")),
+    );
+  }
+  if (bucket === "secondary_upper") {
+    return Boolean(
+      role &&
+        (role.includes("push") ||
+          role.includes("pull") ||
+          role.includes("shoulder")),
+    );
+  }
+  if (bucket === "lower_base") {
+    return Boolean(
+      role &&
+        (role.includes("squat") || role.includes("lunge") || role.includes("unilateral_lower")),
+    ) || pattern === "squat" || pattern === "lunge";
+  }
+  if (bucket === "hinge") {
+    return role?.includes("hinge") || pattern === "hinge";
+  }
+  if (bucket === "lower_support") {
+    return Boolean(
+      role &&
+        (role.includes("glute") ||
+          role.includes("posterior") ||
+          role.includes("unilateral_lower") ||
+          role.includes("calves")),
+    ) || pattern === "lunge";
+  }
+  if (bucket === "core_or_calves") {
+    return Boolean(role && (role.includes("core") || role.includes("calves")));
+  }
+  if (bucket === "core_or_carry") {
+    return Boolean(role && (role.includes("core") || role.includes("carry")));
+  }
+  if (bucket === "hinge_or_core") {
+    return Boolean(role && (role.includes("hinge") || role.includes("core")));
+  }
+  if (bucket === "push_or_pull") {
+    return Boolean(role && (role.includes("push") || role.includes("pull")));
+  }
+
+  return false;
+}
+
+function scoreExerciseForTrimming(params: {
+  exercise: AiGeneratedExerciseCandidate;
+  index: number;
+  goal: GoalType;
+  focusContext?: GeneratedWorkoutValidationFocusContext | null;
+  alreadyKept: AiGeneratedExerciseCandidate[];
+}) {
+  const role = normalizeRequestedRole(params.exercise.role);
+  const pattern = typeof params.exercise.movementPattern === "string"
+    ? params.exercise.movementPattern
+    : null;
+  let score = 0;
+
+  score += Math.max(0, 12 - params.index);
+  score += Math.max(0, 12 - ((typeof params.exercise.priorityRank === "number" ? params.exercise.priorityRank : params.index + 1) - 1) * 2);
+
+  if (role?.includes("main_")) score += 12;
+  if (role?.includes("push") || role?.includes("pull")) score += 8;
+  if (role?.includes("hinge") || role?.includes("squat") || role?.includes("lunge")) score += 8;
+  if (role?.includes("triceps") || role?.includes("biceps") || role?.includes("shoulder")) score += 5;
+  if (role?.includes("carry") || role?.includes("core")) score += 4;
+
+  if (
+    params.goal === "strength" &&
+    (pattern === "horizontal_push" ||
+      pattern === "horizontal_pull" ||
+      pattern === "vertical_pull" ||
+      pattern === "squat" ||
+      pattern === "hinge" ||
+      pattern === "lunge")
+  ) {
+    score += 6;
+  }
+
+  if (params.focusContext?.sportFocus === "surf_sports" && role) {
+    if (
+      role.includes("pull") ||
+      role.includes("carry") ||
+      role.includes("core") ||
+      role.includes("posterior")
+    ) {
+      score += 4;
+    }
+  }
+
+  if (params.exercise.canDropIfShort === true) {
+    score -= 6;
+  }
+
+  const roleBucket = getRoleBucket(role);
+  if (
+    roleBucket !== "unknown" &&
+    params.alreadyKept.some(
+      (kept) => getRoleBucket(normalizeRequestedRole(kept.role)) === roleBucket,
+    )
+  ) {
+    score -= 4;
+  }
+
+  return score;
+}
+
+function trimAiExercisesToDuration(params: {
+  exercises: AiGeneratedExerciseCandidate[];
+  targetMainExerciseCount: number;
+  focusContext?: GeneratedWorkoutValidationFocusContext | null;
+  goal: GoalType;
+}) {
+  if (params.exercises.length <= params.targetMainExerciseCount) {
+    return {
+      keptExercises: params.exercises,
+      trimmedExercises: [] as Array<{
+        exercise: AiGeneratedExerciseCandidate;
+        trimReason: string;
+      }>,
+      lostRoles: [] as string[],
+      warnings: [] as string[],
+    };
+  }
+
+  const minimumBuckets = buildMinimumRoleBuckets({
+    durationMinutes: params.focusContext?.durationMinutes ?? 0,
+    goal: params.goal,
+    focusContext: params.focusContext,
+  });
+
+  const keptExercises: AiGeneratedExerciseCandidate[] = [];
+  const usedBuckets = new Set<string>();
+
+  // Preserve one exercise per minimum role bucket first so trimningen inte gör om passet.
+  for (const bucket of minimumBuckets) {
+    const candidate = params.exercises.find(
+      (exercise) =>
+        !keptExercises.includes(exercise) &&
+        exerciseMatchesMinimumBucket(exercise, bucket),
+    );
+    if (candidate) {
+      keptExercises.push(candidate);
+      usedBuckets.add(bucket);
+    }
+  }
+
+  const remainingCandidates = params.exercises
+    .filter((exercise) => !keptExercises.includes(exercise))
+    .map((exercise, index) => ({
+      exercise,
+      score: scoreExerciseForTrimming({
+        exercise,
+        index,
+        goal: params.goal,
+        focusContext: params.focusContext,
+        alreadyKept: keptExercises,
+      }),
+    }))
+    .sort((left, right) => right.score - left.score);
+
+  for (const { exercise } of remainingCandidates) {
+    if (keptExercises.length >= params.targetMainExerciseCount) {
+      break;
+    }
+    keptExercises.push(exercise);
+  }
+
+  const keptSet = new Set(keptExercises);
+  const trimmedExercises = params.exercises
+    .filter((exercise) => !keptSet.has(exercise))
+    .map((exercise) => ({
+      exercise,
+      trimReason:
+        exercise.canDropIfShort === true
+          ? "duration_limit_bonus_role"
+          : "duration_limit_lower_priority",
+    }));
+
+  const lostRoles = trimmedExercises
+    .map(({ exercise }) => normalizeRequestedRole(exercise.role))
+    .filter((role): role is string => Boolean(role));
+
+  const warnings =
+    trimmedExercises.length > 0
+      ? [
+          `AI föreslog ${params.exercises.length} huvudövningar för ett pass som siktar på ${params.targetMainExerciseCount}. Valideringen trimmade därför enligt AI-prioritet och minimiroller.`,
+        ]
+      : [];
+
+  return {
+    keptExercises: keptExercises.slice(0, params.targetMainExerciseCount),
+    trimmedExercises,
+    lostRoles,
+    warnings,
+  };
 }
 
 function getRestRange(
@@ -814,6 +1197,7 @@ export function validateGeneratedWorkout(params: {
     (params.avoidSupersets ? "avoid_all" : "allowed");
   const availableCatalog = getAvailableExercises(params.availableEquipment);
   const rawBlocks = getRawBlocks(params.candidate);
+  const rawBonusExercises = getRawBonusExercises(params.candidate);
   const maxBlockCount = getEffectiveMaxBlockCount({
     durationMinutes: params.durationMinutes,
     rawBlocks,
@@ -824,15 +1208,31 @@ export function validateGeneratedWorkout(params: {
   const flatAiExercises = selectedBlocks.flatMap((block) =>
     Array.isArray(block.exercises) ? block.exercises : [],
   );
-  const targetExerciseCount = getEffectiveTargetExerciseCount({
-    durationMinutes: params.durationMinutes,
-    rawBlocks: selectedBlocks,
-    supersetPreference: effectiveSupersetPreference,
+  const targetMainExerciseCount = getTargetMainExerciseCount(
+    params.durationMinutes,
+    params.goal,
+    params.focusContext?.plannedFocus,
+  );
+  const targetExerciseCount = Math.min(
+    getEffectiveTargetExerciseCount({
+      durationMinutes: params.durationMinutes,
+      goal: params.goal,
+      focus: params.focusContext?.plannedFocus,
+      rawBlocks: selectedBlocks,
+      supersetPreference: effectiveSupersetPreference,
+    }),
+    targetMainExerciseCount,
+  );
+  const trimmedMainExercises = trimAiExercisesToDuration({
+    exercises: flatAiExercises,
+    targetMainExerciseCount: targetExerciseCount,
+    focusContext: params.focusContext,
+    goal: params.goal,
   });
 
   // Validera alla AI-val globalt först för att undvika dubletter mellan block.
   const validated = validateAndNormalizeAiExercises({
-    aiExercises: flatAiExercises,
+    aiExercises: trimmedMainExercises.keptExercises,
     availableEquipment: params.availableEquipment,
     recentExerciseIds: params.recentExerciseIds,
     recentVariantGroups: params.recentVariantGroups,
@@ -1043,9 +1443,46 @@ export function validateGeneratedWorkout(params: {
       requestedExerciseCount: flatAiExercises.length,
       finalExerciseCount: validated.exercises.length,
       targetExerciseCount,
+      targetMainExerciseCount,
+      actualMainExerciseCountFromAi: flatAiExercises.length,
+      finalMainExerciseCount: validated.exercises.length,
+      optionalBonusExerciseCount: rawBonusExercises.length,
+      bonusExercisesUsed: 0,
+      bonusExercisesRejectedReason: rawBonusExercises.map((exercise) => {
+        const role = normalizeRequestedRole(exercise.role);
+        if (!exercise.name && !exercise.id) {
+          return "Bonusövning saknade identifierbart namn eller id och ignorerades.";
+        }
+        return role
+          ? `${exercise.name ?? exercise.id}: bonus behölls utanför huvudpasset för att skydda durationen.`
+          : `${exercise.name ?? exercise.id}: bonusövning användes inte eftersom huvudpasset redan skulle vara komplett.`;
+      }),
+      trimmedBecauseTooManyExercises: trimmedMainExercises.trimmedExercises.length > 0,
+      trimmedExercises: trimmedMainExercises.trimmedExercises.map(({ exercise, trimReason }) => ({
+        name: exercise.name ?? exercise.id ?? "Okänd övning",
+        role: normalizeRequestedRole(exercise.role),
+        priorityRank:
+          typeof exercise.priorityRank === "number" ? exercise.priorityRank : 999,
+        canDropIfShort: exercise.canDropIfShort === true,
+        reason: exercise.reason ?? exercise.rationale ?? null,
+        trimReason,
+      })),
+      keptExerciseRoles: Array.from(
+        new Set(
+          trimmedMainExercises.keptExercises
+            .map((exercise) => normalizeRequestedRole(exercise.role))
+            .filter((role): role is string => Boolean(role)),
+        ),
+      ),
+      lostExerciseRoles: Array.from(new Set(trimmedMainExercises.lostRoles)),
+      fallbackAddedDespiteEnoughAiExercises:
+        trimmedMainExercises.keptExercises.length >= targetExerciseCount &&
+        validated.debug.fills.length > 0,
+      durationTrimWarnings: trimmedMainExercises.warnings,
       requestedRestAdjustments,
       qualityScore,
       warnings: [
+        ...trimmedMainExercises.warnings,
         ...validated.debug.warnings,
         ...scientificWarnings,
         ...structuredBlockWarnings,

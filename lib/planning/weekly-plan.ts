@@ -1868,6 +1868,9 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
   const suggestedNextDurationMinutes = goalReached
     ? planState.settings.minDurationMinutes
     : planState.remainingTrainingNeed.suggestedNextDurationMinutes;
+  const typicalDurationText = planState.debug?.typicalWorkoutDurationMinutes
+    ? ` När du väl tränar klarar du ofta runt ${planState.debug.typicalWorkoutDurationMinutes} minuter.`
+    : "";
 
   let message = "Planen räknas om automatiskt när du tränar.";
 
@@ -1898,12 +1901,19 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     message =
       `Du har fått in träning, men just nu ligger den faktiska träningsdosen klart under vad som normalt krävs för tydlig muskeltillväxt. Vi håller nästa pass genomförbart och prioriterar ${formatPlannedSessionFocus(
         planState.remainingTrainingNeed.suggestedNextFocus,
-      ).toLowerCase()} med basövningar så att varje minut ger mer effekt.`;
+      ).toLowerCase()} med basövningar så att varje minut ger mer effekt.${typicalDurationText} För tydligare muskeltillväxt behöver vi sedan antingen få in fler pass eller fler genomförda minuter över veckan.`;
   } else if (shortSessionPattern) {
     message =
       `Du har tränat ${completedSessions} gånger den här veckan, men passen blev kortare än planerat. För målet behöver vi prioritera basövningarna i ett ${formatPlannedSessionFocus(
         planState.remainingTrainingNeed.suggestedNextFocus,
-      ).toLowerCase()}pass nu snarare än att bara lägga till mer slumpvolym.`;
+      ).toLowerCase()}pass nu snarare än att bara lägga till mer slumpvolym.${typicalDurationText}`;
+  } else if (
+    normalizedGoal === "hypertrophy" &&
+    completedSessions > 0 &&
+    minuteCompletionRatio < 0.7
+  ) {
+    message =
+      `När du tränar ser passlängden ofta genomförbar ut, men total veckodos ligger fortfarande under målet för hypertrofi.${typicalDurationText} Dagens pass prioriterar därför de största luckorna i stället för att sprida ut energin tunt.`;
   } else if (spontaneousSessionsCount > 0) {
     message =
       `Du fick in ett spontant pass, därför räknar vi om veckan och håller nästa pass mer träffsäkert i stället för att upprepa samma belastning.`;

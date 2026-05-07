@@ -252,6 +252,7 @@ export async function runRealAppPlannerSimulation(params?: {
             profile: effectiveSimulationProfile,
             random,
             state: stateBefore,
+            scenario: config.scenario ?? "normal",
           });
       plannedWorkoutOrdinal += 1;
 

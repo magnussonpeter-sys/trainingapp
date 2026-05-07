@@ -169,7 +169,13 @@ export function runSimulation(params?: {
       });
       const adherence = forcedMiss
         ? { train: false, skipReason: "random" as const }
-        : shouldTrainToday({ config, profile, random, state: stateBefore });
+        : shouldTrainToday({
+            config,
+            profile,
+            random,
+            state: stateBefore,
+            scenario: config.scenario ?? "normal",
+          });
       plannedWorkoutOrdinal += 1;
 
       if (adherence.train) {

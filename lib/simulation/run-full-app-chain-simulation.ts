@@ -87,9 +87,10 @@ function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
     plannedWorkoutDayIndices: normalizePlannedWorkoutDayIndices(
       config?.plannedWorkoutDayIndices,
     ),
-    maxAiGeneratedWorkouts: Math.min(
-      Math.max(Math.round(config?.maxAiGeneratedWorkouts ?? 4), 1),
-      10,
+    // Respect the user's chosen AI budget instead of silently capping at 10.
+    maxAiGeneratedWorkouts: Math.max(
+      Math.round(config?.maxAiGeneratedWorkouts ?? 4),
+      1,
     ),
   };
 }
@@ -142,6 +143,25 @@ function extractValidationDiagnostics(value: unknown) {
   }
 
   const record = value as {
+    targetMainExerciseCount?: number;
+    actualMainExerciseCountFromAi?: number;
+    finalMainExerciseCount?: number;
+    optionalBonusExerciseCount?: number;
+    bonusExercisesUsed?: number;
+    bonusExercisesRejectedReason?: string[];
+    trimmedBecauseTooManyExercises?: boolean;
+    trimmedExercises?: Array<{
+      name?: string;
+      role?: string | null;
+      priorityRank?: number;
+      canDropIfShort?: boolean;
+      reason?: string | null;
+      trimReason?: string;
+    }>;
+    keptExerciseRoles?: string[];
+    lostExerciseRoles?: string[];
+    fallbackAddedDespiteEnoughAiExercises?: boolean;
+    durationTrimWarnings?: string[];
     validation?: {
       focusIntegrityScore?: number;
       strengthSpecificityScore?: number;
@@ -180,12 +200,34 @@ function extractValidationDiagnostics(value: unknown) {
       priorityMuscleResolutionStatus?: Array<{
         muscle?: string;
         status?:
-          | "addressed"
+          | "addressed_primary"
+          | "addressed_secondary"
           | "partially_addressed"
           | "deferred_due_to_focus"
           | "deferred_due_to_recovery"
-          | "deferred_due_to_duration"
-          | "dropped_by_normalization";
+          | "dropped_by_catalog_resolution"
+          | "dropped_by_focus_repair"
+          | "dropped_by_duration_trim"
+          | "not_relevant_for_today";
+        reason?: string;
+      }>;
+      qualityPenaltyBreakdown?: Array<{
+        code?: string;
+        amount?: number;
+        reason?: string;
+      }>;
+      droppedHighValueExercises?: string[];
+      roleMismatchReplacements?: string[];
+      genericFallbacksAdded?: string[];
+      finalQualityWarnings?: string[];
+      recoveryLimitedSeverityByMuscle?: Array<{
+        muscle?: string;
+        severity?: "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery";
+      }>;
+      blockedByRecoveryHard?: string[];
+      allowedAsLightRecovery?: string[];
+      rejectedDueToRecoveryReason?: Array<{
+        exerciseName?: string;
         reason?: string;
       }>;
       primaryLiftCount?: number;
@@ -408,6 +450,67 @@ function extractValidationDiagnostics(value: unknown) {
             ),
         )
       : [],
+    qualityPenaltyBreakdown: Array.isArray(validation.qualityPenaltyBreakdown)
+      ? validation.qualityPenaltyBreakdown.filter(
+          (
+            entry,
+          ): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["qualityPenaltyBreakdown"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.code === "string" &&
+                typeof entry.amount === "number" &&
+                typeof entry.reason === "string",
+            ),
+        )
+      : [],
+    droppedHighValueExercises: Array.isArray(validation.droppedHighValueExercises)
+      ? validation.droppedHighValueExercises
+      : [],
+    roleMismatchReplacements: Array.isArray(validation.roleMismatchReplacements)
+      ? validation.roleMismatchReplacements
+      : [],
+    genericFallbacksAdded: Array.isArray(validation.genericFallbacksAdded)
+      ? validation.genericFallbacksAdded
+      : [],
+    finalQualityWarnings: Array.isArray(validation.finalQualityWarnings)
+      ? validation.finalQualityWarnings
+      : [],
+    recoveryLimitedSeverityByMuscle: Array.isArray(validation.recoveryLimitedSeverityByMuscle)
+      ? validation.recoveryLimitedSeverityByMuscle.filter(
+          (
+            entry,
+          ): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["recoveryLimitedSeverityByMuscle"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.muscle === "string" &&
+                typeof entry.severity === "string",
+            ),
+        )
+      : [],
+    blockedByRecoveryHard: Array.isArray(validation.blockedByRecoveryHard)
+      ? validation.blockedByRecoveryHard
+      : [],
+    allowedAsLightRecovery: Array.isArray(validation.allowedAsLightRecovery)
+      ? validation.allowedAsLightRecovery
+      : [],
+    rejectedDueToRecoveryReason: Array.isArray(validation.rejectedDueToRecoveryReason)
+      ? validation.rejectedDueToRecoveryReason.filter(
+          (
+            entry,
+          ): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["rejectedDueToRecoveryReason"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.exerciseName === "string" &&
+                typeof entry.reason === "string",
+            ),
+        )
+      : [],
     primaryLiftCount:
       typeof validation.primaryLiftCount === "number"
         ? validation.primaryLiftCount
@@ -613,6 +716,72 @@ function extractValidationDiagnostics(value: unknown) {
                 : null,
           }
         : undefined,
+    // These fields come from validateGeneratedWorkout's outer debug layer and
+    // help us see whether AI already targeted the right pass size.
+    targetMainExerciseCount:
+      typeof record.targetMainExerciseCount === "number"
+        ? record.targetMainExerciseCount
+        : undefined,
+    actualMainExerciseCountFromAi:
+      typeof record.actualMainExerciseCountFromAi === "number"
+        ? record.actualMainExerciseCountFromAi
+        : undefined,
+    finalMainExerciseCount:
+      typeof record.finalMainExerciseCount === "number"
+        ? record.finalMainExerciseCount
+        : undefined,
+    optionalBonusExerciseCount:
+      typeof record.optionalBonusExerciseCount === "number"
+        ? record.optionalBonusExerciseCount
+        : undefined,
+    bonusExercisesUsed:
+      typeof record.bonusExercisesUsed === "number"
+        ? record.bonusExercisesUsed
+        : undefined,
+    bonusExercisesRejectedReason: Array.isArray(record.bonusExercisesRejectedReason)
+      ? record.bonusExercisesRejectedReason.filter(
+          (entry): entry is string => typeof entry === "string" && entry.length > 0,
+        )
+      : undefined,
+    trimmedBecauseTooManyExercises:
+      typeof record.trimmedBecauseTooManyExercises === "boolean"
+        ? record.trimmedBecauseTooManyExercises
+        : undefined,
+    trimmedExercises: Array.isArray(record.trimmedExercises)
+      ? record.trimmedExercises.filter(
+          (
+            entry,
+          ): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["trimmedExercises"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.name === "string" &&
+                typeof entry.priorityRank === "number" &&
+                typeof entry.canDropIfShort === "boolean" &&
+                typeof entry.trimReason === "string",
+            ),
+        )
+      : undefined,
+    keptExerciseRoles: Array.isArray(record.keptExerciseRoles)
+      ? record.keptExerciseRoles.filter(
+          (entry): entry is string => typeof entry === "string" && entry.length > 0,
+        )
+      : undefined,
+    lostExerciseRoles: Array.isArray(record.lostExerciseRoles)
+      ? record.lostExerciseRoles.filter(
+          (entry): entry is string => typeof entry === "string" && entry.length > 0,
+        )
+      : undefined,
+    fallbackAddedDespiteEnoughAiExercises:
+      typeof record.fallbackAddedDespiteEnoughAiExercises === "boolean"
+        ? record.fallbackAddedDespiteEnoughAiExercises
+        : undefined,
+    durationTrimWarnings: Array.isArray(record.durationTrimWarnings)
+      ? record.durationTrimWarnings.filter(
+          (entry): entry is string => typeof entry === "string" && entry.length > 0,
+        )
+      : undefined,
   } satisfies NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>;
 }
 
@@ -740,7 +909,13 @@ export async function runFullAppChainSimulation(params?: {
       });
       const adherence = forcedMiss
         ? { train: false, skipReason: "random" as const }
-        : shouldTrainToday({ config, profile: effectiveSimulationProfile, random, state: stateBefore });
+        : shouldTrainToday({
+            config,
+            profile: effectiveSimulationProfile,
+            random,
+            state: stateBefore,
+            scenario: config.scenario ?? "normal",
+          });
       plannedWorkoutOrdinal += 1;
 
       if (adherence.train) {

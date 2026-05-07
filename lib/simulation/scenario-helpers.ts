@@ -97,7 +97,9 @@ export function applyScenarioProfileTweaks(params: {
   if (params.scenario === "realistic_user") {
     profile.adherenceProfile = "medium";
     profile.recoveryProfile = "average";
-    profile.lifeStressBase = Math.max(profile.lifeStressBase, 48);
+    // Keep vardagsstress realistic, but not so high that it dominates
+    // adherence on top of the scenario's own "real user" behavior.
+    profile.lifeStressBase = Math.max(profile.lifeStressBase, 40);
     notes.push("Scenariot blandar realistiskt vardagsbeteende: några missade pass, vissa kortare pass och ibland spontana extrapass.");
   }
 
@@ -152,10 +154,6 @@ export function shouldForceMissPlannedWorkout(params: {
   scenario: SimulationScenario;
   plannedWorkoutOrdinal: number;
 }) {
-  if (params.scenario === "realistic_user") {
-    return params.plannedWorkoutOrdinal % 5 === 4;
-  }
-
   if (params.scenario === "missed_workouts") {
     return params.plannedWorkoutOrdinal % 2 === 1;
   }

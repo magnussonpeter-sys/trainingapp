@@ -8,6 +8,7 @@ import {
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 import {
   validateGeneratedWorkout,
+  getTargetMainExerciseCount,
   type AiGeneratedWorkoutCandidate,
   type GeneratedWorkoutValidationFocusContext,
 } from "@/lib/workout-flow/validate-generated-workout";
@@ -124,6 +125,32 @@ type ProgressionTrackPromptItem = {
   intent: string;
   stepNames: string[];
 };
+
+function getOptionalBonusInstruction(params: {
+  goal: string;
+  nextFocus: WorkoutFocus | null;
+  sportFocus: SportFocus;
+}) {
+  if (params.nextFocus === "upper_body") {
+    return params.sportFocus === "surf_sports"
+      ? "Bonusövningar får i första hand vara carry, bål/skulderkontroll eller extra armar."
+      : "Bonusövningar får i första hand vara extra biceps, triceps, skulderaccessoar eller bål.";
+  }
+
+  if (params.nextFocus === "lower_body") {
+    return "Bonusövningar får i första hand vara vader, bål eller glute/posterior-chain-accessoar.";
+  }
+
+  if (params.nextFocus === "full_body") {
+    return "Bonusövningar får i första hand vara bål, carry eller en liten prioriterad accessoar som inte stör huvudrollerna.";
+  }
+
+  if (params.goal === "strength") {
+    return "Var försiktig med bonusövningar. De ska inte störa huvudlyft eller progression.";
+  }
+
+  return "Bonusövningar är valfria och får bara föreslås om huvudpasset redan är komplett.";
+}
 
 export type GenerateWorkoutWithAiCoreInput = {
   goal: string;
@@ -405,6 +432,16 @@ function buildGenerationPrompt(params: {
   lessOftenExerciseIds?: string[];
   focusMuscles?: FocusMuscle[];
 }) {
+  const targetMainExerciseCount = getTargetMainExerciseCount(
+    params.durationMinutes,
+    params.goal === "strength" ||
+      params.goal === "hypertrophy" ||
+      params.goal === "health" ||
+      params.goal === "body_composition"
+      ? params.goal
+      : "health",
+    params.nextFocus,
+  );
   const trainingHistoryText = params.trainingHistoryContext
     ? JSON.stringify(params.trainingHistoryContext, null, 2)
     : "null";
@@ -478,6 +515,11 @@ function buildGenerationPrompt(params: {
     sportFocus,
     params.goal,
   );
+  const optionalBonusInstruction = getOptionalBonusInstruction({
+    goal: params.goal,
+    nextFocus: params.nextFocus,
+    sportFocus,
+  });
 
   return `
 Skapa ett evidensbaserat träningspass som strikt JSON.
@@ -487,6 +529,7 @@ Du får själv bestämma blockstruktur och ordning, men passet måste vara reali
 Kontext:
 - mål: ${params.goal}
 - passlängd: cirka ${params.durationMinutes} minuter
+- exakt antal huvudövningar som ska genereras: ${targetMainExerciseCount}
 - gym-id: ${params.gym ?? "saknas"}
 - gymnamn: ${params.gymLabel ?? "saknas"}
 - tillgänglig utrustning: ${equipmentText}
@@ -572,6 +615,7 @@ För korta pass ska du tänka i denna ordning:
 2. välj om block ska vara straight_sets eller superset
 3. välj övningar som passar varje block
 4. fyll sedan in sets, reps, vila och coachning
+5. håll dig till exakt ${targetMainExerciseCount} huvudövningar i huvudpasset
 
 Output-format:
 {
@@ -601,14 +645,36 @@ Output-format:
           "rest": number,
           "suggestedWeight": number | null,
           "movementPattern": "movement pattern från katalogen",
+          "role": "kort träningsroll, till exempel main_push eller direct_triceps",
+          "priorityRank": number,
+          "canDropIfShort": boolean,
           "intensityTag": "primary | secondary | accessory | finisher",
-          "rationale": "kort motivering"
+          "rationale": "kort motivering",
+          "reason": "kort motivering till varför övningen är med"
         }
       ],
       "warmup": {
         "recommended": boolean,
         "instruction": "kort uppvärmningsinstruktion om relevant"
       }
+    }
+  ],
+  "optionalBonusExercises": [
+    {
+      "id": "måste vara ett id från katalogen ovan",
+      "name": "matchande namn",
+      "sets": number,
+      "reps": number | null,
+      "duration": number | null,
+      "rest": number,
+      "suggestedWeight": number | null,
+      "movementPattern": "movement pattern från katalogen",
+      "role": "bonusroll",
+      "priorityRank": number,
+      "canDropIfShort": true,
+      "intensityTag": "accessory",
+      "rationale": "kort motivering",
+      "reason": "extra övning om tid finns"
     }
   ]
 }
@@ -618,6 +684,10 @@ Viktiga regler:
 - Inga markdown-block, inga förklaringar utanför JSON
 - Använd blocks, inte top-level exercises om du inte absolut måste
 - Använd bara övningar från kataloglistan ovan
+- Huvudpasset måste innehålla exakt ${targetMainExerciseCount} huvudövningar totalt
+- Lägg inte extra övningar i huvudpasset för säkerhets skull
+- Om du vill föreslå extra övningar ska de ligga i optionalBonusExercises och huvudpasset ska redan vara komplett utan dem
+- optionalBonusExercises får innehålla högst 2 övningar
 - Inkludera alltid både superset_considered och superset_reason i toppnivån
 - suggestedWeight ska vara ett genomtänkt startförslag när övningen använder extern belastning, inte ett slumpmässigt eller tomt värde
 - Basera suggestedWeight på användarens kön, kroppsvikt, ålder, träningsvana och den aktuella övningen om tidigare historik saknas
@@ -654,6 +724,10 @@ Viktiga regler:
 - Om senaste prestation låg lower_than_plan eller much_lower_than_plan ska du vara mer konservativ med volym, komplexitet och suggestedWeight
 - Om senaste prestation låg higher_than_plan ska du bara öka försiktigt och ta hänsyn till återhämtning
 - Låt veckoplanen påverka passets huvudfokus. Om nästa fokus är upper_body, lower_body, core eller full_body ska passet tydligt kännas som detta utan att bli obalanserat
+- Huvudövningarna ska ensamma vara ett komplett pass för ${params.durationMinutes} minuter
+- Märk huvudövningarna med priorityRank där 1 är viktigast att behålla om passet behöver kortas
+- Märk övningar som lättare kan kapas med canDropIfShort=true, men kapa inte bort nödvändiga prioriterade muskler eller sportrelevanta roller av gammal vana
+- ${optionalBonusInstruction}
 - Prioritera muskelgrupper som fortfarande har återstående veckobudget, men håll passet realistiskt inom vald passlängd
 - Om uttryckligt valda fokusmuskler finns för detta builder-pass ska de prioriteras tydligt i övningsval, så länge passet fortfarande blir balanserat och realistiskt
 - Vid låg confidence score ska du vara mer konservativ med volym, komplexitet och övningssvårighet

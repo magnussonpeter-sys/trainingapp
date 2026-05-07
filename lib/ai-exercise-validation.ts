@@ -31,6 +31,7 @@ export type ExerciseRole =
   | "primary_pull"
   | "upper_back_accessory"
   | "biceps_isolation"
+  | "shoulder_accessory"
   | "primary_squat"
   | "primary_hinge"
   | "secondary_lunge"
@@ -88,6 +89,8 @@ export type ValidationReasonCode =
   | "accepted_exact_match"
   | "accepted_exact_name_match"
   | "accepted_alias_match"
+  | "preserved_raw_exercise"
+  | "preserved_focus_compatible_priority"
   | "invalid_or_missing_id"
   | "duplicate_exercise_id"
   | "recent_variation_preference"
@@ -95,7 +98,14 @@ export type ValidationReasonCode =
   | "filled_missing_slots"
   | "empty_ai_response"
   | "integrity_repair"
-  | "fallback_used";
+  | "fallback_used"
+  | "replaced_missing_equipment"
+  | "replaced_risk_too_high"
+  | "replaced_focus_incompatible"
+  | "replaced_recovery_conflict"
+  | "replaced_duplicate_role_due_to_duration"
+  | "replaced_catalog_unresolved"
+  | "rejected_fallback_role_mismatch";
 
 export type ValidationDebugEntry = {
   requestedId: string | null;
@@ -171,12 +181,42 @@ export type ValidateAiExercisesResult = {
     priorityMuscleResolutionStatus: Array<{
       muscle: MuscleBudgetGroup;
       status:
-        | "addressed"
+        | "addressed_primary"
+        | "addressed_secondary"
         | "partially_addressed"
         | "deferred_due_to_focus"
         | "deferred_due_to_recovery"
-        | "deferred_due_to_duration"
-        | "dropped_by_normalization";
+        | "dropped_by_catalog_resolution"
+        | "dropped_by_focus_repair"
+        | "dropped_by_duration_trim"
+        | "not_relevant_for_today";
+      reason: string;
+    }>;
+    qualityPenaltyBreakdown: Array<{
+      code:
+        | "dropped_high_value_exercise"
+        | "dropped_useful_role"
+        | "role_mismatch_replacement"
+        | "generic_fallback_added"
+        | "moved_to_bonus_despite_duration"
+        | "repeated_fallback_variant_group"
+        | "final_exercise_count_below_duration_target"
+        | "priority_muscle_dropped_despite_focus_compatibility";
+      amount: number;
+      reason: string;
+    }>;
+    droppedHighValueExercises: string[];
+    roleMismatchReplacements: string[];
+    genericFallbacksAdded: string[];
+    finalQualityWarnings: string[];
+    recoveryLimitedSeverityByMuscle: Array<{
+      muscle: MuscleBudgetGroup;
+      severity: "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery";
+    }>;
+    blockedByRecoveryHard: string[];
+    allowedAsLightRecovery: string[];
+    rejectedDueToRecoveryReason: Array<{
+      exerciseName: string;
       reason: string;
     }>;
     primaryLiftCount: number;
@@ -762,6 +802,15 @@ function getExerciseRole(
   }
 
   if (
+    exercise.variantGroup === "lateral_raise" ||
+    exercise.variantGroup === "shoulder_press"
+  ) {
+    return exercise.variantGroup === "shoulder_press"
+      ? "primary_press"
+      : "shoulder_accessory";
+  }
+
+  if (
     exercise.variantGroup === "push_up" &&
     isStrengthGoal(focusContext) &&
     isIntermediateOrAbove(focusContext)
@@ -786,6 +835,13 @@ function getExerciseRole(
     exercise.movementPattern === "horizontal_pull" ||
     exercise.movementPattern === "vertical_pull"
   ) {
+    if (
+      exercise.variantGroup === "rear_delt" ||
+      exercise.variantGroup === "face_pull"
+    ) {
+      return "upper_back_accessory";
+    }
+
     return hasBudgetGroup(exercise, "biceps") && !hasBudgetGroup(exercise, "back")
       ? "biceps_isolation"
       : "primary_pull";
@@ -999,7 +1055,9 @@ function getOffFocusIssue(
 }
 
 function isSafeForRecovery(
-  exercise: Pick<NormalizedExercise, "riskLevel" | "movementPattern" | "variantGroup">,
+  exercise: Pick<NormalizedExercise, "movementPattern" | "variantGroup"> & {
+    riskLevel?: ExerciseCatalogItem["riskLevel"];
+  },
   focusContext?: ValidationFocusContext | null,
 ) {
   const normalizedExperience = normalizeExperienceLevel(
@@ -1020,6 +1078,59 @@ function isSafeForRecovery(
   }
 
   return true;
+}
+
+function getRecoverySeverityByMuscle(params: {
+  muscle: MuscleBudgetGroup;
+  focusContext?: ValidationFocusContext | null;
+}) {
+  const focus = getEffectiveFocus(params.focusContext);
+  if (focus === "recovery_strength") {
+    return "allow_light_recovery" as const;
+  }
+
+  return "hard_blocked" as const;
+}
+
+function canServeAsLightRecovery(
+  exercise: Pick<
+    NormalizedExercise,
+    | "id"
+    | "movementPattern"
+    | "variantGroup"
+    | "primaryMuscles"
+    | "secondaryMuscles"
+  > & { riskLevel?: ExerciseCatalogItem["riskLevel"] },
+  focusContext?: ValidationFocusContext | null,
+) {
+  const role = getExerciseRole(exercise, focusContext);
+
+  if (!isSafeForRecovery(exercise, focusContext)) {
+    return false;
+  }
+
+  if (role === "advanced_unilateral") {
+    return false;
+  }
+
+  if (
+    exercise.id === "bodyweight_bench_dip" ||
+    exercise.id === "pike_push_up" ||
+    exercise.variantGroup === "dip"
+  ) {
+    return false;
+  }
+
+  return (
+    role === "primary_pull" ||
+    role === "upper_back_accessory" ||
+    role === "primary_press" ||
+    role === "secondary_press" ||
+    role === "glute_accessory" ||
+    role === "core" ||
+    role === "carry" ||
+    role === "mobility_prehab"
+  );
 }
 
 function isForbiddenForFocus(params: {
@@ -1058,9 +1169,11 @@ function isForbiddenForFocus(params: {
   const recoveryLimitedMuscles = new Set(
     params.focusContext?.recoveryLimitedMuscles ?? [],
   );
-  const hitsRecoveryLimited = getBudgetGroupsForExercise(params.exercise).some((group) =>
-    recoveryLimitedMuscles.has(group),
-  );
+  const exerciseBudgetGroups = getBudgetGroupsForExercise(params.exercise);
+  const recoverySeverityByMuscle = exerciseBudgetGroups
+    .filter((group) => recoveryLimitedMuscles.has(group))
+    .map((group) => getRecoverySeverityByMuscle({ muscle: group, focusContext: params.focusContext }));
+  const hitsHardRecoveryBlock = recoverySeverityByMuscle.includes("hard_blocked");
   const hasBasePressAlready = params.acceptedExercises.some((exercise) =>
     isBasePressExercise(exercise, params.focusContext),
   );
@@ -1075,7 +1188,7 @@ function isForbiddenForFocus(params: {
 
   if (
     params.exercise.id === "pike_push_up" &&
-    hitsRecoveryLimited &&
+    hitsHardRecoveryBlock &&
     (focus === "upper_body" || focus === "full_body")
   ) {
     return true;
@@ -1129,11 +1242,13 @@ function isForbiddenForFocus(params: {
 
   if (
     focus === "recovery_strength" &&
-    (!isSafeForRecovery(params.exercise, params.focusContext) ||
-      params.exercise.id === "bodyweight_bench_dip" ||
-      hitsRecoveryLimited ||
+    (!canServeAsLightRecovery(params.exercise, params.focusContext) ||
       role === "advanced_unilateral")
   ) {
+    return true;
+  }
+
+  if (focus !== "recovery_strength" && hitsHardRecoveryBlock) {
     return true;
   }
 
@@ -1357,10 +1472,20 @@ function matchesTemplateSlot(
     return isBasePressExercise(exercise, focusContext);
   }
   if (slot === "secondary_press_or_drag") {
-    return role === "secondary_press" || role === "upper_back_accessory" || role === "primary_pull";
+    return (
+      role === "secondary_press" ||
+      role === "upper_back_accessory" ||
+      role === "primary_pull" ||
+      role === "shoulder_accessory"
+    );
   }
   if (slot === "direct_arm_support") {
-    return role === "biceps_isolation" || role === "triceps_press" || hasBudgetGroup(exercise, "shoulders");
+    return (
+      role === "biceps_isolation" ||
+      role === "triceps_press" ||
+      role === "shoulder_accessory" ||
+      hasBudgetGroup(exercise, "shoulders")
+    );
   }
   if (slot === "drag" || slot === "safe_drag") {
     return isDragExercise(exercise, focusContext);
@@ -1379,6 +1504,7 @@ function matchesTemplateSlot(
   }
   if (slot === "upper_accessory") {
     return (
+      role === "shoulder_accessory" ||
       hasBudgetGroup(exercise, "shoulders") ||
       hasBudgetGroup(exercise, "biceps") ||
       hasBudgetGroup(exercise, "triceps")
@@ -1391,10 +1517,16 @@ function matchesTemplateSlot(
     return isHingeExercise(exercise, focusContext) || hasBudgetGroup(exercise, "core");
   }
   if (slot === "safe_press_or_glute") {
-    return isBasePressExercise(exercise, focusContext) || hasBudgetGroup(exercise, "glutes");
+    return (
+      canServeAsLightRecovery(exercise, focusContext) &&
+      (isBasePressExercise(exercise, focusContext) || hasBudgetGroup(exercise, "glutes"))
+    );
   }
   if (slot === "safe_core_or_glute") {
-    return hasBudgetGroup(exercise, "core") || hasBudgetGroup(exercise, "glutes");
+    return (
+      canServeAsLightRecovery(exercise, focusContext) &&
+      (hasBudgetGroup(exercise, "core") || hasBudgetGroup(exercise, "glutes"))
+    );
   }
   return false;
 }
@@ -1535,6 +1667,7 @@ function buildCandidatePool(params: {
 
 function scoreExerciseReplacement(params: {
   candidate: CandidatePoolExercise;
+  requestedRole?: ExerciseRole | null;
   requestedMovementPattern?: MovementPattern;
   requestedBudgetGroups: MuscleBudgetGroup[];
   focusContext?: ValidationFocusContext | null;
@@ -1558,6 +1691,10 @@ function scoreExerciseReplacement(params: {
   });
   const candidateRole = getExerciseRole(params.candidate, params.focusContext);
   let score = params.candidate.source === "ai" ? 6 : 0;
+
+  if (params.requestedRole && candidateRole === params.requestedRole) {
+    score += 14;
+  }
 
   if (
     params.requestedMovementPattern &&
@@ -1656,6 +1793,52 @@ function scoreExerciseReplacement(params: {
     candidateRole === "upper_back_accessory"
   ) {
     score -= 10;
+  }
+
+  if (
+    params.requestedRole === "biceps_isolation" &&
+    candidateRole !== "biceps_isolation"
+  ) {
+    score -= 18;
+  }
+
+  if (
+    params.requestedRole === "triceps_press" &&
+    candidateRole !== "triceps_press" &&
+    !supportsTriceps(params.candidate)
+  ) {
+    score -= 18;
+  }
+
+  if (
+    params.requestedRole === "calf_accessory" &&
+    candidateRole !== "calf_accessory"
+  ) {
+    score -= 20;
+  }
+
+  if (
+    params.requestedRole === "core" &&
+    candidateRole !== "core" &&
+    candidateRole !== "carry"
+  ) {
+    score -= 18;
+  }
+
+  if (
+    params.requestedRole === "shoulder_accessory" &&
+    candidateRole !== "shoulder_accessory" &&
+    candidateRole !== "secondary_press"
+  ) {
+    score -= 16;
+  }
+
+  if (
+    params.requestedRole &&
+    params.requestedRole !== candidateRole &&
+    params.candidate.variantGroup === "deadlift"
+  ) {
+    score -= 30;
   }
 
   if (
@@ -1805,7 +1988,7 @@ function canPreserveAiExercise(params: {
   }
 
   // Preserve-first: a strong, compatible AI choice survives soft balance/variation pressure.
-  if (preservationScore >= 68) {
+  if (preservationScore >= 60) {
     return { preserve: true, warnings: balanceIssue ? [balanceIssue.message] : [], preservationScore };
   }
 
@@ -1837,6 +2020,9 @@ function findFallbackExercise(params: {
         secondaryMuscles: params.requestedCatalogExercise.secondaryMuscles,
       })
     : [];
+  const requestedRole = params.requestedCatalogExercise
+    ? getExerciseRole(createNormalizedExercise(params.requestedCatalogExercise), params.focusContext)
+    : null;
 
   const ranked = params.availableCatalog
     .filter((exercise) => !hasExerciseId(exercise.id, params.acceptedExercises))
@@ -1850,6 +2036,7 @@ function findFallbackExercise(params: {
         exercise,
         score: scoreExerciseReplacement({
           candidate: normalizedCandidate,
+          requestedRole,
           requestedMovementPattern,
           requestedBudgetGroups,
           focusContext: params.focusContext,
@@ -2093,6 +2280,36 @@ function enforceFocusTemplate(params: {
     selected.push(candidate);
   }
 
+  if (
+    params.focusContext?.plannedFocus === "recovery_strength" &&
+    (params.focusContext?.durationMinutes ?? 0) >= 15 &&
+    selected.length < Math.min(3, params.targetExerciseCount)
+  ) {
+    const recoverySlots = ["safe_drag", "safe_press_or_glute", "safe_core_or_glute"] as const;
+
+    for (const slot of recoverySlots) {
+      if (selected.length >= Math.min(3, params.targetExerciseCount)) {
+        break;
+      }
+
+      if (selected.some((exercise) => matchesTemplateSlot(exercise, slot, params.focusContext))) {
+        continue;
+      }
+
+      const candidate = chooseBestExerciseForSlot({
+        slot,
+        pool,
+        selected,
+        focusContext: params.focusContext,
+        recentPreferences: params.recentPreferences,
+      });
+
+      if (candidate) {
+        selected.push(candidate);
+      }
+    }
+  }
+
   if (selected.length === 0) {
     selected.push(...params.exercises.slice(0, params.targetExerciseCount));
   }
@@ -2303,6 +2520,15 @@ export function validateAndNormalizeAiExercises(params: {
         roleTrimReason: null,
         compatibleExercisesRejectedWithReason: [],
         priorityMuscleResolutionStatus: [],
+        qualityPenaltyBreakdown: [],
+        droppedHighValueExercises: [],
+        roleMismatchReplacements: [],
+        genericFallbacksAdded: [],
+        finalQualityWarnings: [],
+        recoveryLimitedSeverityByMuscle: [],
+        blockedByRecoveryHard: [],
+        allowedAsLightRecovery: [],
+        rejectedDueToRecoveryReason: [],
         primaryLiftCount: 0,
         loadedProgressionExerciseCount: 0,
         bodyweightOnlyCount: 0,
@@ -2448,7 +2674,12 @@ export function validateAndNormalizeAiExercises(params: {
         matchedExercise,
       });
 
-      if (preserveDecision.preserve && shouldPreferVariation && preserveDecision.preservationScore < 68) {
+      if (
+        preserveDecision.preserve &&
+        shouldPreferVariation &&
+        preserveDecision.preservationScore < 54 &&
+        !isLoadedProgressionExercise(matchedNormalizedExercise, params.focusContext)
+      ) {
         const variationFallback = findFallbackExercise({
           requestedMovementPattern: normalizedRequestedMovementPattern,
           requestedCatalogExercise: matchedExercise,
@@ -2492,11 +2723,18 @@ export function validateAndNormalizeAiExercises(params: {
           selectedId: matchedExercise.id,
           selectedName: matchedExercise.name,
           reasonCode:
-            matchSource === "exact_name_match"
+            deriveFocusPriorityGroups({
+              globalPriorities: params.focusContext?.priorityMuscles ?? [],
+              plannedFocus: getEffectiveFocus(params.focusContext),
+            }).focusCompatiblePriorities.some((group) =>
+              hasBudgetGroup(matchedNormalizedExercise, group),
+            )
+              ? "preserved_focus_compatible_priority"
+              : matchSource === "exact_name_match"
               ? "accepted_exact_name_match"
               : matchSource === "alias_match"
                 ? "accepted_alias_match"
-                : "accepted_exact_match",
+                : "preserved_raw_exercise",
           reason:
             matchSource === "alias_match"
               ? "AI-valet accepterades via aliasmatchning."
@@ -2530,9 +2768,14 @@ export function validateAndNormalizeAiExercises(params: {
           selectedId: fallback.id,
           selectedName: fallback.name,
           reasonCode: duplicate
-            ? "duplicate_exercise_id"
+            ? "replaced_duplicate_role_due_to_duration"
             : forbidden
-              ? "integrity_repair"
+              ? ((params.focusContext?.plannedFocus === "recovery_strength" &&
+                  (params.focusContext?.recoveryLimitedMuscles ?? []).some((group) =>
+                    hasBudgetGroup(matchedNormalizedExercise, group),
+                  ))
+                  ? "replaced_recovery_conflict"
+                  : "replaced_focus_incompatible")
               : "fallback_used",
           reason: duplicate
             ? "AI försökte använda samma övning flera gånger."
@@ -2599,7 +2842,7 @@ export function validateAndNormalizeAiExercises(params: {
         selectedName: fallback.name,
         reasonCode:
           requestedId || requestedName
-            ? "invalid_or_missing_id"
+            ? "replaced_catalog_unresolved"
             : "empty_ai_response",
         reason:
           requestedId || requestedName
@@ -2803,6 +3046,11 @@ export function validateAndNormalizeAiExercises(params: {
         !aiRawExercises.some((rawExercise) => rawExercise.exerciseId === exercise.exerciseId),
     )
     .map((exercise) => exercise.exerciseName);
+  const genericFallbacksAdded = fallbackExercisesAdded.filter((exerciseName) =>
+    ["Marklyft med hantlar", "Goblet squat", "Armhävningar", "Ring rows", "Glute bridge"].includes(
+      exerciseName,
+    ),
+  );
   const catalogResolutionLoss = Math.min(
     100,
     rawToCatalogDiff.filter((entry) => entry.type === "removed").length * 18,
@@ -2822,6 +3070,77 @@ export function validateAndNormalizeAiExercises(params: {
     lostSportRelevantExercises.length * 18 +
       lostUsefulRoles.filter((role) => role === "carry_grip" || role === "lateral_core").length * 10,
   );
+  const roleMismatchReplacements = replacements
+    .filter((entry) => entry.replacementQuality === "role_mismatch")
+    .map((entry) => `${entry.requestedName ?? entry.requestedId ?? "Okänd övning"} -> ${entry.selectedName}`);
+  const droppedHighValueExercises = lostPrimaryOrHighValueExercises;
+  const repeatedVariantGroups = Array.from(
+    new Set(
+      normalizedExercises
+        .map((exercise) => exercise.variantGroup)
+        .filter((group) => recentPreferences.recentVariantGroups.has(group)),
+    ),
+  );
+  const repeatedPatternCount = normalizedExercises.filter((exercise) =>
+    recentPreferences.recentVariantGroups.has(exercise.variantGroup),
+  ).length;
+  const plannedProgressionRepeats =
+    isStrengthGoal(params.focusContext) && isIntermediateOrAbove(params.focusContext)
+      ? repeatedVariantGroups.filter((group) =>
+          normalizedExercises.some((exercise) =>
+            isLoadedProgressionExercise(exercise, params.focusContext) &&
+            exercise.variantGroup === group,
+          ),
+        )
+      : [];
+  const fallbackRepeats = repeatedVariantGroups.filter(
+    (group) => !plannedProgressionRepeats.includes(group),
+  );
+  const qualityPenaltyBreakdown = [
+    ...droppedHighValueExercises.map((exerciseName) => ({
+      code: "dropped_high_value_exercise" as const,
+      amount: 10,
+      reason: `${exerciseName} tappades trots att övningen hade hög träningsnytta.`,
+    })),
+    ...lostUsefulRoles.map((role) => ({
+      code: "dropped_useful_role" as const,
+      amount: 7,
+      reason: `Rollen ${role} tappades mellan råförslag och slutpass.`,
+    })),
+    ...roleMismatchReplacements.map((summary) => ({
+      code: "role_mismatch_replacement" as const,
+      amount: 10,
+      reason: `${summary} bytte träningsroll på ett tveksamt sätt.`,
+    })),
+    ...genericFallbacksAdded.map((exerciseName) => ({
+      code: "generic_fallback_added" as const,
+      amount: 6,
+      reason: `${exerciseName} lades till som generisk fallback.`,
+    })),
+    ...(normalizedExercises.length < targetExerciseCount
+      ? [
+          {
+            code: "final_exercise_count_below_duration_target" as const,
+            amount: 8,
+            reason: `Slutpasset landade på ${normalizedExercises.length} övningar trots målsiffra ${targetExerciseCount}.`,
+          },
+        ]
+      : []),
+    ...priorityGroups.focusCompatiblePriorities
+      .filter((group) => !normalizedExercises.some((exercise) => hasBudgetGroup(exercise, group)))
+      .map((group) => ({
+        code: "priority_muscle_dropped_despite_focus_compatibility" as const,
+        amount: 6,
+        reason: `${group} var fokuskompatibel prioritetsmuskel men adresserades inte i slutpasset.`,
+      })),
+    ...(fallbackRepeats.length > 0
+      ? fallbackRepeats.map((group) => ({
+          code: "repeated_fallback_variant_group" as const,
+          amount: 4,
+          reason: `Fallback-variantgruppen ${group} upprepades igen.`,
+        }))
+      : []),
+  ];
   const qualityPreservationScore = Math.max(
     0,
     100 -
@@ -2829,7 +3148,8 @@ export function validateAndNormalizeAiExercises(params: {
       goalSpecificityLoss * 0.35 -
       sportSpecificityLoss * 0.25 -
       diagnostics.mustKeepViolations.length * 8 -
-      diagnostics.offFocusViolations.length * 10,
+      diagnostics.offFocusViolations.length * 10 -
+      qualityPenaltyBreakdown.reduce((sum, item) => sum + item.amount, 0),
   );
   const normalizationWarnings = Array.from(
     new Set([
@@ -2866,28 +3186,6 @@ export function validateAndNormalizeAiExercises(params: {
             violation.includes("hinge"),
         )
       : [];
-  const repeatedVariantGroups = Array.from(
-    new Set(
-      normalizedExercises
-        .map((exercise) => exercise.variantGroup)
-        .filter((group) => recentPreferences.recentVariantGroups.has(group)),
-    ),
-  );
-  const repeatedPatternCount = normalizedExercises.filter((exercise) =>
-    recentPreferences.recentVariantGroups.has(exercise.variantGroup),
-  ).length;
-  const plannedProgressionRepeats =
-    isStrengthGoal(params.focusContext) && isIntermediateOrAbove(params.focusContext)
-      ? repeatedVariantGroups.filter((group) =>
-          normalizedExercises.some((exercise) =>
-            isLoadedProgressionExercise(exercise, params.focusContext) &&
-            exercise.variantGroup === group,
-          ),
-        )
-      : [];
-  const fallbackRepeats = repeatedVariantGroups.filter(
-    (group) => !plannedProgressionRepeats.includes(group),
-  );
   const fallbackBiasWarning =
     fallbackRepeats.length >= 2
       ? `Samma fallback-/variantgrupper återkom flera gånger: ${fallbackRepeats.join(", ")}.`
@@ -2925,7 +3223,7 @@ export function validateAndNormalizeAiExercises(params: {
       );
     })
     .map((exercise) => exercise.name);
-  const focusIntegrityScore = Math.max(
+  const rawFocusIntegrityScore = Math.max(
     0,
     100 -
       diagnostics.mustKeepViolations.length * 18 -
@@ -2934,6 +3232,10 @@ export function validateAndNormalizeAiExercises(params: {
       diagnostics.offFocusWarnings.length * 10 -
       diagnostics.missingPriorityMuscles.length * 12 -
       diagnostics.lostPrimaryRoles.length * 14,
+  );
+  const focusIntegrityScore = Math.min(
+    rawFocusIntegrityScore,
+    Math.max(qualityPreservationScore + 18, 0),
   );
   const normalizationLossScore = Math.max(
     0,
@@ -2949,13 +3251,17 @@ export function validateAndNormalizeAiExercises(params: {
     );
 
     if (hasPrimaryHit) {
-      return { muscle: group, status: "addressed" as const, reason: "Tränas direkt i slutpasset." };
+      return {
+        muscle: group,
+        status: "addressed_primary" as const,
+        reason: "Tränas direkt som primär muskel i slutpasset.",
+      };
     }
     if (hasSecondaryHit) {
       return {
         muscle: group,
-        status: "partially_addressed" as const,
-        reason: "Får viss stimulans via sekundär muskelroll i slutpasset.",
+        status: "addressed_secondary" as const,
+        reason: "Får tydlig sekundär stimulans i slutpasset.",
       };
     }
     if ((params.focusContext?.recoveryLimitedMuscles ?? []).includes(group)) {
@@ -2975,16 +3281,37 @@ export function validateAndNormalizeAiExercises(params: {
     if ((params.focusContext?.durationMinutes ?? 0) <= 25) {
       return {
         muscle: group,
-        status: "deferred_due_to_duration" as const,
+        status: "dropped_by_duration_trim" as const,
         reason: "Kort pass prioriterade basroller före extra prioriteringsmuskler.",
       };
     }
     return {
       muscle: group,
-      status: "dropped_by_normalization" as const,
-      reason: "Fanns i tidigare steg men överlevde inte slutlig normalisering.",
+      status: "dropped_by_focus_repair" as const,
+      reason: "Fanns i tidigare steg men överlevde inte focus repair eller slutlig normalisering.",
     };
   });
+  const recoveryLimitedSeverityByMuscle = (params.focusContext?.recoveryLimitedMuscles ?? []).map((muscle) => ({
+    muscle,
+    severity: getRecoverySeverityByMuscle({ muscle, focusContext: params.focusContext }),
+  }));
+  const blockedByRecoveryHard = compatibleExercisesRejectedWithReason
+    .filter((entry) => entry.reason.includes("återhämtnings"))
+    .map((entry) => entry.exerciseName);
+  const allowedAsLightRecovery = normalizedExercises
+    .filter((exercise) => canServeAsLightRecovery(exercise, params.focusContext))
+    .map((exercise) => exercise.name);
+  const rejectedDueToRecoveryReason = compatibleExercisesRejectedWithReason
+    .filter((entry) => entry.reason.includes("återhämtnings"))
+    .map((entry) => ({ exerciseName: entry.exerciseName, reason: entry.reason }));
+  const finalQualityWarnings = [
+    ...(qualityPreservationScore < 70
+      ? ["Fokus kan vara intakt men passet tappade nyttiga träningsroller under normaliseringen."]
+      : []),
+    ...(roleMismatchReplacements.length > 0
+      ? ["Minst en ersättning bytte träningsroll på ett tveksamt sätt."]
+      : []),
+  ];
 
   return {
     exercises: normalizedExercises.map((exercise) => ({
@@ -3040,6 +3367,15 @@ export function validateAndNormalizeAiExercises(params: {
       roleTrimReason,
       compatibleExercisesRejectedWithReason,
       priorityMuscleResolutionStatus,
+      qualityPenaltyBreakdown,
+      droppedHighValueExercises,
+      roleMismatchReplacements,
+      genericFallbacksAdded,
+      finalQualityWarnings,
+      recoveryLimitedSeverityByMuscle,
+      blockedByRecoveryHard,
+      allowedAsLightRecovery,
+      rejectedDueToRecoveryReason,
       primaryLiftCount,
       loadedProgressionExerciseCount,
       bodyweightOnlyCount,
