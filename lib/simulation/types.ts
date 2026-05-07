@@ -4,6 +4,11 @@ export type SimulationGoal =
   | "body_composition"
   | "health";
 
+export type SimulationWeeklyPlanFlexibility =
+  | "strict"
+  | "balanced"
+  | "flexible";
+
 export type SimulationPlannerMode =
   | "synthetic"
   | "hybrid_ai"
@@ -114,6 +119,9 @@ export type SimulationUserProfile = {
   tertiaryPriorityMuscle?: SimulationPriorityMuscle | null;
   preferredWorkoutDaysPerWeek: number;
   preferredSessionDurationMin: number;
+  weeklyPlanMinDurationMin?: number;
+  weeklyPlanMaxDurationMin?: number;
+  weeklyPlanFlexibility?: SimulationWeeklyPlanFlexibility;
   adherenceProfile: SimulationAdherenceProfile;
   recoveryProfile: SimulationRecoveryProfile;
   energyTrend: SimulationEnergyTrend;
@@ -257,6 +265,10 @@ export type SimulationPlannerDebugEntry = {
   validationDiagnostics?: {
     focusIntegrityScore: number;
     strengthSpecificityScore: number;
+    qualityPreservationScore: number;
+    goalSpecificityLoss: number;
+    sportSpecificityLoss: number;
+    catalogResolutionLoss: number;
     mustKeepViolations: string[];
     offFocusWarnings: string[];
     offFocusViolations: string[];
@@ -264,12 +276,38 @@ export type SimulationPlannerDebugEntry = {
     lostMovementPatterns: string[];
     lostPrimaryRoles: string[];
     lostPriorityMuscles: string[];
+    lostUsefulRoles: string[];
+    lostPrimaryOrHighValueExercises: string[];
+    lostSportRelevantExercises: string[];
+    sportRelevantExercisesKept: string[];
+    sportRelevantExercisesLost: string[];
     deferredPriorityMuscles: string[];
     removedPrimaryExercises: string[];
     addedOffFocusExercises: string[];
     removedBecauseOffFocus: string[];
     removedBecauseRecovery: string[];
     removedBecauseDuplicateRole: string[];
+    fallbackExercisesAdded: string[];
+    normalizationWarnings: string[];
+    fallbackBiasWarning: string | null;
+    durationTrimReason: string | null;
+    roleTrimReason: string | null;
+    compatibleExercisesRejectedWithReason: Array<{
+      exerciseName: string;
+      stage: "raw_to_catalog" | "catalog_to_focus_repair" | "focus_repair_to_final";
+      reason: string;
+    }>;
+    priorityMuscleResolutionStatus: Array<{
+      muscle: string;
+      status:
+        | "addressed"
+        | "partially_addressed"
+        | "deferred_due_to_focus"
+        | "deferred_due_to_recovery"
+        | "deferred_due_to_duration"
+        | "dropped_by_normalization";
+      reason: string;
+    }>;
     primaryLiftCount: number;
     loadedProgressionExerciseCount: number;
     bodyweightOnlyCount: number;
@@ -285,6 +323,7 @@ export type SimulationPlannerDebugEntry = {
       variantGroup: string;
       movementPattern: string;
       exerciseRole: string;
+      qualityRoles: string[];
     }>;
     afterCatalogMatch: Array<{
       exerciseId: string;
@@ -292,6 +331,7 @@ export type SimulationPlannerDebugEntry = {
       variantGroup: string;
       movementPattern: string;
       exerciseRole: string;
+      qualityRoles: string[];
     }>;
     afterFocusRepair: Array<{
       exerciseId: string;
@@ -299,6 +339,7 @@ export type SimulationPlannerDebugEntry = {
       variantGroup: string;
       movementPattern: string;
       exerciseRole: string;
+      qualityRoles: string[];
     }>;
     finalExercises: Array<{
       exerciseId: string;
@@ -306,6 +347,7 @@ export type SimulationPlannerDebugEntry = {
       variantGroup: string;
       movementPattern: string;
       exerciseRole: string;
+      qualityRoles: string[];
     }>;
     rawToCatalogDiff: Array<{
       type: "removed" | "added";
@@ -341,6 +383,7 @@ export type SimulationPlannerDebugEntry = {
       deferredPriorities: string[];
       recoveryLimitedMuscles: string[];
       availableEquipment: string[];
+      sportFocus?: string | null;
     };
   };
 };

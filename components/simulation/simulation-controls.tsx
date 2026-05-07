@@ -8,6 +8,7 @@ import type {
   SimulationReport,
   SimulationScenario,
   SimulationSportFocus,
+  SimulationWeeklyPlanFlexibility,
 } from "@/lib/simulation/types";
 
 export type SimulationGymOption = {
@@ -33,6 +34,8 @@ type SimulationControlsProps = {
   gymOptions: SimulationGymOption[];
   heightCm: number;
   loading: boolean;
+  maxDurationMinutes: number;
+  minDurationMinutes: number;
   onAgeChange: (age: number) => void;
   onPlannedWorkoutDayIndicesChange: (indices: number[]) => void;
   onDaysChange: (days: number) => void;
@@ -40,22 +43,27 @@ type SimulationControlsProps = {
   onGoalChange: (goal: SimulationGoal) => void;
   onGymChange: (gymId: string) => void;
   onHeightCmChange: (heightCm: number) => void;
+  onMaxDurationMinutesChange: (minutes: number) => void;
   onMaxAiGeneratedWorkoutsChange: (value: number) => void;
+  onMinDurationMinutesChange: (minutes: number) => void;
   onPlannerModeChange: (mode: SimulationPlannerMode) => void;
   onPriorityMusclesChange: (muscles: SimulationPriorityMuscle[]) => void;
   onPreferredSessionDurationMinChange: (minutes: number) => void;
   onRun: () => void;
   onScenarioChange: (scenario: SimulationScenario) => void;
+  onSessionsPerWeekChange: (value: number) => void;
   onSexChange: (sex: "male" | "female" | "other") => void;
   onSportFocusChange: (sportFocus: SimulationSportFocus) => void;
   onStartDateChange: (startDate: string) => void;
   onWeightKgChange: (weightKg: number) => void;
+  onWeeklyPlanFlexibilityChange: (value: SimulationWeeklyPlanFlexibility) => void;
   plannerMode: SimulationPlannerMode;
   plannedWorkoutDayIndices: number[];
   preferredSessionDurationMin: number;
   priorityMuscles: SimulationPriorityMuscle[];
   report: SimulationReport | null;
   scenario: SimulationScenario;
+  sessionsPerWeek: number;
   selectedGymId: string;
   seed: number;
   sex: "male" | "female" | "other";
@@ -63,6 +71,7 @@ type SimulationControlsProps = {
   onSeedChange: (seed: number) => void;
   startDate: string;
   maxAiGeneratedWorkouts: number;
+  weeklyPlanFlexibility: SimulationWeeklyPlanFlexibility;
   weightKg: number;
 };
 
@@ -103,6 +112,14 @@ const PRIORITY_MUSCLE_OPTIONS: Array<[SimulationPriorityMuscle, string]> = [
   ["core", "Bål"],
 ];
 
+const FLEXIBILITY_OPTIONS: Array<
+  [SimulationWeeklyPlanFlexibility, string, string]
+> = [
+  ["strict", "Strikt", "Håll rekommendationerna nära valda dagar."],
+  ["balanced", "Balanserad", "Lite spelrum, men tydlig veckostruktur."],
+  ["flexible", "Flexibel", "Utgå mer från vad som faktiskt hinns med."],
+];
+
 const WEEKDAY_OPTIONS = [
   { index: 1, shortLabel: "Mån" },
   { index: 2, shortLabel: "Tis" },
@@ -136,7 +153,7 @@ export default function SimulationControls(props: SimulationControlsProps) {
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="grid gap-2 text-sm font-medium text-slate-700">
-          Gym
+          Favoritgym
           <select
             value={props.selectedGymId}
             onChange={(event) => props.onGymChange(event.target.value)}
@@ -288,6 +305,42 @@ export default function SimulationControls(props: SimulationControlsProps) {
         </label>
 
         <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Antal pass per vecka
+          <input
+            min={1}
+            max={6}
+            type="number"
+            value={props.sessionsPerWeek}
+            onChange={(event) => props.onSessionsPerWeekChange(Number(event.target.value))}
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          />
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Kortaste pass (min)
+          <input
+            min={10}
+            max={120}
+            type="number"
+            value={props.minDurationMinutes}
+            onChange={(event) => props.onMinDurationMinutesChange(Number(event.target.value))}
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          />
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Längsta pass (min)
+          <input
+            min={10}
+            max={180}
+            type="number"
+            value={props.maxDurationMinutes}
+            onChange={(event) => props.onMaxDurationMinutesChange(Number(event.target.value))}
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          />
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
           Antal dagar (7-84)
           <input
             min={7}
@@ -355,6 +408,33 @@ export default function SimulationControls(props: SimulationControlsProps) {
       </div>
 
       <div className="mt-5">
+        <p className="text-sm font-medium text-slate-700">Flexibilitet</p>
+        <p className="mt-1 text-xs text-slate-500">
+          Samma typ av veckoplanval som på `/home/plan`.
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {FLEXIBILITY_OPTIONS.map(([value, label, description]) => {
+            const selected = props.weeklyPlanFlexibility === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => props.onWeeklyPlanFlexibilityChange(value)}
+                className={`rounded-2xl border px-4 py-3 text-left transition ${
+                  selected
+                    ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                    : "border-slate-200 bg-slate-50 text-slate-700"
+                }`}
+              >
+                <span className="block text-sm font-medium">{label}</span>
+                <span className="mt-1 block text-xs text-current/80">{description}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-5">
         <p className="text-sm font-medium text-slate-700">
           Prioriterade muskelgrupper
         </p>
@@ -405,9 +485,9 @@ export default function SimulationControls(props: SimulationControlsProps) {
       ) : null}
 
       <div className="mt-5">
-        <p className="text-sm font-medium text-slate-700">Planerade träningsdagar</p>
+        <p className="text-sm font-medium text-slate-700">Föredragna träningsdagar</p>
         <p className="mt-1 text-xs text-slate-500">
-          Välj veckodagar för att testa hur passen sprids över datum.
+          Välj samma typ av hjälpsamma dagar som i veckoplanen. De styr upplägget utan att låsa simuleringen helt.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {WEEKDAY_OPTIONS.map((day) => {

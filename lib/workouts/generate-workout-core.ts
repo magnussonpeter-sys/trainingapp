@@ -664,6 +664,7 @@ Viktiga regler:
 export async function generateWorkoutWithAiCore(
   params: GenerateWorkoutWithAiCoreInput,
 ): Promise<GenerateWorkoutWithAiCoreResult> {
+  const sportFocus = normalizeSportFocus(params.settings?.sport_focus);
   const availableExercises = getAvailableExercises(params.equipment);
   const recentExercisePreferences = buildRecentExercisePreferences(params.historyLogs);
   const longTermPriorityMuscles = getLongTermPriorityMuscles({
@@ -694,7 +695,7 @@ export async function generateWorkoutWithAiCore(
   const avoidSupersets = supersetPreference === "avoid_all";
   const availableExercisePrompt = buildAvailableExercisePrompt(
     availableExercises,
-    params.settings?.sport_focus ?? null,
+    sportFocus,
   );
   const prompt = buildGenerationPrompt({
     availableExercisePrompt,
@@ -786,6 +787,7 @@ export async function generateWorkoutWithAiCore(
         ]),
       ),
       availableEquipment: params.equipment,
+      sportFocus,
     } satisfies GeneratedWorkoutValidationFocusContext,
     availableEquipment: params.equipment,
     candidate: parsed,

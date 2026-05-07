@@ -145,6 +145,10 @@ function extractValidationDiagnostics(value: unknown) {
     validation?: {
       focusIntegrityScore?: number;
       strengthSpecificityScore?: number;
+      qualityPreservationScore?: number;
+      goalSpecificityLoss?: number;
+      sportSpecificityLoss?: number;
+      catalogResolutionLoss?: number;
       mustKeepViolations?: string[];
       offFocusWarnings?: string[];
       offFocusViolations?: string[];
@@ -152,12 +156,38 @@ function extractValidationDiagnostics(value: unknown) {
       lostMovementPatterns?: string[];
       lostPrimaryRoles?: string[];
       lostPriorityMuscles?: string[];
+      lostUsefulRoles?: string[];
+      lostPrimaryOrHighValueExercises?: string[];
+      lostSportRelevantExercises?: string[];
+      sportRelevantExercisesKept?: string[];
+      sportRelevantExercisesLost?: string[];
       deferredPriorityMuscles?: string[];
       removedPrimaryExercises?: string[];
       addedOffFocusExercises?: string[];
       removedBecauseOffFocus?: string[];
       removedBecauseRecovery?: string[];
       removedBecauseDuplicateRole?: string[];
+      fallbackExercisesAdded?: string[];
+      normalizationWarnings?: string[];
+      fallbackBiasWarning?: string | null;
+      durationTrimReason?: string | null;
+      roleTrimReason?: string | null;
+      compatibleExercisesRejectedWithReason?: Array<{
+        exerciseName?: string;
+        stage?: "raw_to_catalog" | "catalog_to_focus_repair" | "focus_repair_to_final";
+        reason?: string;
+      }>;
+      priorityMuscleResolutionStatus?: Array<{
+        muscle?: string;
+        status?:
+          | "addressed"
+          | "partially_addressed"
+          | "deferred_due_to_focus"
+          | "deferred_due_to_recovery"
+          | "deferred_due_to_duration"
+          | "dropped_by_normalization";
+        reason?: string;
+      }>;
       primaryLiftCount?: number;
       loadedProgressionExerciseCount?: number;
       bodyweightOnlyCount?: number;
@@ -173,6 +203,7 @@ function extractValidationDiagnostics(value: unknown) {
         variantGroup?: string;
         movementPattern?: string;
         exerciseRole?: string;
+        qualityRoles?: string[];
       }>;
       afterCatalogMatch?: Array<{
         exerciseId?: string;
@@ -180,6 +211,7 @@ function extractValidationDiagnostics(value: unknown) {
         variantGroup?: string;
         movementPattern?: string;
         exerciseRole?: string;
+        qualityRoles?: string[];
       }>;
       afterFocusRepair?: Array<{
         exerciseId?: string;
@@ -187,6 +219,7 @@ function extractValidationDiagnostics(value: unknown) {
         variantGroup?: string;
         movementPattern?: string;
         exerciseRole?: string;
+        qualityRoles?: string[];
       }>;
       finalExercises?: Array<{
         exerciseId?: string;
@@ -194,6 +227,7 @@ function extractValidationDiagnostics(value: unknown) {
         variantGroup?: string;
         movementPattern?: string;
         exerciseRole?: string;
+        qualityRoles?: string[];
       }>;
       rawToCatalogDiff?: Array<{
         type?: "removed" | "added";
@@ -229,6 +263,7 @@ function extractValidationDiagnostics(value: unknown) {
         deferredPriorities?: string[];
         recoveryLimitedMuscles?: string[];
         availableEquipment?: string[];
+        sportFocus?: string | null;
       };
     };
   };
@@ -246,6 +281,22 @@ function extractValidationDiagnostics(value: unknown) {
     strengthSpecificityScore:
       typeof validation.strengthSpecificityScore === "number"
         ? validation.strengthSpecificityScore
+        : 0,
+    qualityPreservationScore:
+      typeof validation.qualityPreservationScore === "number"
+        ? validation.qualityPreservationScore
+        : 0,
+    goalSpecificityLoss:
+      typeof validation.goalSpecificityLoss === "number"
+        ? validation.goalSpecificityLoss
+        : 0,
+    sportSpecificityLoss:
+      typeof validation.sportSpecificityLoss === "number"
+        ? validation.sportSpecificityLoss
+        : 0,
+    catalogResolutionLoss:
+      typeof validation.catalogResolutionLoss === "number"
+        ? validation.catalogResolutionLoss
         : 0,
     mustKeepViolations: Array.isArray(validation.mustKeepViolations)
       ? validation.mustKeepViolations
@@ -270,6 +321,23 @@ function extractValidationDiagnostics(value: unknown) {
     lostPriorityMuscles: Array.isArray(validation.lostPriorityMuscles)
       ? validation.lostPriorityMuscles
       : [],
+    lostUsefulRoles: Array.isArray(validation.lostUsefulRoles)
+      ? validation.lostUsefulRoles
+      : [],
+    lostPrimaryOrHighValueExercises: Array.isArray(
+      validation.lostPrimaryOrHighValueExercises,
+    )
+      ? validation.lostPrimaryOrHighValueExercises
+      : [],
+    lostSportRelevantExercises: Array.isArray(validation.lostSportRelevantExercises)
+      ? validation.lostSportRelevantExercises
+      : [],
+    sportRelevantExercisesKept: Array.isArray(validation.sportRelevantExercisesKept)
+      ? validation.sportRelevantExercisesKept
+      : [],
+    sportRelevantExercisesLost: Array.isArray(validation.sportRelevantExercisesLost)
+      ? validation.sportRelevantExercisesLost
+      : [],
     deferredPriorityMuscles: Array.isArray(validation.deferredPriorityMuscles)
       ? validation.deferredPriorityMuscles
       : [],
@@ -287,6 +355,58 @@ function extractValidationDiagnostics(value: unknown) {
       : [],
     removedBecauseDuplicateRole: Array.isArray(validation.removedBecauseDuplicateRole)
       ? validation.removedBecauseDuplicateRole
+      : [],
+    fallbackExercisesAdded: Array.isArray(validation.fallbackExercisesAdded)
+      ? validation.fallbackExercisesAdded
+      : [],
+    normalizationWarnings: Array.isArray(validation.normalizationWarnings)
+      ? validation.normalizationWarnings
+      : [],
+    fallbackBiasWarning:
+      typeof validation.fallbackBiasWarning === "string"
+        ? validation.fallbackBiasWarning
+        : null,
+    durationTrimReason:
+      typeof validation.durationTrimReason === "string"
+        ? validation.durationTrimReason
+        : null,
+    roleTrimReason:
+      typeof validation.roleTrimReason === "string"
+        ? validation.roleTrimReason
+        : null,
+    compatibleExercisesRejectedWithReason: Array.isArray(
+      validation.compatibleExercisesRejectedWithReason,
+    )
+      ? validation.compatibleExercisesRejectedWithReason.filter(
+          (
+            entry,
+          ): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["compatibleExercisesRejectedWithReason"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.exerciseName === "string" &&
+                typeof entry.stage === "string" &&
+                typeof entry.reason === "string",
+            ),
+        )
+      : [],
+    priorityMuscleResolutionStatus: Array.isArray(
+      validation.priorityMuscleResolutionStatus,
+    )
+      ? validation.priorityMuscleResolutionStatus.filter(
+          (
+            entry,
+          ): entry is NonNullable<
+            NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>["priorityMuscleResolutionStatus"]
+          >[number] =>
+            Boolean(
+              entry &&
+                typeof entry.muscle === "string" &&
+                typeof entry.status === "string" &&
+                typeof entry.reason === "string",
+            ),
+        )
       : [],
     primaryLiftCount:
       typeof validation.primaryLiftCount === "number"
@@ -331,7 +451,8 @@ function extractValidationDiagnostics(value: unknown) {
                 typeof entry.exerciseName === "string" &&
                 typeof entry.variantGroup === "string" &&
                 typeof entry.movementPattern === "string" &&
-                typeof entry.exerciseRole === "string",
+                typeof entry.exerciseRole === "string" &&
+                Array.isArray(entry.qualityRoles),
             ),
         )
       : [],
@@ -346,7 +467,8 @@ function extractValidationDiagnostics(value: unknown) {
                 typeof entry.exerciseName === "string" &&
                 typeof entry.variantGroup === "string" &&
                 typeof entry.movementPattern === "string" &&
-                typeof entry.exerciseRole === "string",
+                typeof entry.exerciseRole === "string" &&
+                Array.isArray(entry.qualityRoles),
             ),
         )
       : [],
@@ -361,7 +483,8 @@ function extractValidationDiagnostics(value: unknown) {
                 typeof entry.exerciseName === "string" &&
                 typeof entry.variantGroup === "string" &&
                 typeof entry.movementPattern === "string" &&
-                typeof entry.exerciseRole === "string",
+                typeof entry.exerciseRole === "string" &&
+                Array.isArray(entry.qualityRoles),
             ),
         )
       : [],
@@ -376,7 +499,8 @@ function extractValidationDiagnostics(value: unknown) {
                 typeof entry.exerciseName === "string" &&
                 typeof entry.variantGroup === "string" &&
                 typeof entry.movementPattern === "string" &&
-                typeof entry.exerciseRole === "string",
+                typeof entry.exerciseRole === "string" &&
+                Array.isArray(entry.qualityRoles),
             ),
         )
       : [],
@@ -483,6 +607,10 @@ function extractValidationDiagnostics(value: unknown) {
             )
               ? validation.validationContext.availableEquipment
               : [],
+            sportFocus:
+              typeof validation.validationContext.sportFocus === "string"
+                ? validation.validationContext.sportFocus
+                : null,
           }
         : undefined,
   } satisfies NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>;
@@ -979,6 +1107,53 @@ export async function runFullAppChainSimulation(params?: {
         random,
       })
     ) {
+      const currentDate = new Date(`${dayPlan.date}T12:00:00`);
+      const weekStartDate = getWeekStartDate(currentDate);
+      const simulationPriorityMuscles = getSimulationPriorityMuscles(
+        config.scenario ?? "normal",
+      );
+      const weeklySettings: WeeklyPlanSettings = buildSimulationWeeklyPlanSettings({
+        profile: {
+          ...effectiveSimulationProfile,
+          goal: effectiveProfileBundle.effectiveUserProfile.effectiveGoal,
+          experienceLevel:
+            effectiveProfileBundle.effectiveUserProfile.effectiveExperienceLevel,
+          preferredSessionDurationMin:
+            effectiveProfileBundle.effectiveUserProfile
+              .effectivePreferredDurationMinutes ??
+            profile.preferredSessionDurationMin,
+          availableEquipmentIds:
+            effectiveProfileBundle.effectiveUserProfile.effectiveEquipment,
+        },
+        plannedWorkoutDayIndices,
+        priorityMuscles: simulationPriorityMuscles,
+        nowIso: dayPlan.date,
+      });
+      const plannedSessions = buildSimulationWeekPlannedSessions({
+        settings: weeklySettings,
+        weekStartDate,
+      });
+      const weeklyPlanState = deriveWeeklyPlanState({
+        settings: weeklySettings,
+        plannedSessions,
+        workoutLogs,
+        now: currentDate,
+        goal: effectiveSimulationProfile.goal,
+        priorityMuscles: simulationPriorityMuscles,
+      });
+      const weeklyPlanStatus = buildWeeklyPlanStatus(weeklyPlanState);
+      const weeklyPlanContext = buildWeeklyPlanContext(weeklyPlanState);
+      const trainingHistoryContext = buildTrainingHistoryContext({
+        workoutLogs,
+        now: currentDate,
+        weeklyPlanPriorityMuscles: weeklyPlanContext.priorityMuscles,
+        weeklyPlanDeficits: weeklyPlanContext.muscleSetDeficits,
+        adherenceEstimate:
+          weeklyPlanContext.sessionsPerWeek > 0
+            ? weeklyPlanContext.completedSessionCreditThisWeek /
+              weeklyPlanContext.sessionsPerWeek
+            : null,
+      });
       const spontaneousPlan = {
         ...dayPlan,
         targetDurationMin: Math.max(
@@ -988,42 +1163,259 @@ export async function runFullAppChainSimulation(params?: {
           ),
         ),
       };
-      const spontaneousExercises = buildSyntheticWorkoutPlan({
-        dayPlan: spontaneousPlan,
-        profile: effectiveSimulationProfile,
-        random,
-        state: stateBefore,
-        focusHint: getScenarioSpontaneousFocus(),
+      const scenarioSpontaneousFocus = getScenarioSpontaneousFocus();
+      const spontaneousWorkoutFocus: WorkoutFocus =
+        weeklyPlanStatus.suggestedNextWorkoutFocus === "recovery_strength"
+          ? "full_body"
+          : weeklyPlanStatus.suggestedNextWorkoutFocus;
+      const aiSpontaneousFocus = scenarioSpontaneousFocus ?? spontaneousWorkoutFocus;
+      const selectedPlanMode =
+        weeklyPlanStatus.suggestedNextWorkoutFocus === "recovery_strength"
+          ? "recovery"
+          : null;
+      const recentExercises = getRecentExerciseDebug(dailySnapshots);
+      const promptContextSummary = buildPromptContextSummary({
+        suggestedFocus:
+          scenarioSpontaneousFocus ??
+          weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
+        suggestedDurationMinutes: spontaneousPlan.targetDurationMin,
+        priorityMuscles: weeklyPlanContext.priorityMuscles,
+        recoveryLimitedMuscles: weeklyPlanContext.recoveryLimitedMuscles,
+        typicalWorkoutDurationMinutes:
+          trainingHistoryContext.mediumTermTrainingSummary.typicalWorkoutDurationMinutes,
       });
-      workoutResult = simulateWorkout({
-        dayPlan: spontaneousPlan,
-        plannedExercises: spontaneousExercises,
+      const settingsSummary = buildSimulationSettingsSummary({
         profile: effectiveSimulationProfile,
-        random,
-        state: stateBefore,
+        scenario: config.scenario ?? "normal",
+        baseSettings: effectiveProfileBundle.settingsSummary,
       });
-      workoutResult = {
-        ...workoutResult,
-        workoutName: "Spontant pass före planerad träningsdag",
-        actualDurationMin: adjustScenarioWorkoutDuration({
-          scenario: config.scenario ?? "normal",
-          plannedDurationMin: workoutResult.plannedDurationMin,
-          actualDurationMin: workoutResult.actualDurationMin,
+      const canUseRealAi =
+        aiGeneratedWorkoutCount < (config.maxAiGeneratedWorkouts ?? 4);
+
+      if (canUseRealAi) {
+        const generatedWorkout = await generateWorkoutWithAiCore({
+          goal: effectiveSimulationProfile.goal,
+          durationMinutes: spontaneousPlan.targetDurationMin,
+          equipment: effectiveSimulationProfile.availableEquipmentIds,
+          gymEquipmentDetails: [],
+          gym:
+            typeof effectiveSimulationProfile.availableGymId === "number"
+              ? String(effectiveSimulationProfile.availableGymId)
+              : null,
+          gymLabel: null,
+          confidenceScore: null,
+          nextFocus: aiSpontaneousFocus,
+          splitStyle: null,
+          weeklyBudget: buildWeeklyBudgetPromptItems(weeklyPlanState),
+          weeklyPlan: buildWeeklyPlanPromptItems(plannedSessions),
+          selectedPlanMode,
+          focusIntent: `${weeklyPlanContext.coachText} Spontant extrapass på vilodag.`,
+          targetMuscles: weeklyPlanContext.priorityMuscles,
+          avoidMuscles: weeklyPlanContext.recoveryLimitedMuscles,
+          limitedMuscles: [],
+          weeklyPlanContext,
+          trainingGap: null,
+          lessOftenExerciseIds: [],
+          focusMuscles: [],
+          avoidSupersets: false,
+          supersetPreference: null,
+          settings: settingsSummary,
+          historyLogs: workoutLogs,
+        });
+
+        if (generatedWorkout.ok) {
+          aiGeneratedWorkoutCount += 1;
+          const normalizedWorkout = generatedWorkout.workout;
+          const plannedExercises = adaptNormalizedWorkoutToSimulationPlan(
+            normalizedWorkout,
+          );
+          workoutResult = simulateWorkout({
+            dayPlan: spontaneousPlan,
+            plannedExercises,
+            profile: effectiveSimulationProfile,
+            random,
+            state: stateBefore,
+          });
+          workoutResult = {
+            ...workoutResult,
+            workoutName: normalizedWorkout.name,
+            actualDurationMin: adjustScenarioWorkoutDuration({
+              scenario: config.scenario ?? "normal",
+              plannedDurationMin: workoutResult.plannedDurationMin,
+              actualDurationMin: workoutResult.actualDurationMin,
+              random,
+            }),
+          };
+          stateAfter = applyWorkoutFatigue(
+            stateBefore,
+            workoutResult,
+            effectiveSimulationProfile,
+            config,
+          );
+          dayEvent = "spontaneous_training";
+          generatedWorkoutSummary = {
+            workoutId: workoutResult.workoutId,
+            workoutName: normalizedWorkout.name,
+            blockCount: normalizedWorkout.blocks.length,
+            exerciseCount: normalizedWorkout.blocks.reduce(
+              (sum, block) => sum + block.exercises.length,
+              0,
+            ),
+            estimatedVolumeScore: workoutResult.estimatedLoadScore,
+            plannerSource: "full_app_chain",
+            plannerNote:
+              "Scenario lade in ett spontant pass som AI-genererades och påverkar nästa veckoplanbeslut.",
+            passGenerationMode: "real_ai",
+          };
+
+          if (config.enablePlannerDebug) {
+            const beforeNormalization = buildPlannerDebugExercisesFromWorkout(
+              normalizedWorkout.aiDebug?.parsedAiResponse,
+            );
+            const afterNormalization = buildPlannerDebugExercisesFromWorkout(
+              normalizedWorkout,
+            );
+            const validationDiagnostics = extractValidationDiagnostics(
+              normalizedWorkout.aiDebug?.validatedWorkout,
+            );
+
+            plannerDebug.push({
+              dayIndex,
+              date: dayPlan.date,
+              weekday: dayPlan.weekday,
+              isPlannedTrainingDay: false,
+              plannerMode: "full_app_chain",
+              source: "full_app_chain",
+              beforeNormalization:
+                beforeNormalization.length > 0
+                  ? beforeNormalization
+                  : afterNormalization,
+              afterNormalization,
+              repeatedAggregationKeys: findRepeatedKeys({
+                recentExercises,
+                afterNormalization,
+              }),
+              note: generatedWorkoutSummary.plannerNote,
+              realAppPlanner: {
+                weekStartDate,
+                suggestedNextFocus:
+                  weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
+                suggestedNextWorkoutFocus:
+                  weeklyPlanStatus.suggestedNextWorkoutFocus,
+                suggestedNextDurationMinutes: spontaneousPlan.targetDurationMin,
+                coachText: weeklyPlanContext.coachText,
+                goalReached: weeklyPlanStatus.goalReached,
+                priorityMuscles: weeklyPlanContext.priorityMuscles,
+                recoveryLimitedMuscles:
+                  weeklyPlanContext.recoveryLimitedMuscles,
+                muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
+                passGenerationMode: "real_ai",
+                aiRequestUsed: true,
+                promptContextSummary,
+              },
+              trainingHistoryContextSummary: {
+                recentWorkoutsCount: trainingHistoryContext.recentWorkouts.length,
+                progressionMemoryExerciseCount:
+                  trainingHistoryContext.exerciseProgressionMemory.length,
+                mediumTermWindowDays:
+                  trainingHistoryContext.mediumTermTrainingSummary.windowDays,
+                dataQuality: trainingHistoryContext.dataQuality,
+                typicalWorkoutDurationMinutes:
+                  trainingHistoryContext.mediumTermTrainingSummary
+                    .typicalWorkoutDurationMinutes,
+              },
+              validationDiagnostics: validationDiagnostics ?? undefined,
+            });
+          }
+        } else {
+          aiFallbackWorkoutCount += 1;
+          const spontaneousExercises = buildSyntheticWorkoutPlan({
+            dayPlan: spontaneousPlan,
+            profile: effectiveSimulationProfile,
+            random,
+            state: stateBefore,
+            focusHint: aiSpontaneousFocus,
+          });
+          workoutResult = simulateWorkout({
+            dayPlan: spontaneousPlan,
+            plannedExercises: spontaneousExercises,
+            profile: effectiveSimulationProfile,
+            random,
+            state: stateBefore,
+          });
+          workoutResult = {
+            ...workoutResult,
+            workoutName: "Spontant extrapass",
+            actualDurationMin: adjustScenarioWorkoutDuration({
+              scenario: config.scenario ?? "normal",
+              plannedDurationMin: workoutResult.plannedDurationMin,
+              actualDurationMin: workoutResult.actualDurationMin,
+              random,
+            }),
+          };
+          stateAfter = applyWorkoutFatigue(
+            stateBefore,
+            workoutResult,
+            effectiveSimulationProfile,
+            config,
+          );
+          dayEvent = "spontaneous_training";
+          generatedWorkoutSummary = {
+            workoutId: workoutResult.workoutId,
+            workoutName: workoutResult.workoutName,
+            blockCount: workoutResult.exerciseResults.length > 3 ? 2 : 1,
+            exerciseCount: workoutResult.exerciseResults.length,
+            estimatedVolumeScore: workoutResult.estimatedLoadScore,
+            plannerSource: "ai_fallback",
+            plannerNote: `Spontant pass föll tillbaka till mockat pass eftersom AI-genereringen misslyckades: ${generatedWorkout.error}.`,
+            passGenerationMode: "fallback_mock",
+          };
+        }
+      } else {
+        aiLimitReached = true;
+        aiFallbackWorkoutCount += 1;
+        const spontaneousExercises = buildSyntheticWorkoutPlan({
+          dayPlan: spontaneousPlan,
+          profile: effectiveSimulationProfile,
           random,
-        }),
-      };
-      stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
-      dayEvent = "spontaneous_training";
-      generatedWorkoutSummary = {
-        workoutId: workoutResult.workoutId,
-        workoutName: workoutResult.workoutName,
-        blockCount: workoutResult.exerciseResults.length > 3 ? 2 : 1,
-        exerciseCount: workoutResult.exerciseResults.length,
-        estimatedVolumeScore: workoutResult.estimatedLoadScore,
-        plannerSource: "synthetic",
-        plannerNote: "Scenario lade in ett spontant pass som påverkar nästa veckoplanbeslut.",
-        passGenerationMode: "mock_synthetic",
-      };
+          state: stateBefore,
+          focusHint: aiSpontaneousFocus,
+        });
+        workoutResult = simulateWorkout({
+          dayPlan: spontaneousPlan,
+          plannedExercises: spontaneousExercises,
+          profile: effectiveSimulationProfile,
+          random,
+          state: stateBefore,
+        });
+        workoutResult = {
+          ...workoutResult,
+          workoutName: "Spontant extrapass",
+          actualDurationMin: adjustScenarioWorkoutDuration({
+            scenario: config.scenario ?? "normal",
+            plannedDurationMin: workoutResult.plannedDurationMin,
+            actualDurationMin: workoutResult.actualDurationMin,
+            random,
+          }),
+        };
+        stateAfter = applyWorkoutFatigue(
+          stateBefore,
+          workoutResult,
+          effectiveSimulationProfile,
+          config,
+        );
+        dayEvent = "spontaneous_training";
+        generatedWorkoutSummary = {
+          workoutId: workoutResult.workoutId,
+          workoutName: workoutResult.workoutName,
+          blockCount: workoutResult.exerciseResults.length > 3 ? 2 : 1,
+          exerciseCount: workoutResult.exerciseResults.length,
+          estimatedVolumeScore: workoutResult.estimatedLoadScore,
+          plannerSource: "ai_fallback",
+          plannerNote: `Maxgränsen för AI-pass (${config.maxAiGeneratedWorkouts}) nåddes. Det spontana passet mockades syntetiskt.`,
+          passGenerationMode: "fallback_mock",
+        };
+      }
     } else {
       stateAfter = applyRestDayRecovery(stateBefore, effectiveSimulationProfile, config);
     }
@@ -1044,7 +1436,7 @@ export async function runFullAppChainSimulation(params?: {
 
   if (aiLimitReached) {
     notes.push(
-      `AI-gränsen nåddes efter ${aiGeneratedWorkoutCount} riktiga AI-pass. Resterande planerade pass mockades syntetiskt.`,
+      `AI-gränsen nåddes efter ${aiGeneratedWorkoutCount} riktiga AI-pass. Resterande pass, inklusive spontana extrapass, mockades syntetiskt.`,
     );
   }
 

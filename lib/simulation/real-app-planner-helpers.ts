@@ -65,24 +65,33 @@ export function buildSimulationWeeklyPlanSettings(params: {
   const normalizedPreferredDays: Weekday[] =
     preferredDays.length > 0 ? preferredDays : ["monday", "wednesday", "friday"];
   const defaultDurationMinutes = Math.max(20, Math.round(params.profile.preferredSessionDurationMin));
+  const minDurationMinutes =
+    typeof params.profile.weeklyPlanMinDurationMin === "number"
+      ? Math.max(10, Math.round(params.profile.weeklyPlanMinDurationMin))
+      : Math.max(15, Math.round(defaultDurationMinutes * 0.55));
+  const maxDurationMinutes =
+    typeof params.profile.weeklyPlanMaxDurationMin === "number"
+      ? Math.max(minDurationMinutes, Math.round(params.profile.weeklyPlanMaxDurationMin))
+      : Math.max(defaultDurationMinutes, Math.round(defaultDurationMinutes * 1.35));
 
   return {
     userId: params.profile.id,
     sessionsPerWeek: Math.min(Math.max(params.profile.preferredWorkoutDaysPerWeek, 1), 6),
     preferredDays: normalizedPreferredDays,
     defaultDurationMinutes,
-    minDurationMinutes: Math.max(15, Math.round(defaultDurationMinutes * 0.55)),
-    maxDurationMinutes: Math.max(defaultDurationMinutes, Math.round(defaultDurationMinutes * 1.35)),
+    minDurationMinutes,
+    maxDurationMinutes,
     preferredGymId:
       typeof params.profile.availableGymId === "number"
         ? String(params.profile.availableGymId)
         : null,
     flexibility:
-      params.profile.adherenceProfile === "high"
+      params.profile.weeklyPlanFlexibility ??
+      (params.profile.adherenceProfile === "high"
         ? "strict"
         : params.profile.adherenceProfile === "low"
           ? "flexible"
-          : "balanced",
+          : "balanced"),
     // Simulationsläget återanvänder riktiga plannerkedjan utan att införa manuella veckoval i UI.
     priorityMuscles: params.priorityMuscles ?? [],
     easyMuscles: [],

@@ -107,7 +107,16 @@ export function buildSimulationSettingsSummary(params: {
   const priorityMuscles =
     params.scenario === "priority_upper_body"
       ? (["chest", "triceps", "biceps"] satisfies MuscleBudgetGroup[])
-      : [];
+      : ([
+          params.baseSettings?.primary_priority_muscle,
+          params.baseSettings?.secondary_priority_muscle,
+          params.baseSettings?.tertiary_priority_muscle,
+          params.profile.primaryPriorityMuscle,
+          params.profile.secondaryPriorityMuscle,
+          params.profile.tertiaryPriorityMuscle,
+        ].filter((value, index, array): value is MuscleBudgetGroup =>
+          typeof value === "string" && array.indexOf(value) === index
+        ));
 
   return {
     ...(params.baseSettings ?? {
@@ -117,7 +126,7 @@ export function buildSimulationSettingsSummary(params: {
       height_cm: params.profile.heightCm,
       experience_level: params.profile.experienceLevel,
       training_goal: params.profile.goal,
-      sport_focus: "none",
+      sport_focus: params.profile.sportFocus ?? "none",
       avoid_supersets: false,
       superset_preference: "allowed",
     }),

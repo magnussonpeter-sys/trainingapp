@@ -141,6 +141,9 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       validationDiagnostics
         ? `- Strength specificity: ${validationDiagnostics.strengthSpecificityScore}/100`
         : "- Strength specificity: saknas",
+      validationDiagnostics
+        ? `- Quality preservation: ${validationDiagnostics.qualityPreservationScore}/100 (målförlust ${validationDiagnostics.goalSpecificityLoss}, sportförlust ${validationDiagnostics.sportSpecificityLoss}, catalog loss ${validationDiagnostics.catalogResolutionLoss})`
+        : "- Quality preservation: saknas",
       validationDiagnostics?.mustKeepViolations.length
         ? `- Must-keep violationer: ${validationDiagnostics.mustKeepViolations.join("; ")}`
         : "- Must-keep violationer: inga",
@@ -165,12 +168,42 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       validationDiagnostics?.lostPrimaryRoles.length
         ? `- Tappade primärroller: ${validationDiagnostics.lostPrimaryRoles.join("; ")}`
         : "- Tappade primärroller: inga",
+      validationDiagnostics?.lostUsefulRoles.length
+        ? `- Tappade nyttiga roller: ${validationDiagnostics.lostUsefulRoles.join(", ")}`
+        : "- Tappade nyttiga roller: inga",
+      validationDiagnostics?.lostPrimaryOrHighValueExercises.length
+        ? `- Tappade högvärdesövningar: ${validationDiagnostics.lostPrimaryOrHighValueExercises.join(", ")}`
+        : "- Tappade högvärdesövningar: inga",
+      validationDiagnostics?.lostSportRelevantExercises.length
+        ? `- Tappade sportrelevanta övningar: ${validationDiagnostics.lostSportRelevantExercises.join(", ")}`
+        : "- Tappade sportrelevanta övningar: inga",
+      validationDiagnostics?.sportRelevantExercisesKept.length
+        ? `- Behållna sportrelevanta övningar: ${validationDiagnostics.sportRelevantExercisesKept.join(", ")}`
+        : "- Behållna sportrelevanta övningar: inga",
       validationDiagnostics?.removedPrimaryExercises.length
         ? `- Borttagna primärövningar: ${validationDiagnostics.removedPrimaryExercises.join(", ")}`
         : "- Borttagna primärövningar: inga",
       validationDiagnostics?.addedOffFocusExercises.length
         ? `- Tillagda off-focus-övningar: ${validationDiagnostics.addedOffFocusExercises.join(", ")}`
         : "- Tillagda off-focus-övningar: inga",
+      validationDiagnostics?.fallbackExercisesAdded.length
+        ? `- Tillagda fallback-övningar: ${validationDiagnostics.fallbackExercisesAdded.join(", ")}`
+        : "- Tillagda fallback-övningar: inga",
+      validationDiagnostics?.fallbackBiasWarning
+        ? `- Fallback-bias: ${validationDiagnostics.fallbackBiasWarning}`
+        : "- Fallback-bias: ingen tydlig",
+      validationDiagnostics?.priorityMuscleResolutionStatus.length
+        ? `- Priority status: ${validationDiagnostics.priorityMuscleResolutionStatus.map((entry) => `${entry.muscle}=${entry.status}`).join(", ")}`
+        : "- Priority status: saknas",
+      validationDiagnostics?.durationTrimReason
+        ? `- Duration trim: ${validationDiagnostics.durationTrimReason}`
+        : "- Duration trim: ingen särskild trimning",
+      validationDiagnostics?.roleTrimReason
+        ? `- Rolltrimning: ${validationDiagnostics.roleTrimReason}`
+        : "- Rolltrimning: ingen särskild rollförlust",
+      validationDiagnostics?.compatibleExercisesRejectedWithReason.length
+        ? `- Avvisade kompatibla övningar: ${validationDiagnostics.compatibleExercisesRejectedWithReason.map((entry) => `${entry.exerciseName} [${entry.stage}] (${entry.reason})`).join("; ")}`
+        : "- Avvisade kompatibla övningar: inga",
       validationDiagnostics?.beforeAfterDiff.length
         ? `- Före→efter diff: ${validationDiagnostics.beforeAfterDiff.map((entry) => `${entry.type === "removed" ? "bort" : "till"} ${entry.exerciseName} (${entry.reason})`).join("; ")}`
         : "- Före→efter diff: ingen större skillnad",
@@ -184,7 +217,7 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
         ? `- Focus repair→final diff: ${validationDiagnostics.focusRepairToFinalDiff.map((entry) => `${entry.type === "removed" ? "bort" : "till"} ${entry.exerciseName} (${entry.reason})`).join("; ")}`
         : "- Focus repair→final diff: ingen större skillnad",
       validationDiagnostics?.validationContext
-        ? `- Validation context: fokus ${validationDiagnostics.validationContext.plannedFocus ?? "-"}, mål ${validationDiagnostics.validationContext.goal}, nivå ${validationDiagnostics.validationContext.experienceLevel ?? "-"}, duration ${validationDiagnostics.validationContext.durationMinutes} min, compatible ${validationDiagnostics.validationContext.focusCompatiblePriorities.join(", ") || "inga"}, deferred ${validationDiagnostics.validationContext.deferredPriorities.join(", ") || "inga"}`
+        ? `- Validation context: fokus ${validationDiagnostics.validationContext.plannedFocus ?? "-"}, mål ${validationDiagnostics.validationContext.goal}, nivå ${validationDiagnostics.validationContext.experienceLevel ?? "-"}, duration ${validationDiagnostics.validationContext.durationMinutes} min, sport ${validationDiagnostics.validationContext.sportFocus ?? "none"}, compatible ${validationDiagnostics.validationContext.focusCompatiblePriorities.join(", ") || "inga"}, deferred ${validationDiagnostics.validationContext.deferredPriorities.join(", ") || "inga"}`
         : "- Validation context: saknas",
       `- Nyligen upprepade övningsmönster: ${debug?.repeatedAggregationKeys.length ?? 0}`,
       `- Debugnotering: ${debug?.note ?? snapshot.generatedWorkoutSummary?.plannerNote ?? "-"}`,

@@ -14,6 +14,10 @@ import SimulationSummaryCards from "@/components/simulation/simulation-summary-c
 import type { SimulationGymOption } from "@/components/simulation/simulation-controls";
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
 import { buildSimulationAnalysisExport } from "@/lib/simulation/build-analysis-export";
+import {
+  getStoredSimulationSettings,
+  saveStoredSimulationSettings,
+} from "@/lib/simulation/simulation-settings-storage";
 import { runSimulation } from "@/lib/simulation/run-simulation";
 import type {
   SimulationGoal,
@@ -23,6 +27,7 @@ import type {
   SimulationReport,
   SimulationScenario,
   SimulationSportFocus,
+  SimulationWeeklyPlanFlexibility,
 } from "@/lib/simulation/types";
 
 type ApiGym = {
@@ -100,7 +105,12 @@ export default function SimulationPage() {
   const [experienceLevel, setExperienceLevel] = useState<
     SimulationExperienceLevel | "novice"
   >("beginner");
+  const [sessionsPerWeek, setSessionsPerWeek] = useState(3);
   const [preferredSessionDurationMin, setPreferredSessionDurationMin] = useState(45);
+  const [minDurationMinutes, setMinDurationMinutes] = useState(25);
+  const [maxDurationMinutes, setMaxDurationMinutes] = useState(60);
+  const [weeklyPlanFlexibility, setWeeklyPlanFlexibility] =
+    useState<SimulationWeeklyPlanFlexibility>("balanced");
   const [sportFocus, setSportFocus] = useState<SimulationSportFocus>("none");
   const [priorityMuscles, setPriorityMuscles] = useState<SimulationPriorityMuscle[]>([]);
   const [gymOptions, setGymOptions] = useState<SimulationGymOption[]>([]);
@@ -112,10 +122,95 @@ export default function SimulationPage() {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
   const [showExport, setShowExport] = useState(false);
   const [report, setReport] = useState<SimulationReport | null>(buildInitialSimulationReport);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
   const analysisExport = useMemo(
     () => (report ? buildSimulationAnalysisExport(report) : ""),
     [report],
   );
+
+  useEffect(() => {
+    const stored = getStoredSimulationSettings();
+
+    if (stored) {
+      setDays(stored.days ?? 14);
+      setSeed(stored.seed ?? 42);
+      setStartDate(stored.startDate ?? new Date().toISOString().slice(0, 10));
+      setScenario(stored.scenario ?? "normal");
+      setGoal(stored.goal ?? "hypertrophy");
+      setSex(stored.sex ?? "male");
+      setAge(stored.age ?? 32);
+      setHeightCm(stored.heightCm ?? 178);
+      setWeightKg(stored.weightKg ?? 78);
+      setExperienceLevel(stored.experienceLevel ?? "beginner");
+      setSessionsPerWeek(stored.sessionsPerWeek ?? 3);
+      setPreferredSessionDurationMin(stored.preferredSessionDurationMin ?? 45);
+      setMinDurationMinutes(stored.minDurationMinutes ?? 25);
+      setMaxDurationMinutes(stored.maxDurationMinutes ?? 60);
+      setWeeklyPlanFlexibility(stored.weeklyPlanFlexibility ?? "balanced");
+      setSportFocus(stored.sportFocus ?? "none");
+      setPriorityMuscles(stored.priorityMuscles ?? []);
+      setSelectedGymId(stored.selectedGymId ?? "");
+      setPlannerMode(stored.plannerMode ?? "synthetic");
+      setMaxAiGeneratedWorkouts(stored.maxAiGeneratedWorkouts ?? 4);
+      setPlannedWorkoutDayIndices(stored.plannedWorkoutDayIndices ?? [1, 3, 5]);
+    }
+
+    setSettingsHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!settingsHydrated) {
+      return;
+    }
+
+    saveStoredSimulationSettings({
+      version: 1,
+      days,
+      seed,
+      startDate,
+      scenario,
+      goal,
+      sex,
+      age,
+      heightCm,
+      weightKg,
+      experienceLevel,
+      sessionsPerWeek,
+      preferredSessionDurationMin,
+      minDurationMinutes,
+      maxDurationMinutes,
+      weeklyPlanFlexibility,
+      sportFocus,
+      priorityMuscles,
+      selectedGymId,
+      plannerMode,
+      maxAiGeneratedWorkouts,
+      plannedWorkoutDayIndices,
+    });
+  }, [
+    age,
+    days,
+    experienceLevel,
+    goal,
+    heightCm,
+    maxAiGeneratedWorkouts,
+    maxDurationMinutes,
+    minDurationMinutes,
+    plannedWorkoutDayIndices,
+    plannerMode,
+    preferredSessionDurationMin,
+    priorityMuscles,
+    scenario,
+    seed,
+    selectedGymId,
+    sessionsPerWeek,
+    settingsHydrated,
+    sex,
+    sportFocus,
+    startDate,
+    weeklyPlanFlexibility,
+    weightKg,
+  ]);
 
   useEffect(() => {
     let isMounted = true;
@@ -190,7 +285,10 @@ export default function SimulationPage() {
         secondaryPriorityMuscle: priorityMuscles[1] ?? null,
         tertiaryPriorityMuscle: priorityMuscles[2] ?? null,
         preferredSessionDurationMin,
-        preferredWorkoutDaysPerWeek: Math.max(1, plannedWorkoutDayIndices.length),
+        preferredWorkoutDaysPerWeek: sessionsPerWeek,
+        weeklyPlanMinDurationMin: minDurationMinutes,
+        weeklyPlanMaxDurationMin: maxDurationMinutes,
+        weeklyPlanFlexibility,
         adherenceProfile: "medium" as const,
         recoveryProfile: "average" as const,
         energyTrend: "stable" as const,
@@ -263,6 +361,8 @@ export default function SimulationPage() {
           loading={loading}
           age={age}
           experienceLevel={experienceLevel}
+          maxDurationMinutes={maxDurationMinutes}
+          minDurationMinutes={minDurationMinutes}
           onPlannedWorkoutDayIndicesChange={setPlannedWorkoutDayIndices}
           onAgeChange={setAge}
           onDaysChange={setDays}
@@ -270,16 +370,20 @@ export default function SimulationPage() {
           onGoalChange={setGoal}
           onGymChange={setSelectedGymId}
           onHeightCmChange={setHeightCm}
+          onMaxDurationMinutesChange={setMaxDurationMinutes}
           onMaxAiGeneratedWorkoutsChange={setMaxAiGeneratedWorkouts}
+          onMinDurationMinutesChange={setMinDurationMinutes}
           onPlannerModeChange={handlePlannerModeChange}
           onPriorityMusclesChange={setPriorityMuscles}
           onRun={runRemoteSimulation}
           onScenarioChange={setScenario}
           onPreferredSessionDurationMinChange={setPreferredSessionDurationMin}
+          onSessionsPerWeekChange={setSessionsPerWeek}
           onSexChange={setSex}
           onSportFocusChange={setSportFocus}
           onStartDateChange={setStartDate}
           onWeightKgChange={setWeightKg}
+          onWeeklyPlanFlexibilityChange={setWeeklyPlanFlexibility}
           maxAiGeneratedWorkouts={maxAiGeneratedWorkouts}
           plannerMode={plannerMode}
           plannedWorkoutDayIndices={plannedWorkoutDayIndices}
@@ -287,12 +391,14 @@ export default function SimulationPage() {
           priorityMuscles={priorityMuscles}
           report={report}
           scenario={scenario}
+          sessionsPerWeek={sessionsPerWeek}
           selectedGymId={selectedGymId}
           seed={seed}
           sex={sex}
           sportFocus={sportFocus}
           onSeedChange={setSeed}
           startDate={startDate}
+          weeklyPlanFlexibility={weeklyPlanFlexibility}
           weightKg={weightKg}
         />
 

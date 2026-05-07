@@ -96,6 +96,7 @@ export type WeeklyPlanState = {
   userId: string;
   weekStartDate: string;
   settings: WeeklyPlanSettings;
+  goal?: string | null;
   plannedSessions: PlannedSession[];
   completedWorkoutLogIds: string[];
   spontaneousWorkoutLogIds: string[];
@@ -1817,6 +1818,7 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     planState.completedWorkoutLogIds.length + planState.spontaneousWorkoutLogIds.length;
   const targetMinutes = planState.remainingTrainingNeed.targetMinutesThisWeek;
   const completedMinutes = planState.remainingTrainingNeed.completedMinutesThisWeek;
+  const minuteCompletionRatio = targetMinutes > 0 ? completedMinutes / targetMinutes : 0;
   const remainingMinutes = planState.remainingTrainingNeed.plannedMinutesRemaining;
   const remainingSessions = planState.remainingTrainingNeed.sessionsRemaining;
   const hasEnoughSessionCredit =
@@ -1859,6 +1861,7 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
   const missedTextReason = missedSinceLastGeneratedWorkout
     ? `Missat planerat pass ${missedAfterLastCompleted[0]?.plannedDate ?? ""} efter senaste genomförda planerade pass.`
     : null;
+  const normalizedGoal = normalizeTrainingGoal(planState.goal);
   const suggestedNextWorkoutFocus = goalReached
     ? "recovery_strength"
     : mapPlannedFocusToWorkoutFocus(planState.remainingTrainingNeed.suggestedNextFocus);
@@ -1887,6 +1890,15 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
   } else if (missedSessionsCount >= 1) {
     message =
       "Det finns ett tidigare planerat pass som inte blev av under veckan, men vi låter nästa rekommendation styras av det viktigaste behovet just nu.";
+  } else if (
+    normalizedGoal === "hypertrophy" &&
+    completedSessions > 0 &&
+    minuteCompletionRatio < 0.45
+  ) {
+    message =
+      `Du har fått in träning, men just nu ligger den faktiska träningsdosen klart under vad som normalt krävs för tydlig muskeltillväxt. Vi håller nästa pass genomförbart och prioriterar ${formatPlannedSessionFocus(
+        planState.remainingTrainingNeed.suggestedNextFocus,
+      ).toLowerCase()} med basövningar så att varje minut ger mer effekt.`;
   } else if (shortSessionPattern) {
     message =
       `Du har tränat ${completedSessions} gånger den här veckan, men passen blev kortare än planerat. För målet behöver vi prioritera basövningarna i ett ${formatPlannedSessionFocus(
@@ -2094,6 +2106,7 @@ export function deriveWeeklyPlanState(params: {
     userId: params.settings.userId,
     weekStartDate,
     settings: params.settings,
+    goal: params.goal ?? null,
     plannedSessions: sessionsWithMissedStatus,
     completedWorkoutLogIds: matched.completedWorkoutLogIds,
     spontaneousWorkoutLogIds: matched.spontaneousWorkoutLogIds,
