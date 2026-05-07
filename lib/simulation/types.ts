@@ -198,6 +198,22 @@ export type SimulationPlannerDebugEntry = {
     dataQuality: "rich" | "mixed" | "limited";
     typicalWorkoutDurationMinutes: number | null;
   };
+  validationDiagnostics?: {
+    focusIntegrityScore: number;
+    mustKeepViolations: string[];
+    forbiddenExerciseViolations: string[];
+    lostMovementPatterns: string[];
+    lostPriorityMuscles: string[];
+    removedPrimaryExercises: string[];
+    addedOffFocusExercises: string[];
+    normalizationLossScore: number;
+    beforeAfterDiff: Array<{
+      type: "removed" | "added";
+      exerciseId: string;
+      exerciseName: string;
+      reason: string;
+    }>;
+  };
 };
 
 export type SimulationConfig = {

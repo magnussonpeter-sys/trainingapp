@@ -102,6 +102,7 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     const debug = dayDebugByIndex.get(snapshot.dayIndex);
     const plannerSummary = debug?.realAppPlanner;
     const historySummary = debug?.trainingHistoryContextSummary;
+    const validationDiagnostics = debug?.validationDiagnostics;
     lines.push(
       `### Dag ${snapshot.dayIndex + 1} – ${snapshot.date} (${snapshot.plannedTraining.weekday})`,
       `- Händelse: ${dayEventLabel(snapshot.dayEvent)}`,
@@ -119,6 +120,30 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       `- Passgenerering: ${snapshot.generatedWorkoutSummary?.passGenerationMode ?? "okänd"}`,
       `- Före normalisering: ${debug?.beforeNormalization.map((exercise) => exercise.exerciseName).join(", ") || "saknas"}`,
       `- Efter normalisering: ${debug?.afterNormalization.map((exercise) => exercise.exerciseName).join(", ") || "saknas"}`,
+      validationDiagnostics
+        ? `- Focus integrity: ${validationDiagnostics.focusIntegrityScore}/100 (loss ${validationDiagnostics.normalizationLossScore})`
+        : "- Focus integrity: saknas",
+      validationDiagnostics?.mustKeepViolations.length
+        ? `- Must-keep violationer: ${validationDiagnostics.mustKeepViolations.join("; ")}`
+        : "- Must-keep violationer: inga",
+      validationDiagnostics?.forbiddenExerciseViolations.length
+        ? `- Förbjudna övningar: ${validationDiagnostics.forbiddenExerciseViolations.join("; ")}`
+        : "- Förbjudna övningar: inga",
+      validationDiagnostics?.lostMovementPatterns.length
+        ? `- Tappade rörelsemönster: ${validationDiagnostics.lostMovementPatterns.join(", ")}`
+        : "- Tappade rörelsemönster: inga",
+      validationDiagnostics?.lostPriorityMuscles.length
+        ? `- Tappade prioriterade muskler: ${validationDiagnostics.lostPriorityMuscles.join(", ")}`
+        : "- Tappade prioriterade muskler: inga",
+      validationDiagnostics?.removedPrimaryExercises.length
+        ? `- Borttagna primärövningar: ${validationDiagnostics.removedPrimaryExercises.join(", ")}`
+        : "- Borttagna primärövningar: inga",
+      validationDiagnostics?.addedOffFocusExercises.length
+        ? `- Tillagda off-focus-övningar: ${validationDiagnostics.addedOffFocusExercises.join(", ")}`
+        : "- Tillagda off-focus-övningar: inga",
+      validationDiagnostics?.beforeAfterDiff.length
+        ? `- Före→efter diff: ${validationDiagnostics.beforeAfterDiff.map((entry) => `${entry.type === "removed" ? "bort" : "till"} ${entry.exerciseName} (${entry.reason})`).join("; ")}`
+        : "- Före→efter diff: ingen större skillnad",
       `- Nyligen upprepade övningsmönster: ${debug?.repeatedAggregationKeys.length ?? 0}`,
       `- Debugnotering: ${debug?.note ?? snapshot.generatedWorkoutSummary?.plannerNote ?? "-"}`,
       "",
@@ -135,6 +160,17 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     "- Kapas core, armar eller accessoarer systematiskt?",
     "- Upprepas samma rörelsemönster för ofta?",
   );
+
+  if (
+    report.config.scenario === "spontaneous_lower_before_planned_lower" &&
+    spontaneousCount === 0
+  ) {
+    lines.push(
+      "",
+      "## Scenariovarning",
+      "- Scenario spontaneous_lower_before_planned_lower gav inga spontana pass i denna körning. Granska seed och vilodagar innan resultatet tolkas som planner-beteende.",
+    );
+  }
 
   return lines.join("\n");
 }

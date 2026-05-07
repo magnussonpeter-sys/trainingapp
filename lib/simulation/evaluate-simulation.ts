@@ -102,6 +102,10 @@ export function evaluateSimulation(params: {
     clamp(goalAlignmentScore * 0.42 + (100 - overloadRiskScore) * 0.26 + (100 - stagnationRiskScore) * 0.18 + avgReadiness * 0.14, 0, 100),
     1,
   );
+  const avgActualDuration = round(
+    avg(completedWorkouts.map((workout) => workout.actualDurationMin)),
+    1,
+  );
   const flags: string[] = [];
 
   if (plannedDays.length > 0 && completedWorkouts.length / plannedDays.length < 0.65) {
@@ -133,7 +137,9 @@ export function evaluateSimulation(params: {
     progressionQualityScore,
     flags,
     summary:
-      progressionQualityScore >= 75
+      profile.goal === "hypertrophy" && avgActualDuration > 0 && avgActualDuration <= 18
+        ? "Simuleringen visar regelbunden men låg faktisk träningsdos; det kräver bättre kortpassoptimering och/eller mer total veckovolym för hypertrofi."
+        : progressionQualityScore >= 75
         ? "Simuleringen ser balanserad ut: progression, följsamhet och återhämtning samspelar rimligt."
         : progressionQualityScore >= 55
           ? "Simuleringen är användbar men visar några områden att bevaka innan modellen pressas hårdare."

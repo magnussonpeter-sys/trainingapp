@@ -1,4 +1,7 @@
-import { validateAndNormalizeAiExercises } from "@/lib/ai-exercise-validation";
+import {
+  validateAndNormalizeAiExercises,
+  type ValidationFocusContext,
+} from "@/lib/ai-exercise-validation";
 import {
   getAvailableExercises,
   getExerciseById,
@@ -64,12 +67,7 @@ export type ValidateGeneratedWorkoutResult = {
   };
 };
 
-type ScientificGuardrailContext = {
-  availableCatalog: ExerciseCatalogItem[];
-  availableEquipment: string[];
-  durationMinutes: number;
-  goal: GoalType;
-};
+export type GeneratedWorkoutValidationFocusContext = ValidationFocusContext;
 
 type WeeklyBudgetScoringItem = Pick<
   MuscleBudgetEntry,
@@ -800,6 +798,7 @@ export function validateGeneratedWorkout(params: {
   candidate: AiGeneratedWorkoutCandidate;
   durationMinutes: number;
   goal: GoalType;
+  focusContext?: GeneratedWorkoutValidationFocusContext | null;
   gym: string | null;
   gymLabel: string | null;
   recentExerciseIds?: string[];
@@ -838,6 +837,7 @@ export function validateGeneratedWorkout(params: {
     recentExerciseIds: params.recentExerciseIds,
     recentVariantGroups: params.recentVariantGroups,
     targetExerciseCount,
+    focusContext: params.focusContext,
   });
 
   const requestedSizes = distributeExercisesAcrossBlocks({

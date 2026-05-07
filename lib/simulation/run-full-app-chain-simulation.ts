@@ -135,6 +135,85 @@ function findRepeatedKeys(params: {
     .filter((key) => seenKeys.has(key));
 }
 
+function extractValidationDiagnostics(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as {
+    validation?: {
+      focusIntegrityScore?: number;
+      mustKeepViolations?: string[];
+      forbiddenExerciseViolations?: string[];
+      lostMovementPatterns?: string[];
+      lostPriorityMuscles?: string[];
+      removedPrimaryExercises?: string[];
+      addedOffFocusExercises?: string[];
+      normalizationLossScore?: number;
+      beforeAfterDiff?: Array<{
+        type?: "removed" | "added";
+        exerciseId?: string;
+        exerciseName?: string;
+        reason?: string;
+      }>;
+    };
+  };
+
+  const validation = record.validation;
+  if (!validation) {
+    return null;
+  }
+
+  return {
+    focusIntegrityScore:
+      typeof validation.focusIntegrityScore === "number"
+        ? validation.focusIntegrityScore
+        : 0,
+    mustKeepViolations: Array.isArray(validation.mustKeepViolations)
+      ? validation.mustKeepViolations
+      : [],
+    forbiddenExerciseViolations: Array.isArray(
+      validation.forbiddenExerciseViolations,
+    )
+      ? validation.forbiddenExerciseViolations
+      : [],
+    lostMovementPatterns: Array.isArray(validation.lostMovementPatterns)
+      ? validation.lostMovementPatterns
+      : [],
+    lostPriorityMuscles: Array.isArray(validation.lostPriorityMuscles)
+      ? validation.lostPriorityMuscles
+      : [],
+    removedPrimaryExercises: Array.isArray(validation.removedPrimaryExercises)
+      ? validation.removedPrimaryExercises
+      : [],
+    addedOffFocusExercises: Array.isArray(validation.addedOffFocusExercises)
+      ? validation.addedOffFocusExercises
+      : [],
+    normalizationLossScore:
+      typeof validation.normalizationLossScore === "number"
+        ? validation.normalizationLossScore
+        : 0,
+    beforeAfterDiff: Array.isArray(validation.beforeAfterDiff)
+      ? validation.beforeAfterDiff
+          .filter(
+            (entry): entry is {
+              type: "removed" | "added";
+              exerciseId: string;
+              exerciseName: string;
+              reason: string;
+            } =>
+              Boolean(
+                entry &&
+                  typeof entry.type === "string" &&
+                  typeof entry.exerciseId === "string" &&
+                  typeof entry.exerciseName === "string" &&
+                  typeof entry.reason === "string",
+              ),
+          )
+      : [],
+  } satisfies NonNullable<SimulationPlannerDebugEntry["validationDiagnostics"]>;
+}
+
 export async function runFullAppChainSimulation(params?: {
   config?: Partial<SimulationConfig>;
   profile?: SimulationUserProfile;
@@ -325,6 +404,9 @@ export async function runFullAppChainSimulation(params?: {
               const afterNormalization = buildPlannerDebugExercisesFromWorkout(
                 normalizedWorkout,
               );
+              const validationDiagnostics = extractValidationDiagnostics(
+                normalizedWorkout.aiDebug?.validatedWorkout,
+              );
 
               plannerDebug.push({
                 dayIndex,
@@ -372,6 +454,7 @@ export async function runFullAppChainSimulation(params?: {
                     trainingHistoryContext.mediumTermTrainingSummary
                       .typicalWorkoutDurationMinutes,
                 },
+                validationDiagnostics: validationDiagnostics ?? undefined,
               });
             }
           } else {

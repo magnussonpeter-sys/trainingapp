@@ -335,12 +335,21 @@ function getSetEvidenceWeight(set: WorkoutLog["exercises"][number]["sets"][numbe
     typeof set.actualWeight === "number" && Number.isFinite(set.actualWeight);
   const hasEffortEvidence = set.repsLeft !== null || set.timedEffort !== null;
 
-  // Kroppsvikts- och tidsövningar ska få kredit även utan vikt om faktisk prestation finns.
-  if (hasRepEvidence || hasDurationEvidence || hasWeightEvidence || hasEffortEvidence) {
+  // Vi räknar bara effektiva set när det finns faktisk prestationssignal.
+  // Tomma setobjekt ska inte kunna blåsa upp veckokrediten.
+  if (hasRepEvidence || hasDurationEvidence) {
     return 1;
   }
 
-  return typeof set.completedAt === "string" && set.completedAt.trim() ? 0.4 : 0;
+  if (hasWeightEvidence && hasEffortEvidence) {
+    return 0.8;
+  }
+
+  if (hasEffortEvidence) {
+    return 0.6;
+  }
+
+  return typeof set.completedAt === "string" && set.completedAt.trim() ? 0.15 : 0;
 }
 
 function getWorkoutPerformanceEvidence(log: WorkoutLog) {
@@ -1812,6 +1821,13 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     planState.remainingTrainingNeed.totalRelevantDeficit <= getAllowedDeficitThreshold(planState);
   const goalReached =
     hasEnoughSessionCredit && (hasEnoughMinutes || hasAcceptableMuscleDeficit);
+  const shortSessionPattern =
+    completedSessions > 0 &&
+    planState.remainingTrainingNeed.completedSessionCreditThisWeek <
+      Math.max(0.75, completedSessions * 0.7) &&
+    completedMinutes < targetMinutes * 0.7;
+  const missedSessionsCount = planState.missedSessions.length;
+  const spontaneousSessionsCount = planState.spontaneousWorkoutLogIds.length;
   const suggestedNextWorkoutFocus = goalReached
     ? "recovery_strength"
     : mapPlannedFocusToWorkoutFocus(planState.remainingTrainingNeed.suggestedNextFocus);
@@ -1827,18 +1843,24 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
   } else if (completedSessions === 0) {
     message =
       `Du har ${remainingSessions} pass kvar den här veckan. Det viktigaste är att komma igång med ett genomförbart pass.`;
-  } else if (
-    planState.remainingTrainingNeed.completedSessionCreditThisWeek <
-      Math.max(0.75, completedSessions * 0.7) &&
-    completedMinutes < targetMinutes * 0.7
-  ) {
+  } else if (missedSessionsCount >= 1 && spontaneousSessionsCount > 0) {
     message =
-      `Du har tränat ${completedSessions} gånger den här veckan, men passen blev korta. Ett ${formatPlannedSessionFocus(
+      `Du missade minst ett planerat pass men fick ändå in ett spontant pass. Vi kompenserar inte med något onödigt hårt, utan fyller de viktigaste luckorna med ett realistiskt ${formatPlannedSessionFocus(
         planState.remainingTrainingNeed.suggestedNextFocus,
-      ).toLowerCase()}pass nu skulle bäst fylla kvarvarande träningsgap.`;
-  } else if (planState.spontaneousWorkoutLogIds.length > 0) {
+      ).toLowerCase()}pass.`;
+  } else if (missedSessionsCount >= 1) {
     message =
-      `Planen har räknats om efter ditt spontana pass. Det återstår ungefär ${remainingSessions} pass och cirka ${remainingMinutes} minuter.`;
+      `Du missade förra passet, men vi jagar inte igen allt på en gång. Nästa ${formatPlannedSessionFocus(
+        planState.remainingTrainingNeed.suggestedNextFocus,
+      ).toLowerCase()}pass ska fylla de viktigaste luckorna på ett rimligt sätt.`;
+  } else if (shortSessionPattern) {
+    message =
+      `Du har tränat ${completedSessions} gånger den här veckan, men passen blev kortare än planerat. För målet behöver vi prioritera basövningarna i ett ${formatPlannedSessionFocus(
+        planState.remainingTrainingNeed.suggestedNextFocus,
+      ).toLowerCase()}pass nu snarare än att bara lägga till mer slumpvolym.`;
+  } else if (spontaneousSessionsCount > 0) {
+    message =
+      `Du fick in ett spontant pass, därför räknar vi om veckan och håller nästa pass mer träffsäkert i stället för att upprepa samma belastning.`;
   } else if (remainingSessions > 0) {
     message =
       `För att hålla veckan rimlig återstår ungefär ${remainingSessions} pass på cirka ${planState.remainingTrainingNeed.suggestedNextDurationMinutes} minuter.`;

@@ -9,6 +9,7 @@ import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-wo
 import {
   validateGeneratedWorkout,
   type AiGeneratedWorkoutCandidate,
+  type GeneratedWorkoutValidationFocusContext,
 } from "@/lib/workout-flow/validate-generated-workout";
 import {
   buildTrainingHistoryContext,
@@ -754,6 +755,37 @@ export async function generateWorkoutWithAiCore(
   }
 
   const validated = validateGeneratedWorkout({
+    // Validationen behöver samma planfokus som AI:n fick, så att fallback och trimning
+    // inte glider över till fel kroppsdel när passet kortas eller normaliseras.
+    focusContext: {
+      plannedFocus:
+        params.selectedPlanMode === "recovery" ||
+        params.selectedPlanMode === "recovery_mobility" ||
+        params.selectedPlanMode === "light_accessory"
+          ? "recovery_strength"
+          : params.nextFocus,
+      goal:
+        params.goal === "strength" ||
+        params.goal === "hypertrophy" ||
+        params.goal === "health" ||
+        params.goal === "body_composition"
+          ? params.goal
+          : "health",
+      experienceLevel: params.settings?.experience_level ?? null,
+      durationMinutes: params.durationMinutes,
+      priorityMuscles: Array.from(
+        new Set([
+          ...longTermPriorityMuscles,
+          ...(params.weeklyPlanContext?.priorityMuscles ?? []),
+        ]),
+      ),
+      recoveryLimitedMuscles: Array.from(
+        new Set([
+          ...(params.weeklyPlanContext?.recoveryLimitedMuscles ?? []),
+          ...trainingHistoryContext.mediumTermTrainingSummary.recoveryLimitedMuscles,
+        ]),
+      ),
+    } satisfies GeneratedWorkoutValidationFocusContext,
     availableEquipment: params.equipment,
     candidate: parsed,
     durationMinutes: params.durationMinutes,
