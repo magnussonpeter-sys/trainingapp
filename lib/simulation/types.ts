@@ -25,6 +25,30 @@ export type SimulationExperienceLevel =
   | "intermediate"
   | "advanced";
 
+export type SimulationSportFocus =
+  | "none"
+  | "running"
+  | "cross_country_skiing"
+  | "alpine_skiing"
+  | "cycling"
+  | "ball_sports"
+  | "swimming"
+  | "golf"
+  | "surf_sports"
+  | "general_athletic";
+
+export type SimulationPriorityMuscle =
+  | "chest"
+  | "back"
+  | "quads"
+  | "hamstrings"
+  | "glutes"
+  | "shoulders"
+  | "biceps"
+  | "triceps"
+  | "calves"
+  | "core";
+
 export type SimulationEnergyTrend =
   | "stable"
   | "improving"
@@ -84,6 +108,10 @@ export type SimulationUserProfile = {
   weightKg: number;
   goal: SimulationGoal;
   experienceLevel: SimulationExperienceLevel;
+  sportFocus?: SimulationSportFocus;
+  primaryPriorityMuscle?: SimulationPriorityMuscle | null;
+  secondaryPriorityMuscle?: SimulationPriorityMuscle | null;
+  tertiaryPriorityMuscle?: SimulationPriorityMuscle | null;
   preferredWorkoutDaysPerWeek: number;
   preferredSessionDurationMin: number;
   adherenceProfile: SimulationAdherenceProfile;
@@ -106,6 +134,8 @@ export type SimulationEffectiveUserProfile = {
   presetProfileId: string | null;
   effectiveGoal: SimulationGoal;
   effectiveExperienceLevel: SimulationExperienceLevel;
+  effectiveSportFocus: SimulationSportFocus;
+  effectivePriorityMuscles: SimulationPriorityMuscle[];
   effectiveAge: number | null;
   effectiveHeightCm: number | null;
   effectiveWeightKg: number | null;
@@ -115,6 +145,8 @@ export type SimulationEffectiveUserProfile = {
   sourceByField: {
     goal: "preset" | "override" | "fallback";
     experienceLevel: "preset" | "override" | "fallback";
+    sportFocus: "preset" | "override" | "fallback";
+    priorityMuscles: "preset" | "override" | "fallback";
     age: "preset" | "override" | "fallback";
     heightCm: "preset" | "override" | "fallback";
     weightKg: "preset" | "override" | "fallback";

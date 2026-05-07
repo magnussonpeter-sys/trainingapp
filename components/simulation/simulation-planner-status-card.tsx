@@ -32,7 +32,8 @@ export default function SimulationPlannerStatusCard({
         ? "Hybrid AI-labb"
         : report.config.plannerMode === "real_app_planner"
           ? "Riktig veckoplanering – mockat pass"
-          : "Syntetisk snabbmodell";
+        : "Syntetisk snabbmodell";
+  const effectiveProfile = report.effectiveUserProfile;
 
   return (
     <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
@@ -63,6 +64,71 @@ export default function SimulationPlannerStatusCard({
         {stats.fullAppChain > 0 ? `Full app-kedja: ${stats.fullAppChain}. ` : ""}
         {stats.lastNote ? `Senaste status: ${stats.lastNote}` : null}
       </p>
+      {effectiveProfile ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+            Effektiv profil
+          </p>
+          <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
+            <p>
+              <span className="font-medium text-slate-900">Preset:</span>{" "}
+              {effectiveProfile.presetProfileId ?? report.profile.id}
+            </p>
+            <p>
+              <span className="font-medium text-slate-900">Mål:</span>{" "}
+              {effectiveProfile.effectiveGoal}
+            </p>
+            <p>
+              <span className="font-medium text-slate-900">Nivå:</span>{" "}
+              {effectiveProfile.effectiveExperienceLevel}
+            </p>
+            <p>
+              <span className="font-medium text-slate-900">Källa:</span>{" "}
+              {effectiveProfile.sourceProfile}
+            </p>
+            <p>
+              <span className="font-medium text-slate-900">Ålder:</span>{" "}
+              {effectiveProfile.effectiveAge ?? "-"}
+            </p>
+            <p>
+              <span className="font-medium text-slate-900">Längd:</span>{" "}
+              {effectiveProfile.effectiveHeightCm ?? "-"} cm
+            </p>
+            <p>
+              <span className="font-medium text-slate-900">Vikt:</span>{" "}
+              {effectiveProfile.effectiveWeightKg ?? "-"} kg
+            </p>
+            <p>
+              <span className="font-medium text-slate-900">Vanlig passlängd:</span>{" "}
+              {effectiveProfile.effectivePreferredDurationMinutes ?? "-"} min
+            </p>
+            <p>
+              <span className="font-medium text-slate-900">Sportspecifikt mål:</span>{" "}
+              {effectiveProfile.effectiveSportFocus}
+            </p>
+            <p>
+              <span className="font-medium text-slate-900">Prioriterade muskler:</span>{" "}
+              {effectiveProfile.effectivePriorityMuscles.join(", ") || "inga"}
+            </p>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            Planerade träningsdagar:{" "}
+            {effectiveProfile.effectivePlannedTrainingDays.length > 0
+              ? effectiveProfile.effectivePlannedTrainingDays.join(", ")
+              : "inga"}
+            . Utrustning:{" "}
+            {effectiveProfile.effectiveEquipment.length > 0
+              ? effectiveProfile.effectiveEquipment.join(", ")
+              : "okänd"}
+            .
+          </p>
+          {effectiveProfile.warnings.length > 0 ? (
+            <p className="mt-2 text-xs leading-5 text-amber-700">
+              Profilvarningar: {effectiveProfile.warnings.join(" ")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {report.notes?.length ? (
         <p className="mt-2 text-xs leading-5 text-slate-500">
           {report.notes.join(" ")}

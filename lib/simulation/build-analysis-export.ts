@@ -76,6 +76,12 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     report.effectiveUserProfile
       ? `- Effektiv profil: mål ${report.effectiveUserProfile.effectiveGoal}, nivå ${report.effectiveUserProfile.effectiveExperienceLevel}, ålder ${report.effectiveUserProfile.effectiveAge ?? "-"}, längd ${report.effectiveUserProfile.effectiveHeightCm ?? "-"} cm, vikt ${report.effectiveUserProfile.effectiveWeightKg ?? "-"} kg`
       : "- Effektiv profil: saknas",
+    report.effectiveUserProfile
+      ? `- Sportspecifikt mål: ${report.effectiveUserProfile.effectiveSportFocus}`
+      : "- Sportspecifikt mål: saknas",
+    report.effectiveUserProfile
+      ? `- Prioriterade muskler: ${report.effectiveUserProfile.effectivePriorityMuscles.join(", ") || "inga"}`
+      : "- Prioriterade muskler: saknas",
     `- Mål: ${report.profile.goal}`,
     `- Erfarenhetsnivå: ${report.profile.experienceLevel}`,
     `- Planner mode: ${report.config.plannerMode} (${plannerModeLabel(report.config.plannerMode)})`,

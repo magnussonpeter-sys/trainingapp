@@ -2,8 +2,11 @@ import type { UserSettingsSummary } from "@/lib/workouts/generate-workout-core";
 import type {
   SimulationEffectiveUserProfile,
   SimulationGoal,
+  SimulationPriorityMuscle,
+  SimulationSportFocus,
   SimulationUserProfile,
 } from "@/lib/simulation/types";
+import { normalizeSportFocus } from "@/types/training-profile";
 
 function normalizeGoal(value: unknown): SimulationGoal | null {
   return value === "strength" ||
@@ -25,6 +28,21 @@ function normalizeExperienceLevel(value: unknown) {
 function normalizePositiveNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.round(value)
+    : null;
+}
+
+function normalizePriorityMuscle(value: unknown): SimulationPriorityMuscle | null {
+  return value === "chest" ||
+    value === "back" ||
+    value === "quads" ||
+    value === "hamstrings" ||
+    value === "glutes" ||
+    value === "shoulders" ||
+    value === "biceps" ||
+    value === "triceps" ||
+    value === "calves" ||
+    value === "core"
+    ? value
     : null;
 }
 
@@ -74,6 +92,19 @@ export function buildEffectiveSimulationUserProfile(params: {
   const weightKg =
     normalizePositiveNumber(settings?.weight_kg) ??
     normalizePositiveNumber(params.profile.weightKg);
+  const sportFocus = normalizeSportFocus(
+    settings?.sport_focus ?? params.profile.sportFocus ?? "none",
+  ) as SimulationSportFocus;
+  const priorityMuscles = [
+    normalizePriorityMuscle(settings?.primary_priority_muscle),
+    normalizePriorityMuscle(settings?.secondary_priority_muscle),
+    normalizePriorityMuscle(settings?.tertiary_priority_muscle),
+    normalizePriorityMuscle(params.profile.primaryPriorityMuscle),
+    normalizePriorityMuscle(params.profile.secondaryPriorityMuscle),
+    normalizePriorityMuscle(params.profile.tertiaryPriorityMuscle),
+  ].filter((value, index, array): value is SimulationPriorityMuscle =>
+    value !== null && array.indexOf(value) === index
+  ).slice(0, 3);
   const preferredDurationMinutes =
     normalizePositiveNumber(params.profile.preferredSessionDurationMin);
   const plannedTrainingDays =
@@ -107,6 +138,8 @@ export function buildEffectiveSimulationUserProfile(params: {
       presetProfileId: params.profilePresetId ?? null,
       effectiveGoal: goal,
       effectiveExperienceLevel: experienceLevel,
+      effectiveSportFocus: sportFocus,
+      effectivePriorityMuscles: priorityMuscles,
       effectiveAge: age,
       effectiveHeightCm: heightCm,
       effectiveWeightKg: weightKg,
@@ -118,6 +151,21 @@ export function buildEffectiveSimulationUserProfile(params: {
         experienceLevel: normalizeExperienceLevel(settings?.experience_level)
           ? "override"
           : "preset",
+        sportFocus: settings?.sport_focus
+          ? "override"
+          : params.profile.sportFocus
+            ? "preset"
+            : "fallback",
+        priorityMuscles:
+          settings?.primary_priority_muscle ||
+          settings?.secondary_priority_muscle ||
+          settings?.tertiary_priority_muscle
+            ? "override"
+            : params.profile.primaryPriorityMuscle ||
+                params.profile.secondaryPriorityMuscle ||
+                params.profile.tertiaryPriorityMuscle
+              ? "preset"
+              : "fallback",
         age: normalizePositiveNumber(settings?.age) ? "override" : "preset",
         heightCm: normalizePositiveNumber(settings?.height_cm)
           ? "override"
@@ -142,12 +190,12 @@ export function buildEffectiveSimulationUserProfile(params: {
       height_cm: heightCm,
       experience_level: experienceLevel,
       training_goal: goal,
-      sport_focus: "none",
+      sport_focus: sportFocus,
       avoid_supersets: false,
       superset_preference: "allowed",
-      primary_priority_muscle: null,
-      secondary_priority_muscle: null,
-      tertiary_priority_muscle: null,
+      primary_priority_muscle: priorityMuscles[0] ?? null,
+      secondary_priority_muscle: priorityMuscles[1] ?? null,
+      tertiary_priority_muscle: priorityMuscles[2] ?? null,
     } satisfies UserSettingsSummary,
   };
 }

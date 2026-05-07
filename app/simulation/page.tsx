@@ -18,9 +18,12 @@ import { getSimulationProfilePreset } from "@/lib/simulation/profile-presets";
 import { runSimulation } from "@/lib/simulation/run-simulation";
 import type {
   SimulationGoal,
+  SimulationExperienceLevel,
   SimulationPlannerMode,
+  SimulationPriorityMuscle,
   SimulationReport,
   SimulationScenario,
+  SimulationSportFocus,
 } from "@/lib/simulation/types";
 
 type ApiGym = {
@@ -92,6 +95,16 @@ export default function SimulationPage() {
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [scenario, setScenario] = useState<SimulationScenario>("normal");
   const [goal, setGoal] = useState<SimulationGoal>("hypertrophy");
+  const [sex, setSex] = useState<"male" | "female" | "other">("male");
+  const [age, setAge] = useState(32);
+  const [heightCm, setHeightCm] = useState(178);
+  const [weightKg, setWeightKg] = useState(78);
+  const [experienceLevel, setExperienceLevel] = useState<
+    SimulationExperienceLevel | "novice"
+  >("beginner");
+  const [preferredSessionDurationMin, setPreferredSessionDurationMin] = useState(45);
+  const [sportFocus, setSportFocus] = useState<SimulationSportFocus>("none");
+  const [priorityMuscles, setPriorityMuscles] = useState<SimulationPriorityMuscle[]>([]);
   const [gymOptions, setGymOptions] = useState<SimulationGymOption[]>([]);
   const [selectedGymId, setSelectedGymId] = useState("");
   const [plannerMode, setPlannerMode] = useState<SimulationPlannerMode>("synthetic");
@@ -152,6 +165,21 @@ export default function SimulationPage() {
   useEffect(() => {
     const profile = getSimulationProfilePreset(preset);
     setGoal(profile.goal);
+    // Preset fyller samma typ av profilfält som riktiga användarinställningar använder.
+    setSex(profile.sex);
+    setAge(profile.age);
+    setHeightCm(profile.heightCm);
+    setWeightKg(profile.weightKg);
+    setExperienceLevel(profile.experienceLevel);
+    setPreferredSessionDurationMin(profile.preferredSessionDurationMin);
+    setSportFocus(profile.sportFocus ?? "none");
+    setPriorityMuscles(
+      [
+        profile.primaryPriorityMuscle ?? null,
+        profile.secondaryPriorityMuscle ?? null,
+        profile.tertiaryPriorityMuscle ?? null,
+      ].filter((value): value is SimulationPriorityMuscle => value !== null),
+    );
   }, [preset]);
 
   function handlePlannerModeChange(mode: SimulationPlannerMode) {
@@ -168,9 +196,22 @@ export default function SimulationPage() {
 
     try {
       const normalizedDays = clampSimulationDays(days);
+      const normalizedExperienceLevel: SimulationExperienceLevel =
+        experienceLevel === "novice" ? "beginner" : experienceLevel;
       const profile = {
         ...getSimulationProfilePreset(preset),
         goal,
+        sex,
+        age,
+        heightCm,
+        weightKg,
+        experienceLevel: normalizedExperienceLevel,
+        sportFocus,
+        primaryPriorityMuscle: priorityMuscles[0] ?? null,
+        secondaryPriorityMuscle: priorityMuscles[1] ?? null,
+        tertiaryPriorityMuscle: priorityMuscles[2] ?? null,
+        preferredSessionDurationMin,
+        preferredWorkoutDaysPerWeek: Math.max(1, plannedWorkoutDayIndices.length),
       };
       const selectedGym = gymOptions.find((gym) => gym.id === selectedGymId);
       const simulationProfile = selectedGym
@@ -228,27 +269,43 @@ export default function SimulationPage() {
           days={days}
           goal={goal}
           gymOptions={gymOptions}
+          heightCm={heightCm}
           loading={loading}
+          age={age}
+          experienceLevel={experienceLevel}
           onPlannedWorkoutDayIndicesChange={setPlannedWorkoutDayIndices}
+          onAgeChange={setAge}
           onDaysChange={setDays}
+          onExperienceLevelChange={setExperienceLevel}
           onGoalChange={setGoal}
           onGymChange={setSelectedGymId}
+          onHeightCmChange={setHeightCm}
           onMaxAiGeneratedWorkoutsChange={setMaxAiGeneratedWorkouts}
           onPlannerModeChange={handlePlannerModeChange}
           onPresetChange={setPreset}
+          onPriorityMusclesChange={setPriorityMuscles}
           onRun={runRemoteSimulation}
           onScenarioChange={setScenario}
+          onPreferredSessionDurationMinChange={setPreferredSessionDurationMin}
+          onSexChange={setSex}
+          onSportFocusChange={setSportFocus}
           onStartDateChange={setStartDate}
+          onWeightKgChange={setWeightKg}
           maxAiGeneratedWorkouts={maxAiGeneratedWorkouts}
           plannerMode={plannerMode}
           plannedWorkoutDayIndices={plannedWorkoutDayIndices}
           preset={preset}
+          preferredSessionDurationMin={preferredSessionDurationMin}
+          priorityMuscles={priorityMuscles}
           report={report}
           scenario={scenario}
           selectedGymId={selectedGymId}
           seed={seed}
+          sex={sex}
+          sportFocus={sportFocus}
           onSeedChange={setSeed}
           startDate={startDate}
+          weightKg={weightKg}
         />
 
         {report ? (

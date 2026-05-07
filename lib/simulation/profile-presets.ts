@@ -97,8 +97,9 @@ export const SIMULATION_PROFILE_PRESETS = {
 
 export type SimulationProfilePresetId = keyof typeof SIMULATION_PROFILE_PRESETS;
 
-export function getSimulationProfilePreset(id: string | undefined) {
+export function getSimulationProfilePreset(
+  id: string | undefined,
+): SimulationUserProfile {
   return SIMULATION_PROFILE_PRESETS[(id ?? "") as SimulationProfilePresetId] ??
     SIMULATION_PROFILE_PRESETS.beginner_hypertrophy;
 }
-

@@ -1,10 +1,13 @@
 "use client";
 
 import type {
+  SimulationExperienceLevel,
   SimulationGoal,
   SimulationPlannerMode,
+  SimulationPriorityMuscle,
   SimulationReport,
   SimulationScenario,
+  SimulationSportFocus,
 } from "@/lib/simulation/types";
 
 export type SimulationGymOption = {
@@ -23,30 +26,46 @@ function clampDays(value: number) {
 }
 
 type SimulationControlsProps = {
+  age: number;
   days: number;
+  experienceLevel: SimulationExperienceLevel | "novice";
   goal: SimulationGoal;
   gymOptions: SimulationGymOption[];
+  heightCm: number;
   loading: boolean;
+  onAgeChange: (age: number) => void;
   onPlannedWorkoutDayIndicesChange: (indices: number[]) => void;
   onDaysChange: (days: number) => void;
+  onExperienceLevelChange: (experienceLevel: SimulationExperienceLevel | "novice") => void;
   onGoalChange: (goal: SimulationGoal) => void;
   onGymChange: (gymId: string) => void;
+  onHeightCmChange: (heightCm: number) => void;
   onMaxAiGeneratedWorkoutsChange: (value: number) => void;
   onPlannerModeChange: (mode: SimulationPlannerMode) => void;
   onPresetChange: (preset: string) => void;
+  onPriorityMusclesChange: (muscles: SimulationPriorityMuscle[]) => void;
+  onPreferredSessionDurationMinChange: (minutes: number) => void;
   onRun: () => void;
   onScenarioChange: (scenario: SimulationScenario) => void;
+  onSexChange: (sex: "male" | "female" | "other") => void;
+  onSportFocusChange: (sportFocus: SimulationSportFocus) => void;
   onStartDateChange: (startDate: string) => void;
+  onWeightKgChange: (weightKg: number) => void;
   plannerMode: SimulationPlannerMode;
   plannedWorkoutDayIndices: number[];
   preset: string;
+  preferredSessionDurationMin: number;
+  priorityMuscles: SimulationPriorityMuscle[];
   report: SimulationReport | null;
   scenario: SimulationScenario;
   selectedGymId: string;
   seed: number;
+  sex: "male" | "female" | "other";
+  sportFocus: SimulationSportFocus;
   onSeedChange: (seed: number) => void;
   startDate: string;
   maxAiGeneratedWorkouts: number;
+  weightKg: number;
 };
 
 const PRESETS = [
@@ -67,6 +86,32 @@ const SCENARIOS: Array<[SimulationScenario, string]> = [
   ["priority_upper_body", "Prioritet överkropp"],
 ];
 
+const SPORT_FOCUS_OPTIONS: Array<[SimulationSportFocus, string]> = [
+  ["none", "Ingen särskild inriktning"],
+  ["running", "Löpning"],
+  ["cross_country_skiing", "Längdskidor"],
+  ["alpine_skiing", "Utförsåkning"],
+  ["cycling", "Cykling"],
+  ["ball_sports", "Bollsport / lagidrott"],
+  ["swimming", "Simning"],
+  ["golf", "Golf"],
+  ["surf_sports", "Surfsporter"],
+  ["general_athletic", "Allmän idrott"],
+];
+
+const PRIORITY_MUSCLE_OPTIONS: Array<[SimulationPriorityMuscle, string]> = [
+  ["chest", "Bröst"],
+  ["back", "Rygg"],
+  ["quads", "Framsida lår"],
+  ["hamstrings", "Baksida lår"],
+  ["glutes", "Säte"],
+  ["shoulders", "Axlar"],
+  ["biceps", "Biceps"],
+  ["triceps", "Triceps"],
+  ["calves", "Vader"],
+  ["core", "Bål"],
+];
+
 const WEEKDAY_OPTIONS = [
   { index: 1, shortLabel: "Mån" },
   { index: 2, shortLabel: "Tis" },
@@ -78,6 +123,14 @@ const WEEKDAY_OPTIONS = [
 ];
 
 export default function SimulationControls(props: SimulationControlsProps) {
+  function togglePriorityMuscle(muscle: SimulationPriorityMuscle) {
+    const isSelected = props.priorityMuscles.includes(muscle);
+    const next = isSelected
+      ? props.priorityMuscles.filter((value) => value !== muscle)
+      : [...props.priorityMuscles, muscle].slice(0, 3);
+    props.onPriorityMusclesChange(next);
+  }
+
   return (
     <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
@@ -153,6 +206,112 @@ export default function SimulationControls(props: SimulationControlsProps) {
         </label>
 
         <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Kön
+          <select
+            value={props.sex}
+            onChange={(event) =>
+              props.onSexChange(event.target.value as "male" | "female" | "other")
+            }
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          >
+            <option value="male">Man</option>
+            <option value="female">Kvinna</option>
+            <option value="other">Annat / vill ej ange</option>
+          </select>
+          <span className="text-xs font-normal text-slate-500">
+            Preseten fyller startvärden, men du kan skriva över dem här för att efterlikna en riktig användare bättre.
+          </span>
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Ålder
+          <input
+            min={16}
+            max={100}
+            type="number"
+            value={props.age}
+            onChange={(event) => props.onAgeChange(Number(event.target.value))}
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          />
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Längd (cm)
+          <input
+            min={140}
+            max={220}
+            type="number"
+            value={props.heightCm}
+            onChange={(event) => props.onHeightCmChange(Number(event.target.value))}
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          />
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Vikt (kg)
+          <input
+            min={40}
+            max={250}
+            type="number"
+            value={props.weightKg}
+            onChange={(event) => props.onWeightKgChange(Number(event.target.value))}
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          />
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Nivå
+          <select
+            value={props.experienceLevel}
+            onChange={(event) =>
+              props.onExperienceLevelChange(
+                event.target.value as SimulationExperienceLevel | "novice",
+              )
+            }
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          >
+            <option value="beginner">Nybörjare</option>
+            <option value="novice">Novis</option>
+            <option value="intermediate">Intermediate</option>
+            <option value="advanced">Avancerad</option>
+          </select>
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Vanlig passlängd (min)
+          <input
+            min={15}
+            max={120}
+            type="number"
+            value={props.preferredSessionDurationMin}
+            onChange={(event) =>
+              props.onPreferredSessionDurationMinChange(Number(event.target.value))
+            }
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          />
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Sportspecifikt mål
+          <select
+            value={props.sportFocus}
+            onChange={(event) =>
+              props.onSportFocusChange(event.target.value as SimulationSportFocus)
+            }
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          >
+            {SPORT_FOCUS_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs font-normal text-slate-500">
+            Samma typ av sportinriktning som i inställningar. Den väger in vilka muskler och rörelser som bör prioriteras.
+          </span>
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
           Antal dagar (7-84)
           <input
             min={7}
@@ -217,6 +376,35 @@ export default function SimulationControls(props: SimulationControlsProps) {
                   : "Snabb lokal simulering utan AI. Bra för grova mönster."}
           </span>
         </label>
+      </div>
+
+      <div className="mt-5">
+        <p className="text-sm font-medium text-slate-700">
+          Prioriterade muskelgrupper
+        </p>
+        <p className="mt-1 text-xs text-slate-500">
+          Välj upp till tre muskelgrupper, i samma anda som i inställningar. Valen skickas vidare som långsiktiga prioriteringar i simulationen.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {PRIORITY_MUSCLE_OPTIONS.map(([value, label]) => {
+            const selected = props.priorityMuscles.includes(value);
+
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => togglePriorityMuscle(value)}
+                className={`min-h-11 rounded-2xl border px-4 text-sm font-medium transition ${
+                  selected
+                    ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                    : "border-slate-200 bg-slate-50 text-slate-700"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {props.plannerMode === "full_app_chain" ? (
