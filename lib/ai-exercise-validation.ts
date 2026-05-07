@@ -86,13 +86,16 @@ type BalanceIssueCode =
 
 export type ValidationReasonCode =
   | "accepted_exact_match"
+  | "accepted_exact_name_match"
+  | "accepted_alias_match"
   | "invalid_or_missing_id"
   | "duplicate_exercise_id"
   | "recent_variation_preference"
   | "balance_adjustment"
   | "filled_missing_slots"
   | "empty_ai_response"
-  | "integrity_repair";
+  | "integrity_repair"
+  | "fallback_used";
 
 export type ValidationDebugEntry = {
   requestedId: string | null;
@@ -100,8 +103,14 @@ export type ValidationDebugEntry = {
   requestedMovementPattern: string | null;
   selectedId: string;
   selectedName: string;
+  removedAt?: "raw_to_catalog" | "catalog_to_focus_repair" | "focus_repair_to_final";
   reasonCode: ValidationReasonCode;
   reason: string;
+  preservationScore?: number;
+  replacementQuality?: "better" | "equivalent" | "acceptable_but_lower_specificity" | "role_mismatch";
+  lostRoles?: string[];
+  originalRoles?: string[];
+  replacementRoles?: string[];
 };
 
 export type ValidateAiExercisesResult = {
@@ -601,6 +610,39 @@ function findCatalogExerciseByName(
     ) ??
     null
   );
+}
+
+function getCatalogMatchSource(
+  params: {
+    requestedId: string | null;
+    requestedName: string | null;
+    matchedExercise: ExerciseCatalogItem | null;
+  },
+): "exact_id_match" | "exact_name_match" | "alias_match" | "near_name_match" | null {
+  if (!params.matchedExercise) {
+    return null;
+  }
+
+  if (params.requestedId && params.matchedExercise.id === params.requestedId) {
+    return "exact_id_match";
+  }
+
+  if (params.requestedName) {
+    const normalizedRequestedName = normalizeExerciseName(params.requestedName);
+    const normalizedCatalogName = normalizeExerciseName(params.matchedExercise.name);
+    if (normalizedRequestedName === normalizedCatalogName) {
+      return "exact_name_match";
+    }
+
+    const aliasId = getCatalogAliasId(params.requestedName);
+    if (aliasId && aliasId === params.matchedExercise.id) {
+      return "alias_match";
+    }
+
+    return "near_name_match";
+  }
+
+  return null;
 }
 
 function hasExerciseId(
@@ -1653,6 +1695,127 @@ function scoreExerciseReplacement(params: {
   return score;
 }
 
+function getPreservationScore(params: {
+  candidate: NormalizedExercise;
+  requestedMovementPattern?: MovementPattern;
+  requestedBudgetGroups: MuscleBudgetGroup[];
+  focusContext?: ValidationFocusContext | null;
+  acceptedExercises: NormalizedExercise[];
+  recentPreferences?: RecentPreferenceContext;
+}) {
+  let score = 50;
+
+  if (
+    params.requestedMovementPattern &&
+    params.candidate.movementPattern === params.requestedMovementPattern
+  ) {
+    score += 12;
+  }
+
+  const overlappingGroups = params.requestedBudgetGroups.filter((group) =>
+    hasBudgetGroup(params.candidate, group),
+  );
+  score += overlappingGroups.length * 6;
+
+  if (
+    deriveFocusPriorityGroups({
+      globalPriorities: params.focusContext?.priorityMuscles ?? [],
+      plannedFocus: getEffectiveFocus(params.focusContext),
+    }).focusCompatiblePriorities.some((group) => hasBudgetGroup(params.candidate, group))
+  ) {
+    score += 10;
+  }
+
+  if (isLoadedProgressionExercise(params.candidate, params.focusContext)) {
+    score += 10;
+  }
+
+  if (isSportRelevantExercise(params.candidate, params.focusContext)) {
+    score += 8;
+  }
+
+  if (
+    isForbiddenForFocus({
+      exercise: params.candidate,
+      focusContext: params.focusContext,
+      acceptedExercises: params.acceptedExercises,
+    })
+  ) {
+    score -= 45;
+  }
+
+  const balanceIssue = getBalanceIssue(
+    {
+      movementPattern: params.candidate.movementPattern,
+      primaryMuscles: params.candidate.primaryMuscles,
+      variantGroup: params.candidate.variantGroup,
+    },
+    params.acceptedExercises,
+  );
+  if (balanceIssue) {
+    score -= 10;
+  }
+
+  if (
+    params.recentPreferences?.recentExerciseIds.has(params.candidate.id) ||
+    params.recentPreferences?.recentVariantGroups.has(params.candidate.variantGroup)
+  ) {
+    score -= 4;
+  }
+
+  if (
+    normalizeExperienceLevel(params.focusContext?.experienceLevel) === "beginner" &&
+    params.candidate.riskLevel === "medium"
+  ) {
+    score -= 8;
+  }
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function canPreserveAiExercise(params: {
+  candidate: NormalizedExercise;
+  requestedMovementPattern?: MovementPattern;
+  requestedBudgetGroups: MuscleBudgetGroup[];
+  focusContext?: ValidationFocusContext | null;
+  acceptedExercises: NormalizedExercise[];
+  recentPreferences?: RecentPreferenceContext;
+}) {
+  const preservationScore = getPreservationScore(params);
+  const duplicate = hasExerciseId(params.candidate.id, params.acceptedExercises);
+  const forbidden = isForbiddenForFocus({
+    exercise: params.candidate,
+    focusContext: params.focusContext,
+    acceptedExercises: params.acceptedExercises,
+  });
+  const balanceIssue = getBalanceIssue(
+    {
+      movementPattern: params.candidate.movementPattern,
+      primaryMuscles: params.candidate.primaryMuscles,
+      variantGroup: params.candidate.variantGroup,
+    },
+    params.acceptedExercises,
+  );
+
+  if (duplicate) {
+    return { preserve: false, blockingReason: "duplicate_exercise_id", preservationScore };
+  }
+  if (forbidden) {
+    return { preserve: false, blockingReason: "hard_focus_or_recovery_violation", preservationScore };
+  }
+
+  // Preserve-first: a strong, compatible AI choice survives soft balance/variation pressure.
+  if (preservationScore >= 68) {
+    return { preserve: true, warnings: balanceIssue ? [balanceIssue.message] : [], preservationScore };
+  }
+
+  if (balanceIssue) {
+    return { preserve: false, blockingReason: "balance_rule_blocked", preservationScore };
+  }
+
+  return { preserve: true, preservationScore };
+}
+
 function findFallbackExercise(params: {
   requestedMovementPattern?: string;
   requestedCatalogExercise?: ExerciseCatalogItem | null;
@@ -1721,6 +1884,52 @@ function findFallbackExercise(params: {
     });
 
   return ranked[0]?.exercise ?? null;
+}
+
+function getReplacementQuality(params: {
+  removedExercise: NormalizedExercise;
+  replacementExercise: NormalizedExercise;
+  focusContext?: ValidationFocusContext | null;
+}) {
+  const originalRoles = getQualityRoles(params.removedExercise, params.focusContext);
+  const replacementRoles = getQualityRoles(params.replacementExercise, params.focusContext);
+  const sharedRoles = originalRoles.filter((role) => replacementRoles.includes(role));
+  const originalProgression = getGoalSpecificityWeight(params.removedExercise, params.focusContext);
+  const replacementProgression = getGoalSpecificityWeight(params.replacementExercise, params.focusContext);
+
+  if (sharedRoles.length === 0) {
+    return {
+      replacementQuality: "role_mismatch" as const,
+      lostRoles: originalRoles,
+      originalRoles,
+      replacementRoles,
+    };
+  }
+
+  if (replacementProgression > originalProgression) {
+    return {
+      replacementQuality: "better" as const,
+      lostRoles: originalRoles.filter((role) => !replacementRoles.includes(role)),
+      originalRoles,
+      replacementRoles,
+    };
+  }
+
+  if (replacementProgression === originalProgression && sharedRoles.length === originalRoles.length) {
+    return {
+      replacementQuality: "equivalent" as const,
+      lostRoles: [],
+      originalRoles,
+      replacementRoles,
+    };
+  }
+
+  return {
+    replacementQuality: "acceptable_but_lower_specificity" as const,
+    lostRoles: originalRoles.filter((role) => !replacementRoles.includes(role)),
+    originalRoles,
+    replacementRoles,
+  };
 }
 
 function pickStarterExercises(params: {
@@ -2196,6 +2405,19 @@ export function validateAndNormalizeAiExercises(params: {
 
     const matchedExercise = requestedCatalogExercise;
     if (matchedExercise) {
+      const normalizedRequestedMovementPattern =
+        requestedMovementPattern &&
+        VALID_MOVEMENT_PATTERNS.includes(requestedMovementPattern as MovementPattern)
+          ? (requestedMovementPattern as MovementPattern)
+          : matchedExercise.movementPattern;
+      const requestedBudgetGroups = getBudgetGroupsForExercise({
+        primaryMuscles: matchedExercise.primaryMuscles,
+        secondaryMuscles: matchedExercise.secondaryMuscles,
+      });
+      const matchedNormalizedExercise = createNormalizedExercise(
+        matchedExercise,
+        aiExercise,
+      );
       const duplicate = hasExerciseId(matchedExercise.id, normalizedExercises);
       const balanceIssue = getBalanceIssue(
         {
@@ -2211,16 +2433,24 @@ export function validateAndNormalizeAiExercises(params: {
       const shouldPreferVariation =
         repeatedRecently &&
         countRecentOverlap(normalizedExercises, recentPreferences) >= 1;
-      const forbidden = isForbiddenForFocus({
-        exercise: createNormalizedExercise(matchedExercise, aiExercise),
+      const preserveDecision = canPreserveAiExercise({
+        candidate: matchedNormalizedExercise,
+        requestedMovementPattern: normalizedRequestedMovementPattern,
+        requestedBudgetGroups,
         focusContext: params.focusContext,
         acceptedExercises: normalizedExercises,
+        recentPreferences,
+      });
+      const forbidden = preserveDecision.blockingReason === "hard_focus_or_recovery_violation";
+      const matchSource = getCatalogMatchSource({
+        requestedId,
+        requestedName,
+        matchedExercise,
       });
 
-      if (!duplicate && !balanceIssue && !forbidden && shouldPreferVariation) {
+      if (preserveDecision.preserve && shouldPreferVariation && preserveDecision.preservationScore < 68) {
         const variationFallback = findFallbackExercise({
-          requestedMovementPattern:
-            requestedMovementPattern ?? matchedExercise.movementPattern,
+          requestedMovementPattern: normalizedRequestedMovementPattern,
           requestedCatalogExercise: matchedExercise,
           availableCatalog,
           acceptedExercises: normalizedExercises,
@@ -2241,21 +2471,42 @@ export function validateAndNormalizeAiExercises(params: {
             reasonCode: "recent_variation_preference",
             reason:
               "AI-valet ersattes för att ge bättre variation jämfört med de senaste passen.",
+            removedAt: "catalog_to_focus_repair",
+            preservationScore: preserveDecision.preservationScore,
+            ...getReplacementQuality({
+              removedExercise: matchedNormalizedExercise,
+              replacementExercise: createNormalizedExercise(variationFallback, aiExercise),
+              focusContext: params.focusContext,
+            }),
           });
           continue;
         }
       }
 
-      if (!duplicate && !balanceIssue && !forbidden) {
-        normalizedExercises.push(createNormalizedExercise(matchedExercise, aiExercise));
+      if (preserveDecision.preserve) {
+        normalizedExercises.push(matchedNormalizedExercise);
         acceptedDirectly.push({
           requestedId,
           requestedName,
           requestedMovementPattern,
           selectedId: matchedExercise.id,
           selectedName: matchedExercise.name,
-          reasonCode: "accepted_exact_match",
-          reason: "AI-valet accepterades direkt.",
+          reasonCode:
+            matchSource === "exact_name_match"
+              ? "accepted_exact_name_match"
+              : matchSource === "alias_match"
+                ? "accepted_alias_match"
+                : "accepted_exact_match",
+          reason:
+            matchSource === "alias_match"
+              ? "AI-valet accepterades via aliasmatchning."
+              : matchSource === "exact_name_match"
+                ? "AI-valet accepterades via exakt namnmatchning."
+                : "AI-valet accepterades direkt.",
+          preservationScore: preserveDecision.preservationScore,
+          originalRoles: getQualityRoles(matchedNormalizedExercise, params.focusContext),
+          replacementRoles: getQualityRoles(matchedNormalizedExercise, params.focusContext),
+          lostRoles: [],
         });
         continue;
       }
@@ -2270,6 +2521,7 @@ export function validateAndNormalizeAiExercises(params: {
       });
 
       if (fallback) {
+        const replacementExercise = createNormalizedExercise(fallback, aiExercise);
         normalizedExercises.push(createNormalizedExercise(fallback, aiExercise));
         replacements.push({
           requestedId,
@@ -2281,12 +2533,19 @@ export function validateAndNormalizeAiExercises(params: {
             ? "duplicate_exercise_id"
             : forbidden
               ? "integrity_repair"
-              : "balance_adjustment",
+              : "fallback_used",
           reason: duplicate
             ? "AI försökte använda samma övning flera gånger."
             : forbidden
               ? "AI-valet ersattes eftersom övningen bröt mot planerat fokus eller återhämtningsregler."
               : `AI-valet ersattes eftersom ${balanceIssue?.message ?? "balansen i passet blev svag"}.`,
+          removedAt: "catalog_to_focus_repair",
+          preservationScore: preserveDecision.preservationScore,
+          ...getReplacementQuality({
+            removedExercise: matchedNormalizedExercise,
+            replacementExercise,
+            focusContext: params.focusContext,
+          }),
         });
         compatibleExercisesRejectedWithReason.push({
           exerciseName: matchedExercise.name,
