@@ -1842,13 +1842,8 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     completedMinutes < targetMinutes * 0.7;
   const missedSessionsCount = planState.missedSessions.length;
   const spontaneousSessionsCount = planState.spontaneousWorkoutLogIds.length;
-  const spontaneousReplacementCount = planState.plannedSessions.filter(
-    (session) => session.status === "replaced_by_spontaneous",
-  ).length;
-  const spontaneousCoachCount = Math.max(
-    spontaneousSessionsCount,
-    spontaneousReplacementCount,
-  );
+  // Coachtext ska bara prata om spontana pass när det faktiskt finns spontana loggar.
+  const spontaneousCoachCount = spontaneousSessionsCount;
   const completedPlannedSessions = planState.plannedSessions
     .filter((session) => session.status === "completed" || session.status === "replaced_by_spontaneous")
     .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate));
@@ -1875,6 +1870,9 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     ? `Missat planerat pass ${missedAfterLastCompleted[0]?.plannedDate ?? ""} efter senaste genomförda planerade pass.`
     : null;
   const normalizedGoal = normalizeTrainingGoal(planState.goal);
+  const extraTrainingThisWeek =
+    completedSessions > planState.settings.sessionsPerWeek ||
+    completedMinutes > targetMinutes * 1.05;
   const suggestedNextWorkoutFocus = goalReached
     ? "recovery_strength"
     : mapPlannedFocusToWorkoutFocus(planState.remainingTrainingNeed.suggestedNextFocus);
@@ -1918,6 +1916,20 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     coachTextReason = "Det finns minst ett missat planerat pass i veckan, men inget spontant pass som ersatte det.";
     message =
       "Det finns ett tidigare planerat pass som inte blev av under veckan, men vi låter nästa rekommendation styras av det viktigaste behovet just nu.";
+  } else if (normalizedGoal === "strength" && extraTrainingThisWeek) {
+    coachTextTemplateId = "strength_extra_training";
+    coachTextReason = "Styrkemålet kombineras med högre faktisk träningsdos än grundplanen.";
+    message =
+      `Du har fått in mer träning än grundplanen den här veckan. Nästa pass hålls därför träffsäkert: vi prioriterar tydliga huvudlyft och lämnar återhämtningsmarginal så att progressionen fortsätter.${typicalDurationText}`;
+  } else if (
+    normalizedGoal === "strength" &&
+    completedSessions > 0 &&
+    minuteCompletionRatio < 0.7
+  ) {
+    coachTextTemplateId = "strength_dose_below_target";
+    coachTextReason = "Styrkemålet har genomförda pass men veckodosen ligger fortfarande under plan.";
+    message =
+      `Du får in pass, men total styrkedos ligger fortfarande under plan för jämn progression.${typicalDurationText} Därför prioriterar nästa pass färre, tydligare huvudlyft i stället för att sprida ut arbetet tunt.`;
   } else if (
     normalizedGoal === "hypertrophy" &&
     completedSessions > 0 &&
@@ -1950,6 +1962,11 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     coachTextReason = "Minst ett spontant pass finns i aktuell vecka.";
     message =
       `Du fick in ett spontant pass, därför räknar vi om veckan och håller nästa pass mer träffsäkert i stället för att upprepa samma belastning.`;
+  } else if (extraTrainingThisWeek) {
+    coachTextTemplateId = "extra_training_this_week";
+    coachTextReason = "Genomförda pass eller minuter ligger över grundplanen för veckan.";
+    message =
+      `Du har redan tränat mer än grundplanen den här veckan. Nästa pass behöver därför vara mer prioriterat än volymdrivet, så att du fortsätter framåt utan att samla onödig trötthet.`;
   } else if (remainingSessions > 0) {
     coachTextTemplateId = "remaining_sessions";
     coachTextReason = "Veckan är fortfarande öppen och följer planerad riktning.";

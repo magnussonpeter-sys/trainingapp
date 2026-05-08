@@ -2,7 +2,10 @@ import type { Workout } from "@/types/workout";
 
 import { attachWorkoutGenerationDebug } from "@/lib/workout-generation/debug";
 import { runLegacyWorkoutGeneration } from "@/lib/workout-generation/legacy-adapter";
-import { generateWorkoutWithSlotBasedV1 } from "@/lib/workout-generation/slot-engine";
+import {
+  generateSafeSlotTemplateWorkout,
+  generateWorkoutWithSlotBasedV1,
+} from "@/lib/workout-generation/slot-engine";
 import type { WorkoutGenerationMode } from "@/lib/workout-generation/types";
 import { normalizeWorkoutGenerationMode } from "@/lib/workout-generation/types";
 import type {
@@ -255,20 +258,92 @@ export async function generateWorkoutWithMode(
     generationMode: "legacy_ai_chain",
   });
   if (!legacyRun.result.ok) {
-    return legacyRun.result;
+    const safeTemplateRun = await generateSafeSlotTemplateWorkout({
+      ...input,
+      generationMode: "slot_based_v1",
+    });
+
+    if (!safeTemplateRun.ok) {
+      return legacyRun.result;
+    }
+
+    const safeTemplateSafety = evaluateFinalSafetyGate(safeTemplateRun.workout);
+    if (!safeTemplateSafety.passed) {
+      return {
+        ok: false,
+        status: 500,
+        error: `Både slot och legacy underkändes, och säker slot-mall misslyckades: ${safeTemplateSafety.reasons.join(", ")}`,
+      };
+    }
+
+    return {
+      ok: true,
+      workout: attachWorkoutGenerationDebug({
+        workout: safeTemplateRun.workout,
+        generationModeRequested: requestedMode,
+        generationEngineUsed: "slot_based_v1",
+        generationFallbackUsed: true,
+        generationFallbackReason:
+          fallbackReason || "both_slot_and_legacy_failed_safe_template_used",
+        slotValidationPassed: true,
+        legacyValidationPassed: null,
+        finalSafetyGateReasons: safeTemplateSafety.reasons,
+        slotDebug: null,
+      }),
+    };
+  }
+
+  if (legacyRun.safety?.passed) {
+    return {
+      ok: true,
+      workout: attachWorkoutGenerationDebug({
+        workout: legacyRun.result.workout,
+        generationModeRequested: requestedMode,
+        generationEngineUsed: "legacy_ai_chain",
+        generationFallbackUsed: true,
+        generationFallbackReason: fallbackReason,
+        slotValidationPassed: slotRun.safety?.passed ?? false,
+        legacyValidationPassed: legacyRun.safety?.passed ?? null,
+        finalSafetyGateReasons: legacyRun.safety?.reasons ?? [],
+        slotDebug: null,
+      }),
+    };
+  }
+
+  const safeTemplateRun = await generateSafeSlotTemplateWorkout({
+    ...input,
+    generationMode: "slot_based_v1",
+  });
+
+  if (!safeTemplateRun.ok) {
+    return {
+      ok: false,
+      status: 500,
+      error: `Både slot och legacy underkändes, och säker slot-mall kunde inte genereras. Slot: ${fallbackReason}. Legacy: ${legacyRun.safety?.reasons.join(", ") || "underkänd"}.`,
+    };
+  }
+
+  const safeTemplateSafety = evaluateFinalSafetyGate(safeTemplateRun.workout);
+  if (!safeTemplateSafety.passed) {
+    return {
+      ok: false,
+      status: 500,
+      error: `Både slot och legacy underkändes, och säker slot-mall misslyckades: ${safeTemplateSafety.reasons.join(", ")}`,
+    };
   }
 
   return {
     ok: true,
     workout: attachWorkoutGenerationDebug({
-      workout: legacyRun.result.workout,
+      workout: safeTemplateRun.workout,
       generationModeRequested: requestedMode,
-      generationEngineUsed: "legacy_ai_chain",
+      generationEngineUsed: "slot_based_v1",
       generationFallbackUsed: true,
-      generationFallbackReason: fallbackReason,
-      slotValidationPassed: slotRun.safety?.passed ?? false,
-      legacyValidationPassed: legacyRun.safety?.passed ?? null,
-      finalSafetyGateReasons: legacyRun.safety?.reasons ?? [],
+      generationFallbackReason:
+        `${fallbackReason || "slot_failed"}; legacy_failed: ${legacyRun.safety?.reasons.join(", ") || "unknown"}`,
+      slotValidationPassed: true,
+      legacyValidationPassed: false,
+      finalSafetyGateReasons: safeTemplateSafety.reasons,
       slotDebug: null,
     }),
   };

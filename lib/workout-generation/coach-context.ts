@@ -100,11 +100,60 @@ function clampSessionRatio(value: number | null) {
   return Math.max(0, Math.min(1.4, value));
 }
 
+function getRecentExerciseIdentity(trainingHistoryContext: TrainingHistoryContext) {
+  const recentExerciseIds: string[] = [];
+  const recentVariantGroups: string[] = [];
+
+  for (const workout of trainingHistoryContext.recentWorkouts) {
+    for (const exercise of workout.topExercises) {
+      if (
+        typeof exercise.exerciseId === "string" &&
+        exercise.exerciseId.length > 0 &&
+        !recentExerciseIds.includes(exercise.exerciseId)
+      ) {
+        recentExerciseIds.push(exercise.exerciseId);
+      }
+      if (
+        typeof exercise.variantGroup === "string" &&
+        exercise.variantGroup.length > 0 &&
+        !recentVariantGroups.includes(exercise.variantGroup)
+      ) {
+        recentVariantGroups.push(exercise.variantGroup);
+      }
+    }
+  }
+
+  for (const memory of trainingHistoryContext.exerciseProgressionMemory) {
+    if (
+      typeof memory.exerciseId === "string" &&
+      memory.exerciseId.length > 0 &&
+      !recentExerciseIds.includes(memory.exerciseId)
+    ) {
+      recentExerciseIds.push(memory.exerciseId);
+    }
+    if (
+      typeof memory.variantGroup === "string" &&
+      memory.variantGroup.length > 0 &&
+      !recentVariantGroups.includes(memory.variantGroup)
+    ) {
+      recentVariantGroups.push(memory.variantGroup);
+    }
+  }
+
+  return {
+    recentExerciseIds: recentExerciseIds.slice(0, 16),
+    recentVariantGroups: recentVariantGroups.slice(0, 12),
+  };
+}
+
 function buildTrainingGapSummary(params: {
   goal: WorkoutCoachContext["goal"];
   plannedMinutes: number | null;
   completedMinutes: number | null;
   typicalCompletedDuration: number | null;
+  completedSessions: number | null;
+  plannedSessions: number | null;
+  hasSpontaneousWorkoutThisWeek: boolean;
 }) {
   if (
     typeof params.plannedMinutes !== "number" ||
@@ -119,6 +168,18 @@ function buildTrainingGapSummary(params: {
     typeof params.typicalCompletedDuration === "number"
       ? `När du väl tränar klarar du ofta runt ${params.typicalCompletedDuration} minuter.`
       : "När du väl tränar finns det viss passlängd att bygga vidare på.";
+
+  if (
+    typeof params.completedSessions === "number" &&
+    typeof params.plannedSessions === "number" &&
+    params.completedSessions > params.plannedSessions
+  ) {
+    return `${typicalText} Du tränar just nu mer än grundplanen, så dagens pass ska fortfarande ge progression men också lämna återhämtningsmarginal.`;
+  }
+
+  if (params.hasSpontaneousWorkoutThisWeek) {
+    return `${typicalText} Du har redan fått in extra träning den här veckan, så dagens pass behöver vara träffsäkert i stället för att bara lägga på mer volym.`;
+  }
 
   if (params.goal === "hypertrophy" && ratio < 0.65) {
     return `${typicalText} Men total träningsdos ligger under det som normalt krävs för tydlig muskeltillväxt, så dagens pass prioriterar de viktigaste rollerna först.`;
@@ -203,11 +264,25 @@ export function buildWorkoutGenerationCoachContext(params: {
   const completedSessions = params.input.trainingGap?.completedSessions ?? null;
   const plannedMinutes = params.input.trainingGap?.plannedMinutes ?? null;
   const completedMinutes = params.input.trainingGap?.completedMinutes ?? null;
+  const adherenceSessionsRatio = clampSessionRatio(
+    typeof plannedSessions === "number" && plannedSessions > 0
+      ? (completedSessions ?? 0) / plannedSessions
+      : null,
+  );
+  const adherenceMinutesRatio = clampSessionRatio(
+    typeof plannedMinutes === "number" && plannedMinutes > 0
+      ? (completedMinutes ?? 0) / plannedMinutes
+      : null,
+  );
   const trainingDoseAdherence = clampSessionRatio(
     typeof plannedMinutes === "number" && plannedMinutes > 0
       ? (completedMinutes ?? 0) / plannedMinutes
       : null,
   );
+  const { recentExerciseIds, recentVariantGroups } =
+    getRecentExerciseIdentity(trainingHistoryContext);
+  const hasSpontaneousWorkoutThisWeek =
+    params.input.weeklyPlanContext?.hasSpontaneousWorkoutThisWeek ?? false;
 
   const coachContext: WorkoutCoachContext = {
     goal,
@@ -231,18 +306,26 @@ export function buildWorkoutGenerationCoachContext(params: {
     plannedSessions7d: plannedSessions,
     completedMinutes7d: completedMinutes,
     plannedMinutes7d: plannedMinutes,
+    adherenceSessionsRatio,
+    adherenceMinutesRatio,
     trainingDoseAdherence,
     trainingGapSummary: buildTrainingGapSummary({
       goal,
       plannedMinutes,
       completedMinutes,
       typicalCompletedDuration,
+      completedSessions,
+      plannedSessions,
+      hasSpontaneousWorkoutThisWeek,
     }),
+    recentExerciseIds,
+    recentVariantGroups,
     globalUndertrainedMuscles,
     focusCompatiblePriorities,
     deferredPriorities,
     recoverySummary,
     injuryConstraints: params.constraints ?? [],
+    hasSpontaneousWorkoutThisWeek,
     coachDecisionReason:
       params.input.focusIntent ??
       "Coach context byggdes från mål, historik, träningsgap och fokuskompatibla prioriteringar.",

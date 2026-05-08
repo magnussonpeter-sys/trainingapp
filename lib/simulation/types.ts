@@ -266,7 +266,7 @@ export type SimulationPlannerDebugEntry = {
     generationFallbackUsed?: boolean;
     generationFallbackReason?: string | null;
     generationComparison?: {
-      selectedEngine: "legacy_ai_chain" | "slot_based_v1";
+      selectedEngine: "legacy_ai_chain" | "slot_based_v1" | "safe_slot_template";
       legacyPassed: boolean | null;
       slotPassed: boolean | null;
       legacyExerciseCount: number | null;
@@ -342,7 +342,13 @@ export type SimulationPlannerDebugEntry = {
     finalQualityWarnings: string[];
     safetyGateTriggered: boolean;
     safetyGateReasons: string[];
-    safetyGateRecoveryMode: "restore_raw" | "safe_template" | null;
+    safetyGateRecoveryMode:
+      | "none"
+      | "restore_raw_success"
+      | "restore_raw_failed_safe_template_used"
+      | "safe_template_success"
+      | "failed"
+      | null;
     recoveryLimitedSeverityByMuscle: Array<{
       muscle: string;
       severity: "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery";

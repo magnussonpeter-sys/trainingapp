@@ -211,7 +211,13 @@ export type ValidateAiExercisesResult = {
     finalQualityWarnings: string[];
     safetyGateTriggered: boolean;
     safetyGateReasons: string[];
-    safetyGateRecoveryMode: "restore_raw" | "safe_template" | null;
+    safetyGateRecoveryMode:
+      | "none"
+      | "restore_raw_success"
+      | "restore_raw_failed_safe_template_used"
+      | "safe_template_success"
+      | "failed"
+      | null;
     recoveryLimitedSeverityByMuscle: Array<{
       muscle: MuscleBudgetGroup;
       severity: "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery";
@@ -1101,13 +1107,14 @@ function isSafeForRecovery(
 function getRecoverySeverityByMuscle(params: {
   muscle: MuscleBudgetGroup;
   focusContext?: ValidationFocusContext | null;
-}) {
+}): "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery" {
   const focus = getEffectiveFocus(params.focusContext);
   if (focus === "recovery_strength") {
     return "allow_light_recovery" as const;
   }
 
-  return "hard_blocked" as const;
+  // Default is intentionally soft. Hard blocks should come from explicit logic, not broad recovery lists.
+  return "avoid_heavy_loading" as const;
 }
 
 function canServeAsLightRecovery(
@@ -1142,9 +1149,13 @@ function canServeAsLightRecovery(
   return (
     role === "primary_pull" ||
     role === "upper_back_accessory" ||
+    role === "primary_squat" ||
+    role === "primary_hinge" ||
+    role === "secondary_lunge" ||
     role === "primary_press" ||
     role === "secondary_press" ||
     role === "glute_accessory" ||
+    role === "hamstring_accessory" ||
     role === "core" ||
     role === "carry" ||
     role === "mobility_prehab"
@@ -1402,6 +1413,10 @@ function getRequiredTemplateSlots(
       return ["lower_base", "hinge", "lower_secondary", "glute_or_posterior", "core_or_calf"];
     }
 
+    if (duration >= 35) {
+      return ["lower_base", "hinge", "lower_secondary", "core_or_calf"];
+    }
+
     return ["lower_base", "hinge", "calf_or_core"];
   }
 
@@ -1449,6 +1464,10 @@ function getRequiredTemplateSlots(
 
     if (duration <= 30) {
       return ["lower_base", "press", "drag", "hinge_or_core"];
+    }
+
+    if (duration >= 35) {
+      return ["lower_base", "hinge", "press", "drag", "core_or_carry"];
     }
 
     return ["lower_base", "hinge", "press", "drag"];
@@ -3232,7 +3251,12 @@ export function validateAndNormalizeAiExercises(params: {
   const afterFocusRepairExercises = [...normalizedExercises];
   let safetyGateTriggered = false;
   let safetyGateReasons: string[] = [];
-  let safetyGateRecoveryMode: "restore_raw" | "safe_template" | null = null;
+  let safetyGateRecoveryMode:
+    | "none"
+    | "restore_raw_success"
+    | "restore_raw_failed_safe_template_used"
+    | "safe_template_success"
+    | "failed" = "none";
   let diagnostics = collectFocusDiagnostics({
     exercises: normalizedExercises,
     focusContext: params.focusContext,
@@ -3304,7 +3328,14 @@ export function validateAndNormalizeAiExercises(params: {
     diagnostics = selectedSafetyDiagnostics;
     safetyGateTriggered = true;
     safetyGateReasons = initialSafetyGateReasons;
-    safetyGateRecoveryMode = selectedSafetyMode;
+    safetyGateRecoveryMode =
+      selectedSafetyMode === "restore_raw" && selectedSafetyReasons.length === 0
+        ? "restore_raw_success"
+        : selectedSafetyMode === "safe_template" && restoreRawReasons.length > 0 && selectedSafetyReasons.length === 0
+          ? "restore_raw_failed_safe_template_used"
+          : selectedSafetyMode === "safe_template" && selectedSafetyReasons.length === 0
+            ? "safe_template_success"
+            : "failed";
     warnings.push(
       `Safety gate återställde passet eftersom ${initialSafetyGateReasons.join(", ")}.`,
       ...selectedSafetyRecovery.warnings,
@@ -3613,9 +3644,18 @@ export function validateAndNormalizeAiExercises(params: {
       diagnostics.offFocusViolations.length * 16,
   );
   const priorityMuscleResolutionStatus = (params.focusContext?.priorityMuscles ?? []).map((group) => {
-    const hasPrimaryHit = normalizedExercises.some((exercise) => exercise.primaryMuscles.includes(group));
+    const hasPrimaryHit = normalizedExercises.some((exercise) =>
+      getBudgetGroupsForExercise({
+        primaryMuscles: exercise.primaryMuscles,
+        secondaryMuscles: [],
+      }).includes(group),
+    );
     const hasSecondaryHit = normalizedExercises.some(
-      (exercise) => exercise.secondaryMuscles?.includes(group),
+      (exercise) =>
+        !getBudgetGroupsForExercise({
+          primaryMuscles: exercise.primaryMuscles,
+          secondaryMuscles: [],
+        }).includes(group) && hasBudgetGroup(exercise, group),
     );
 
     if (hasPrimaryHit) {
@@ -3680,7 +3720,16 @@ export function validateAndNormalizeAiExercises(params: {
       ? ["Minst en ersättning bytte träningsroll på ett tveksamt sätt."]
       : []),
     ...(safetyGateTriggered
-      ? [`Safety gate räddade passet via ${safetyGateRecoveryMode === "safe_template" ? "säker fokusmall" : "återställning av säkra råövningar"}.`]
+      ? [
+          `Safety gate räddade passet via ${
+            safetyGateRecoveryMode === "safe_template_success" ||
+            safetyGateRecoveryMode === "restore_raw_failed_safe_template_used"
+              ? "säker fokusmall"
+              : safetyGateRecoveryMode === "failed"
+                ? "ett ofullständigt återställningsförsök"
+                : "återställning av säkra råövningar"
+          }.`,
+        ]
       : []),
   ];
 

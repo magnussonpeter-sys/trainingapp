@@ -73,6 +73,7 @@ import {
   generateWorkoutForSpecificEngine,
   generateWorkoutWithMode,
 } from "@/lib/workouts/generate-workout-with-mode";
+import { generateSafeSlotTemplateWorkout } from "@/lib/workouts/generate-workout-slot-based-v1";
 import {
   normalizeSimulationWorkoutGenerationMode,
   type WorkoutGenerationMode,
@@ -236,6 +237,32 @@ async function generateWorkoutForSimulationMode(params: {
     };
   }
 
+  const safeTemplateRun = await generateSafeSlotTemplateWorkout({
+    ...params.input,
+    generationMode: "slot_based_v1",
+  });
+
+  if (safeTemplateRun.ok) {
+    return {
+      generatedWorkout: safeTemplateRun,
+      generationEngineDebug: {
+        generationModeRequested: "hybrid" as WorkoutGenerationMode,
+        generationEngineUsed: "slot_based_v1" as const,
+        generationFallbackUsed: true,
+        generationFallbackReason: "both_slot_and_legacy_failed_safe_template_used",
+      },
+      generationComparison: {
+        selectedEngine: "safe_slot_template" as const,
+        legacyPassed,
+        slotPassed,
+        legacyExerciseCount,
+        slotExerciseCount,
+        slotSafetyReasons: slotRun.safety?.reasons ?? [],
+        selectedBecause: "both_engines_failed_safe_template_used",
+      },
+    };
+  }
+
   return {
     generatedWorkout: slotRun.result.ok ? slotRun.result : legacyRun.result,
     generationEngineDebug: {
@@ -385,7 +412,13 @@ function extractValidationDiagnostics(value: unknown) {
       finalQualityWarnings?: string[];
       safetyGateTriggered?: boolean;
       safetyGateReasons?: string[];
-      safetyGateRecoveryMode?: "restore_raw" | "safe_template" | null;
+      safetyGateRecoveryMode?:
+        | "none"
+        | "restore_raw_success"
+        | "restore_raw_failed_safe_template_used"
+        | "safe_template_success"
+        | "failed"
+        | null;
       recoveryLimitedSeverityByMuscle?: Array<{
         muscle?: string;
         severity?: "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery";
@@ -648,8 +681,11 @@ function extractValidationDiagnostics(value: unknown) {
       ? validation.safetyGateReasons
       : [],
     safetyGateRecoveryMode:
-      validation.safetyGateRecoveryMode === "restore_raw" ||
-      validation.safetyGateRecoveryMode === "safe_template"
+      validation.safetyGateRecoveryMode === "none" ||
+      validation.safetyGateRecoveryMode === "restore_raw_success" ||
+      validation.safetyGateRecoveryMode === "restore_raw_failed_safe_template_used" ||
+      validation.safetyGateRecoveryMode === "safe_template_success" ||
+      validation.safetyGateRecoveryMode === "failed"
         ? validation.safetyGateRecoveryMode
         : null,
     recoveryLimitedSeverityByMuscle: Array.isArray(validation.recoveryLimitedSeverityByMuscle)

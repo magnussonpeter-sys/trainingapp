@@ -140,13 +140,18 @@ export type WorkoutCoachContext = {
   plannedSessions7d: number | null;
   completedMinutes7d: number | null;
   plannedMinutes7d: number | null;
+  adherenceSessionsRatio: number | null;
+  adherenceMinutesRatio: number | null;
   trainingDoseAdherence: number | null;
   trainingGapSummary: string;
+  recentExerciseIds: string[];
+  recentVariantGroups: string[];
   globalUndertrainedMuscles: MuscleBudgetGroup[];
   focusCompatiblePriorities: MuscleBudgetGroup[];
   deferredPriorities: MuscleBudgetGroup[];
   recoverySummary: RecoverySummary;
   injuryConstraints: TrainingConstraint[];
+  hasSpontaneousWorkoutThisWeek: boolean;
   coachDecisionReason: string;
 };
 
@@ -206,9 +211,28 @@ export type SlotWorkoutDebug = {
   candidatesPerSlot: Record<string, RankedExerciseCandidate[]>;
   selectedExercisePerSlot: SlotExerciseSelection[];
   rejectedCandidates: Record<string, RankedExerciseCandidate[]>;
+  slotCandidateCounts: Record<string, number>;
+  rejectedCandidatesBySlot: Record<string, string[]>;
   slotValidationPassed: boolean;
   missingRequiredSlots: string[];
   invalidSlotExercises: string[];
+  slotFailureReasons: string[];
+  safeTemplateUsed: boolean;
+  safeTemplateReason: string | null;
+  slotAiRequested: boolean;
+  slotAiUsed: boolean;
+  slotAiModel: string | null;
+  slotAiCoachText: string | null;
+  slotAiInvalidChoices: Array<{
+    slotId: string;
+    exerciseId: string;
+    reason: string;
+  }>;
+  slotAiError: string | null;
+  recentVariantGroups: string[];
+  sportFocusRelevantRoles: WorkoutSlotRole[];
+  sportFocusProtectedRoles: WorkoutSlotRole[];
+  slotRecoveryModificationSummary: string[];
   safetyGateReasons: string[];
   finalSlotCoverage: string[];
   finalWorkoutQualityScore: number;

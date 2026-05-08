@@ -178,11 +178,26 @@ function getOptionalRoleOrder(params: {
   focus: WorkoutCoachContext["selectedFocus"];
   coachContext: WorkoutCoachContext;
 }) {
+  const isStrength = params.coachContext.goal === "strength";
+  const prioritizeCalves = params.coachContext.focusCompatiblePriorities.includes("calves");
+  const prioritizeBiceps = params.coachContext.focusCompatiblePriorities.includes("biceps");
+  const prioritizeTriceps = params.coachContext.focusCompatiblePriorities.includes("triceps");
+  const cycling = params.coachContext.sportFocus === "cycling";
+  const alpine = params.coachContext.sportFocus === "alpine_skiing";
+
   if (params.focus === "upper_body") {
+    if (isStrength) {
+      return [
+        prioritizeTriceps ? "direct_triceps" : "direct_biceps",
+        "shoulder_accessory",
+        "rear_delt_scapula",
+        "core",
+        "carry",
+      ] satisfies WorkoutSlotRole[];
+    }
+
     return [
-      params.coachContext.focusCompatiblePriorities.includes("triceps")
-        ? "direct_triceps"
-        : "direct_biceps",
+      prioritizeTriceps ? "direct_triceps" : "direct_biceps",
       "shoulder_accessory",
       params.coachContext.sportFocus === "surf_sports" ? "carry" : "rear_delt_scapula",
       "core",
@@ -191,25 +206,41 @@ function getOptionalRoleOrder(params: {
   }
 
   if (params.focus === "lower_body") {
+    if (isStrength) {
+      return [
+        "unilateral_lower",
+        cycling || alpine ? "core" : prioritizeCalves ? "calves" : "core",
+        prioritizeCalves ? "calves" : "carry",
+        "optional_accessory",
+      ] satisfies WorkoutSlotRole[];
+    }
+
     return [
       "unilateral_lower",
-      params.coachContext.focusCompatiblePriorities.includes("calves")
-        ? "calves"
-        : "core",
+      prioritizeCalves ? "calves" : cycling ? "core" : "core",
+      alpine ? "carry" : "optional_accessory",
       "optional_accessory",
       "core",
     ] satisfies WorkoutSlotRole[];
   }
 
   if (params.focus === "recovery_strength") {
-    return ["carry", "rehab_control", "optional_accessory"] satisfies WorkoutSlotRole[];
+    return ["carry", "rehab_control", "core"] satisfies WorkoutSlotRole[];
+  }
+
+  if (isStrength) {
+    return [
+      "core",
+      prioritizeBiceps ? "direct_biceps" : prioritizeTriceps ? "direct_triceps" : "carry",
+      "carry",
+      "rear_delt_scapula",
+    ] satisfies WorkoutSlotRole[];
   }
 
   return [
-    params.coachContext.sportFocus === "surf_sports" ? "carry" : "core",
-    params.coachContext.focusCompatiblePriorities.includes("biceps")
-      ? "direct_biceps"
-      : "direct_triceps",
+    cycling || alpine || params.coachContext.sportFocus === "surf_sports" ? "core" : "carry",
+    prioritizeBiceps ? "direct_biceps" : "direct_triceps",
+    cycling || alpine ? "carry" : "rear_delt_scapula",
     "rear_delt_scapula",
     "optional_accessory",
   ] satisfies WorkoutSlotRole[];
