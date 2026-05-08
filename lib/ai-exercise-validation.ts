@@ -209,6 +209,9 @@ export type ValidateAiExercisesResult = {
     roleMismatchReplacements: string[];
     genericFallbacksAdded: string[];
     finalQualityWarnings: string[];
+    safetyGateTriggered: boolean;
+    safetyGateReasons: string[];
+    safetyGateRecoveryMode: "restore_raw" | "safe_template" | null;
     recoveryLimitedSeverityByMuscle: Array<{
       muscle: MuscleBudgetGroup;
       severity: "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery";
@@ -584,15 +587,27 @@ function countByVariantGroup(exercises: NormalizedExercise[]) {
 function getBalanceIssue(
   candidate: Pick<
     NormalizedExercise,
-    "movementPattern" | "primaryMuscles" | "variantGroup"
+    "id" | "movementPattern" | "primaryMuscles" | "secondaryMuscles" | "variantGroup"
   >,
   acceptedExercises: NormalizedExercise[],
+  focusContext?: ValidationFocusContext | null,
 ): { code: BalanceIssueCode; message: string } | null {
   const movementCounts = countByMovementPattern(acceptedExercises);
   const muscleCounts = countByPrimaryMuscle(acceptedExercises);
   const variantCounts = countByVariantGroup(acceptedExercises);
+  const candidateRole = getExerciseRole(candidate, focusContext);
+  const exemptFromMovementLimit =
+    candidateRole === "biceps_isolation" ||
+    candidateRole === "triceps_press" ||
+    candidateRole === "calf_accessory" ||
+    candidateRole === "core" ||
+    candidateRole === "carry" ||
+    candidateRole === "shoulder_accessory";
 
-  if ((movementCounts.get(candidate.movementPattern) ?? 0) >= MAX_PER_MOVEMENT_PATTERN) {
+  if (
+    !exemptFromMovementLimit &&
+    (movementCounts.get(candidate.movementPattern) ?? 0) >= MAX_PER_MOVEMENT_PATTERN
+  ) {
     return {
       code: "movement_pattern_limit",
       message: `rörelsemönstret ${candidate.movementPattern} var redan fullt`,
@@ -607,7 +622,10 @@ function getBalanceIssue(
   }
 
   for (const muscle of candidate.primaryMuscles) {
-    if ((muscleCounts.get(muscle) ?? 0) >= MAX_PER_PRIMARY_MUSCLE) {
+    if (
+      !exemptFromMovementLimit &&
+      (muscleCounts.get(muscle) ?? 0) >= MAX_PER_PRIMARY_MUSCLE
+    ) {
       return {
         code: "primary_muscle_limit",
         message: `primärmuskeln ${muscle} var redan överrepresenterad`,
@@ -1665,6 +1683,247 @@ function buildCandidatePool(params: {
   return pool;
 }
 
+function isDeferredMuscleOnlyCandidate(
+  exercise: Pick<
+    NormalizedExercise,
+    "primaryMuscles" | "secondaryMuscles" | "movementPattern" | "variantGroup"
+  >,
+  focusContext?: ValidationFocusContext | null,
+) {
+  const priorityGroups = deriveFocusPriorityGroups({
+    globalPriorities: focusContext?.priorityMuscles ?? [],
+    plannedFocus: getEffectiveFocus(focusContext),
+  });
+
+  if (priorityGroups.deferredPriorities.length === 0) {
+    return false;
+  }
+
+  const hitsFocusCompatible = priorityGroups.focusCompatiblePriorities.some((group) =>
+    hasBudgetGroup(exercise, group),
+  );
+  const hitsDeferred = priorityGroups.deferredPriorities.some((group) =>
+    hasBudgetGroup(exercise, group),
+  );
+
+  return hitsDeferred && !hitsFocusCompatible;
+}
+
+function isFocusSafeSupplementalExercise(
+  exercise: Pick<
+    NormalizedExercise,
+    | "id"
+    | "movementPattern"
+    | "variantGroup"
+    | "primaryMuscles"
+    | "secondaryMuscles"
+    | "riskLevel"
+  >,
+  focusContext?: ValidationFocusContext | null,
+) {
+  const focus = getEffectiveFocus(focusContext);
+
+  if (!focus || focus === "full_body") {
+    return !isDeferredMuscleOnlyCandidate(exercise, focusContext);
+  }
+
+  if (focus === "upper_body") {
+    return (
+      (isUpperBodyExercise(exercise, focusContext) ||
+        hasBudgetGroup(exercise, "core") ||
+        exercise.movementPattern === "carry") &&
+      !hasBudgetGroup(exercise, "calves") &&
+      !isDeferredMuscleOnlyCandidate(exercise, focusContext)
+    );
+  }
+
+  if (focus === "lower_body") {
+    return (
+      (isLowerBodyExercise(exercise, focusContext) || isCoreOrCalfExercise(exercise)) &&
+      !isDeferredMuscleOnlyCandidate(exercise, focusContext)
+    );
+  }
+
+  if (focus === "recovery_strength") {
+    return canServeAsLightRecovery(exercise, focusContext);
+  }
+
+  if (focus === "core") {
+    return hasBudgetGroup(exercise, "core") || exercise.movementPattern === "carry";
+  }
+
+  return true;
+}
+
+function buildSafeTemplateExercises(params: {
+  seedExercises: NormalizedExercise[];
+  availableCatalog: ExerciseCatalogItem[];
+  focusContext?: ValidationFocusContext | null;
+  targetExerciseCount: number;
+  recentPreferences?: RecentPreferenceContext;
+}) {
+  const selected: NormalizedExercise[] = [];
+  const warnings: string[] = [];
+  const pool = buildCandidatePool({
+    currentExercises: params.seedExercises.filter((exercise) =>
+      !isForbiddenForFocus({
+        exercise,
+        focusContext: params.focusContext,
+        acceptedExercises: [],
+      }),
+    ),
+    availableCatalog: params.availableCatalog,
+  });
+  const requiredSlots = getRequiredTemplateSlots(params.focusContext);
+
+  for (const slot of requiredSlots) {
+    if (selected.length >= params.targetExerciseCount) {
+      break;
+    }
+
+    const candidate = chooseBestExerciseForSlot({
+      slot,
+      pool,
+      selected,
+      focusContext: params.focusContext,
+      recentPreferences: params.recentPreferences,
+    });
+
+    if (!candidate) {
+      warnings.push(`Safety gate hittade ingen tydlig kandidat för ${getSlotLabel(slot)}.`);
+      continue;
+    }
+
+    selected.push(candidate);
+  }
+
+  const rankedSupplements = pool
+    .filter(
+      (candidate) =>
+        !hasExerciseId(candidate.id, selected) &&
+        isFocusSafeSupplementalExercise(candidate, params.focusContext),
+    )
+    .map((candidate) => ({
+      candidate,
+      score: scoreExerciseReplacement({
+        candidate,
+        requestedBudgetGroups: [],
+        focusContext: params.focusContext,
+        acceptedExercises: selected,
+        recentPreferences: params.recentPreferences,
+      }),
+    }))
+    .filter(({ score }) => score > -10)
+    .sort((left, right) => right.score - left.score);
+
+  for (const { candidate } of rankedSupplements) {
+    if (selected.length >= params.targetExerciseCount) {
+      break;
+    }
+    selected.push(candidate);
+  }
+
+  return {
+    exercises: selected.slice(0, params.targetExerciseCount),
+    warnings,
+  };
+}
+
+function getSafetyGateReasons(params: {
+  exercises: NormalizedExercise[];
+  focusContext?: ValidationFocusContext | null;
+  diagnostics: FocusDiagnostics;
+  qualityPreservationScore?: number | null;
+}) {
+  const reasons: string[] = [];
+  const focus = getEffectiveFocus(params.focusContext);
+  const duration = params.focusContext?.durationMinutes ?? 0;
+
+  if (params.exercises.length === 0) {
+    reasons.push("empty_final_workout");
+  }
+  if (duration >= 15 && params.exercises.length < 3) {
+    reasons.push("too_few_exercises_for_duration");
+  }
+  if (params.diagnostics.mustKeepViolations.length > 0) {
+    reasons.push("must_keep_violations");
+  }
+  if (params.diagnostics.offFocusViolations.length > 0) {
+    reasons.push("off_focus_violations");
+  }
+  if ((params.qualityPreservationScore ?? 100) < 60) {
+    reasons.push("quality_too_low");
+  }
+
+  if (focus === "lower_body") {
+    if (!params.exercises.some((exercise) => isLowerBaseExercise(exercise, params.focusContext))) {
+      reasons.push("lower_missing_knee_dominant");
+    }
+    if (
+      !params.exercises.some(
+        (exercise) =>
+          isHingeExercise(exercise, params.focusContext) ||
+          getExerciseRole(exercise, params.focusContext) === "glute_accessory" ||
+          getExerciseRole(exercise, params.focusContext) === "hamstring_accessory",
+      )
+    ) {
+      reasons.push("lower_missing_hinge_or_glute");
+    }
+  }
+
+  if (focus === "upper_body") {
+    if (!params.exercises.some((exercise) => isBasePressExercise(exercise, params.focusContext))) {
+      reasons.push("upper_missing_press");
+    }
+    if (!params.exercises.some((exercise) => isDragExercise(exercise, params.focusContext))) {
+      reasons.push("upper_missing_drag");
+    }
+  }
+
+  if (focus === "full_body") {
+    if (!params.exercises.some((exercise) => isBasePressExercise(exercise, params.focusContext))) {
+      reasons.push("full_missing_press");
+    }
+    if (!params.exercises.some((exercise) => isDragExercise(exercise, params.focusContext))) {
+      reasons.push("full_missing_drag");
+    }
+    if (
+      !params.exercises.some(
+        (exercise) =>
+          isLowerBaseExercise(exercise, params.focusContext) ||
+          isHingeExercise(exercise, params.focusContext),
+      )
+    ) {
+      reasons.push("full_missing_lower_base");
+    }
+  }
+
+  if (focus === "recovery_strength" && duration >= 15) {
+    if (params.exercises.length < 3) {
+      reasons.push("recovery_needs_three_exercises");
+    }
+    if (!params.exercises.some((exercise) => matchesTemplateSlot(exercise, "safe_drag", params.focusContext))) {
+      reasons.push("recovery_missing_light_drag");
+    }
+    if (
+      !params.exercises.some((exercise) =>
+        matchesTemplateSlot(exercise, "safe_press_or_glute", params.focusContext),
+      )
+    ) {
+      reasons.push("recovery_missing_light_press_or_glute");
+    }
+    if (
+      !params.exercises.some((exercise) =>
+        matchesTemplateSlot(exercise, "safe_core_or_glute", params.focusContext),
+      )
+    ) {
+      reasons.push("recovery_missing_light_core_or_glute");
+    }
+  }
+
+  return Array.from(new Set(reasons));
+}
+
 function scoreExerciseReplacement(params: {
   candidate: CandidatePoolExercise;
   requestedRole?: ExerciseRole | null;
@@ -1721,6 +1980,10 @@ function scoreExerciseReplacement(params: {
     )
   ) {
     score += 4;
+  }
+
+  if (isDeferredMuscleOnlyCandidate(params.candidate, params.focusContext)) {
+    score -= 14;
   }
 
   if (isSportRelevantExercise(params.candidate, params.focusContext)) {
@@ -1929,11 +2192,14 @@ function getPreservationScore(params: {
 
   const balanceIssue = getBalanceIssue(
     {
+      id: params.candidate.id,
       movementPattern: params.candidate.movementPattern,
       primaryMuscles: params.candidate.primaryMuscles,
+      secondaryMuscles: params.candidate.secondaryMuscles,
       variantGroup: params.candidate.variantGroup,
     },
     params.acceptedExercises,
+    params.focusContext,
   );
   if (balanceIssue) {
     score -= 10;
@@ -1973,11 +2239,14 @@ function canPreserveAiExercise(params: {
   });
   const balanceIssue = getBalanceIssue(
     {
+      id: params.candidate.id,
       movementPattern: params.candidate.movementPattern,
       primaryMuscles: params.candidate.primaryMuscles,
+      secondaryMuscles: params.candidate.secondaryMuscles,
       variantGroup: params.candidate.variantGroup,
     },
     params.acceptedExercises,
+    params.focusContext,
   );
 
   if (duplicate) {
@@ -2045,11 +2314,14 @@ function findFallbackExercise(params: {
         }),
         balanceIssue: getBalanceIssue(
           {
+            id: exercise.id,
             movementPattern: exercise.movementPattern,
             primaryMuscles: exercise.primaryMuscles,
+            secondaryMuscles: exercise.secondaryMuscles,
             variantGroup: exercise.variantGroup,
           },
           params.acceptedExercises,
+          params.focusContext,
         ),
       };
     })
@@ -2153,11 +2425,14 @@ function pickStarterExercises(params: {
         }) &&
         !getBalanceIssue(
           {
+            id: exercise.id,
             movementPattern: exercise.movementPattern,
             primaryMuscles: exercise.primaryMuscles,
+            secondaryMuscles: exercise.secondaryMuscles,
             variantGroup: exercise.variantGroup,
           },
           params.acceptedExercises,
+          params.focusContext,
         ),
     );
 
@@ -2259,7 +2534,11 @@ function enforceFocusTemplate(params: {
   }
 
   const rankedFills = pool
-    .filter((candidate) => !hasExerciseId(candidate.id, selected))
+    .filter(
+      (candidate) =>
+        !hasExerciseId(candidate.id, selected) &&
+        isFocusSafeSupplementalExercise(candidate, params.focusContext),
+    )
     .map((candidate) => ({
       candidate,
       score: scoreExerciseReplacement({
@@ -2525,6 +2804,9 @@ export function validateAndNormalizeAiExercises(params: {
         roleMismatchReplacements: [],
         genericFallbacksAdded: [],
         finalQualityWarnings: [],
+        safetyGateTriggered: false,
+        safetyGateReasons: [],
+        safetyGateRecoveryMode: null,
         recoveryLimitedSeverityByMuscle: [],
         blockedByRecoveryHard: [],
         allowedAsLightRecovery: [],
@@ -2647,11 +2929,14 @@ export function validateAndNormalizeAiExercises(params: {
       const duplicate = hasExerciseId(matchedExercise.id, normalizedExercises);
       const balanceIssue = getBalanceIssue(
         {
+          id: matchedExercise.id,
           movementPattern: matchedExercise.movementPattern,
           primaryMuscles: matchedExercise.primaryMuscles,
+          secondaryMuscles: matchedExercise.secondaryMuscles,
           variantGroup: matchedExercise.variantGroup,
         },
         normalizedExercises,
+        params.focusContext,
       );
       const repeatedRecently =
         recentPreferences.recentExerciseIds.has(matchedExercise.id) ||
@@ -2907,11 +3192,14 @@ export function validateAndNormalizeAiExercises(params: {
       if (
         getBalanceIssue(
           {
+            id: exercise.id,
             movementPattern: exercise.movementPattern,
             primaryMuscles: exercise.primaryMuscles,
+            secondaryMuscles: exercise.secondaryMuscles,
             variantGroup: exercise.variantGroup,
           },
           normalizedExercises,
+          params.focusContext,
         )
       ) {
         continue;
@@ -2941,6 +3229,87 @@ export function validateAndNormalizeAiExercises(params: {
 
   normalizedExercises.splice(0, normalizedExercises.length, ...templateResult.exercises);
   warnings.push(...templateResult.warnings);
+  const afterFocusRepairExercises = [...normalizedExercises];
+  let safetyGateTriggered = false;
+  let safetyGateReasons: string[] = [];
+  let safetyGateRecoveryMode: "restore_raw" | "safe_template" | null = null;
+  let diagnostics = collectFocusDiagnostics({
+    exercises: normalizedExercises,
+    focusContext: params.focusContext,
+  });
+  const initialSafetyGateReasons = getSafetyGateReasons({
+    exercises: normalizedExercises,
+    diagnostics,
+    focusContext: params.focusContext,
+  });
+
+  if (initialSafetyGateReasons.length > 0) {
+    const restoreRawAttempt = buildSafeTemplateExercises({
+      seedExercises: preTemplateExercises,
+      availableCatalog,
+      focusContext: params.focusContext,
+      targetExerciseCount: Math.max(targetExerciseCount, params.focusContext?.durationMinutes && params.focusContext.durationMinutes >= 15 ? 3 : targetExerciseCount),
+      recentPreferences,
+    });
+    const restoreRawDiagnostics = collectFocusDiagnostics({
+      exercises: restoreRawAttempt.exercises,
+      focusContext: params.focusContext,
+    });
+    const restoreRawReasons = getSafetyGateReasons({
+      exercises: restoreRawAttempt.exercises,
+      diagnostics: restoreRawDiagnostics,
+      focusContext: params.focusContext,
+    });
+
+    let selectedSafetyRecovery = restoreRawAttempt;
+    let selectedSafetyDiagnostics = restoreRawDiagnostics;
+    let selectedSafetyReasons = restoreRawReasons;
+    let selectedSafetyMode: "restore_raw" | "safe_template" = "restore_raw";
+
+    if (restoreRawReasons.length > 0) {
+      const safeTemplateAttempt = buildSafeTemplateExercises({
+        seedExercises: [],
+        availableCatalog,
+        focusContext: params.focusContext,
+        targetExerciseCount: Math.max(targetExerciseCount, params.focusContext?.durationMinutes && params.focusContext.durationMinutes >= 15 ? 3 : targetExerciseCount),
+        recentPreferences,
+      });
+      const safeTemplateDiagnostics = collectFocusDiagnostics({
+        exercises: safeTemplateAttempt.exercises,
+        focusContext: params.focusContext,
+      });
+      const safeTemplateReasons = getSafetyGateReasons({
+        exercises: safeTemplateAttempt.exercises,
+        diagnostics: safeTemplateDiagnostics,
+        focusContext: params.focusContext,
+      });
+
+      if (
+        safeTemplateReasons.length < selectedSafetyReasons.length ||
+        (selectedSafetyRecovery.exercises.length < 3 &&
+          safeTemplateAttempt.exercises.length >= 3)
+      ) {
+        selectedSafetyRecovery = safeTemplateAttempt;
+        selectedSafetyDiagnostics = safeTemplateDiagnostics;
+        selectedSafetyReasons = safeTemplateReasons;
+        selectedSafetyMode = "safe_template";
+      }
+    }
+
+    normalizedExercises.splice(
+      0,
+      normalizedExercises.length,
+      ...selectedSafetyRecovery.exercises,
+    );
+    diagnostics = selectedSafetyDiagnostics;
+    safetyGateTriggered = true;
+    safetyGateReasons = initialSafetyGateReasons;
+    safetyGateRecoveryMode = selectedSafetyMode;
+    warnings.push(
+      `Safety gate återställde passet eftersom ${initialSafetyGateReasons.join(", ")}.`,
+      ...selectedSafetyRecovery.warnings,
+    );
+  }
 
   if (replacements.length > 0) {
     warnings.push(
@@ -2954,7 +3323,6 @@ export function validateAndNormalizeAiExercises(params: {
     );
   }
 
-  const diagnostics = templateResult.diagnostics;
   const priorityGroups = deriveFocusPriorityGroups({
     globalPriorities: params.focusContext?.priorityMuscles ?? [],
     plannedFocus: getEffectiveFocus(params.focusContext),
@@ -2972,7 +3340,7 @@ export function validateAndNormalizeAiExercises(params: {
     params.focusContext,
   );
   const afterFocusRepair = buildStageExerciseDebug(
-    normalizedExercises,
+    afterFocusRepairExercises,
     params.focusContext,
   );
   const finalExercises = buildStageExerciseDebug(
@@ -3311,6 +3679,9 @@ export function validateAndNormalizeAiExercises(params: {
     ...(roleMismatchReplacements.length > 0
       ? ["Minst en ersättning bytte träningsroll på ett tveksamt sätt."]
       : []),
+    ...(safetyGateTriggered
+      ? [`Safety gate räddade passet via ${safetyGateRecoveryMode === "safe_template" ? "säker fokusmall" : "återställning av säkra råövningar"}.`]
+      : []),
   ];
 
   return {
@@ -3372,6 +3743,9 @@ export function validateAndNormalizeAiExercises(params: {
       roleMismatchReplacements,
       genericFallbacksAdded,
       finalQualityWarnings,
+      safetyGateTriggered,
+      safetyGateReasons,
+      safetyGateRecoveryMode,
       recoveryLimitedSeverityByMuscle,
       blockedByRecoveryHard,
       allowedAsLightRecovery,

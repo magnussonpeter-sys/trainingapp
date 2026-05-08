@@ -190,6 +190,12 @@ export type WeeklyPlanDebug = {
   missedTextReason?: string | null;
   plannedSlotsSinceLastWorkout?: number;
   spontaneousSinceLastPlannedWorkout?: number;
+  coachTextTemplateId?: string | null;
+  coachTextReason?: string | null;
+  spontaneousCountCurrentWeek?: number;
+  spontaneousCount7d?: number;
+  missedPlannedCountCurrentWeek?: number;
+  completedPlannedCountCurrentWeek?: number;
 };
 
 export type WeeklyPlanRecommendation = {
@@ -1836,6 +1842,13 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     completedMinutes < targetMinutes * 0.7;
   const missedSessionsCount = planState.missedSessions.length;
   const spontaneousSessionsCount = planState.spontaneousWorkoutLogIds.length;
+  const spontaneousReplacementCount = planState.plannedSessions.filter(
+    (session) => session.status === "replaced_by_spontaneous",
+  ).length;
+  const spontaneousCoachCount = Math.max(
+    spontaneousSessionsCount,
+    spontaneousReplacementCount,
+  );
   const completedPlannedSessions = planState.plannedSessions
     .filter((session) => session.status === "completed" || session.status === "replaced_by_spontaneous")
     .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate));
@@ -1873,24 +1886,36 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     : "";
 
   let message = "Planen räknas om automatiskt när du tränar.";
+  let coachTextTemplateId = "default";
+  let coachTextReason = "Standardmeddelande";
 
   if (goalReached) {
+    coachTextTemplateId = "goal_reached";
+    coachTextReason = "Veckans session- och minutmål är i stort sett uppnådda.";
     message =
       "Bra jobbat! Veckans mål är i stort sett uppnått. Vill du träna mer nu passar ett kort, återhämtande styrkepass bäst.";
   } else if (completedSessions === 0) {
+    coachTextTemplateId = "no_completed_sessions";
+    coachTextReason = "Inga genomförda pass ännu under aktuell vecka.";
     message =
       `Du har ${remainingSessions} pass kvar den här veckan. Det viktigaste är att komma igång med ett genomförbart pass.`;
-  } else if (missedSessionsCount >= 1 && spontaneousSessionsCount > 0) {
+  } else if (missedSessionsCount >= 1 && spontaneousCoachCount > 0) {
+    coachTextTemplateId = "missed_and_spontaneous";
+    coachTextReason = "Det finns både missade planerade pass och minst ett spontant pass i aktuell vecka.";
     message =
       `Du missade minst ett planerat pass men fick ändå in ett spontant pass. Vi kompenserar inte med något onödigt hårt, utan fyller de viktigaste luckorna med ett realistiskt ${formatPlannedSessionFocus(
         planState.remainingTrainingNeed.suggestedNextFocus,
       ).toLowerCase()}pass.`;
   } else if (missedSinceLastGeneratedWorkout) {
+    coachTextTemplateId = "missed_after_last_completed";
+    coachTextReason = missedTextReason ?? "Ett planerat pass missades efter senaste genomförda planerade pass.";
     message =
       `Du missade förra passet, men vi jagar inte igen allt på en gång. Nästa ${formatPlannedSessionFocus(
         planState.remainingTrainingNeed.suggestedNextFocus,
       ).toLowerCase()}pass ska fylla de viktigaste luckorna på ett rimligt sätt.`;
   } else if (missedSessionsCount >= 1) {
+    coachTextTemplateId = "missed_earlier_in_week";
+    coachTextReason = "Det finns minst ett missat planerat pass i veckan, men inget spontant pass som ersatte det.";
     message =
       "Det finns ett tidigare planerat pass som inte blev av under veckan, men vi låter nästa rekommendation styras av det viktigaste behovet just nu.";
   } else if (
@@ -1898,11 +1923,15 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     completedSessions > 0 &&
     minuteCompletionRatio < 0.45
   ) {
+    coachTextTemplateId = "hypertrophy_dose_far_below_target";
+    coachTextReason = "Genomförd minutdos ligger tydligt under hypertrofimålet.";
     message =
       `Du har fått in träning, men just nu ligger den faktiska träningsdosen klart under vad som normalt krävs för tydlig muskeltillväxt. Vi håller nästa pass genomförbart och prioriterar ${formatPlannedSessionFocus(
         planState.remainingTrainingNeed.suggestedNextFocus,
       ).toLowerCase()} med basövningar så att varje minut ger mer effekt.${typicalDurationText} För tydligare muskeltillväxt behöver vi sedan antingen få in fler pass eller fler genomförda minuter över veckan.`;
   } else if (shortSessionPattern) {
+    coachTextTemplateId = "short_session_pattern";
+    coachTextReason = "Genomförda pass är markant kortare än planerat.";
     message =
       `Du har tränat ${completedSessions} gånger den här veckan, men passen blev kortare än planerat. För målet behöver vi prioritera basövningarna i ett ${formatPlannedSessionFocus(
         planState.remainingTrainingNeed.suggestedNextFocus,
@@ -1912,12 +1941,18 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     completedSessions > 0 &&
     minuteCompletionRatio < 0.7
   ) {
+    coachTextTemplateId = "hypertrophy_dose_below_target";
+    coachTextReason = "Passlängd kan vara genomförbar men total veckodos ligger fortfarande under målet.";
     message =
       `När du tränar ser passlängden ofta genomförbar ut, men total veckodos ligger fortfarande under målet för hypertrofi.${typicalDurationText} Dagens pass prioriterar därför de största luckorna i stället för att sprida ut energin tunt.`;
-  } else if (spontaneousSessionsCount > 0) {
+  } else if (spontaneousCoachCount > 0) {
+    coachTextTemplateId = "spontaneous_this_week";
+    coachTextReason = "Minst ett spontant pass finns i aktuell vecka.";
     message =
       `Du fick in ett spontant pass, därför räknar vi om veckan och håller nästa pass mer träffsäkert i stället för att upprepa samma belastning.`;
   } else if (remainingSessions > 0) {
+    coachTextTemplateId = "remaining_sessions";
+    coachTextReason = "Veckan är fortfarande öppen och följer planerad riktning.";
     message =
       `För att hålla veckan rimlig återstår ungefär ${remainingSessions} pass på cirka ${planState.remainingTrainingNeed.suggestedNextDurationMinutes} minuter.`;
   }
@@ -1929,6 +1964,12 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
     planState.debug.missedTextReason = missedTextReason;
     planState.debug.plannedSlotsSinceLastWorkout = plannedSlotsSinceLastWorkout;
     planState.debug.spontaneousSinceLastPlannedWorkout = spontaneousSinceLastPlannedWorkout;
+    planState.debug.coachTextTemplateId = coachTextTemplateId;
+    planState.debug.coachTextReason = coachTextReason;
+    planState.debug.spontaneousCountCurrentWeek = spontaneousCoachCount;
+    planState.debug.spontaneousCount7d = spontaneousCoachCount;
+    planState.debug.missedPlannedCountCurrentWeek = missedSessionsCount;
+    planState.debug.completedPlannedCountCurrentWeek = completedPlannedSessions.length;
   }
 
   return {

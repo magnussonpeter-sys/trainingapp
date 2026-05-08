@@ -22,6 +22,7 @@ import {
 } from "@/lib/simulation/evaluate-simulation";
 import { getSimulationProfilePreset } from "@/lib/simulation/profile-presets";
 import { createSeededRandom } from "@/lib/simulation/random";
+import { normalizeSimulationWorkoutGenerationMode } from "@/lib/workout-generation/types";
 import {
   applyMissedWorkoutState,
   applyRestDayRecovery,
@@ -50,6 +51,7 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
   startDate: new Date().toISOString().slice(0, 10),
   randomSeed: 42,
   plannerMode: "synthetic",
+  generationMode: "legacy_ai_chain",
   enablePlannerDebug: false,
   enableMissedWorkouts: true,
   enableFatigueModel: true,
@@ -94,6 +96,7 @@ function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
     randomSeed: Math.max(1, Math.round(config?.randomSeed ?? DEFAULT_SIMULATION_CONFIG.randomSeed)),
     startDate: config?.startDate?.trim() || DEFAULT_SIMULATION_CONFIG.startDate,
     plannerMode: normalizeSimulationPlannerMode(config?.plannerMode),
+    generationMode: normalizeSimulationWorkoutGenerationMode(config?.generationMode),
     scenario: normalizeSimulationScenario(config?.scenario),
     minRestDayProbability: Math.min(Math.max(config?.minRestDayProbability ?? 0.08, 0), 0.6),
     maxFatigue: Math.max(60, config?.maxFatigue ?? 100),

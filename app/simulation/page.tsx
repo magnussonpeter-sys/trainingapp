@@ -27,6 +27,7 @@ import type {
   SimulationReport,
   SimulationScenario,
   SimulationSportFocus,
+  SimulationWorkoutGenerationMode,
   SimulationWeeklyPlanFlexibility,
 } from "@/lib/simulation/types";
 
@@ -116,6 +117,8 @@ export default function SimulationPage() {
   const [gymOptions, setGymOptions] = useState<SimulationGymOption[]>([]);
   const [selectedGymId, setSelectedGymId] = useState("");
   const [plannerMode, setPlannerMode] = useState<SimulationPlannerMode>("synthetic");
+  const [generationMode, setGenerationMode] =
+    useState<SimulationWorkoutGenerationMode>("legacy_ai_chain");
   const [maxAiGeneratedWorkouts, setMaxAiGeneratedWorkouts] = useState(4);
   const [plannedWorkoutDayIndices, setPlannedWorkoutDayIndices] = useState<number[]>([1, 3, 5]);
   const [loading, setLoading] = useState(false);
@@ -151,6 +154,7 @@ export default function SimulationPage() {
       setPriorityMuscles(stored.priorityMuscles ?? []);
       setSelectedGymId(stored.selectedGymId ?? "");
       setPlannerMode(stored.plannerMode ?? "synthetic");
+      setGenerationMode(stored.generationMode ?? "legacy_ai_chain");
       setMaxAiGeneratedWorkouts(stored.maxAiGeneratedWorkouts ?? 4);
       setPlannedWorkoutDayIndices(stored.plannedWorkoutDayIndices ?? [1, 3, 5]);
     }
@@ -184,6 +188,7 @@ export default function SimulationPage() {
       priorityMuscles,
       selectedGymId,
       plannerMode,
+      generationMode,
       maxAiGeneratedWorkouts,
       plannedWorkoutDayIndices,
     });
@@ -196,6 +201,7 @@ export default function SimulationPage() {
     maxAiGeneratedWorkouts,
     maxDurationMinutes,
     minDurationMinutes,
+    generationMode,
     plannedWorkoutDayIndices,
     plannerMode,
     preferredSessionDurationMin,
@@ -320,6 +326,7 @@ export default function SimulationPage() {
             totalDays: normalizedDays,
             randomSeed: seed,
             plannerMode,
+            generationMode,
             enablePlannerDebug: true,
             startDate,
             scenario,
@@ -373,6 +380,7 @@ export default function SimulationPage() {
           onMaxDurationMinutesChange={setMaxDurationMinutes}
           onMaxAiGeneratedWorkoutsChange={setMaxAiGeneratedWorkouts}
           onMinDurationMinutesChange={setMinDurationMinutes}
+          onGenerationModeChange={setGenerationMode}
           onPlannerModeChange={handlePlannerModeChange}
           onPriorityMusclesChange={setPriorityMuscles}
           onRun={runRemoteSimulation}
@@ -385,6 +393,7 @@ export default function SimulationPage() {
           onWeightKgChange={setWeightKg}
           onWeeklyPlanFlexibilityChange={setWeeklyPlanFlexibility}
           maxAiGeneratedWorkouts={maxAiGeneratedWorkouts}
+          generationMode={generationMode}
           plannerMode={plannerMode}
           plannedWorkoutDayIndices={plannedWorkoutDayIndices}
           preferredSessionDurationMin={preferredSessionDurationMin}
@@ -437,7 +446,7 @@ export default function SimulationPage() {
                   ? "Exporten kopierades."
                   : copyStatus === "error"
                     ? "Kunde inte kopiera exporten automatiskt."
-                    : `Planner mode: ${report.config.plannerMode}. AI-pass: ${report.aiGeneratedWorkoutCount ?? 0}, fallback/mock: ${report.aiFallbackWorkoutCount ?? 0}.`}
+                    : `Planner mode: ${report.config.plannerMode}. Genereringsmotor: ${report.config.generationMode ?? "legacy_ai_chain"}. AI-pass: ${report.aiGeneratedWorkoutCount ?? 0}, fallback/mock: ${report.aiFallbackWorkoutCount ?? 0}.`}
               </p>
               {showExport ? (
                 <pre className="mt-4 max-h-[420px] overflow-auto rounded-3xl border border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-700 whitespace-pre-wrap">

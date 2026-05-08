@@ -85,6 +85,7 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     `- Mål: ${report.profile.goal}`,
     `- Erfarenhetsnivå: ${report.profile.experienceLevel}`,
     `- Planner mode: ${report.config.plannerMode} (${plannerModeLabel(report.config.plannerMode)})`,
+    `- Genereringsmotor: ${report.config.generationMode ?? "legacy_ai_chain"}`,
     `- Scenario: ${report.config.scenario ?? "normal"}`,
     `- Startdatum: ${report.config.startDate}`,
     `- Antal dagar: ${report.config.totalDays}`,
@@ -129,6 +130,10 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       `- Coachtext: ${plannerSummary?.coachText ?? debug?.note ?? "-"}`,
       `- Priority muscles: ${plannerSummary?.priorityMuscles.join(", ") || "inga"}`,
       `- Recovery-limited muscles: ${plannerSummary?.recoveryLimitedMuscles.join(", ") || "inga"}`,
+      `- Genereringsmotor använd: ${plannerSummary?.generationEngineUsed ?? report.config.generationMode ?? "legacy_ai_chain"}${plannerSummary?.generationFallbackUsed ? ` (fallback från slot: ${plannerSummary.generationFallbackReason ?? "okänd orsak"})` : ""}`,
+      plannerSummary?.generationComparison
+        ? `- Jämförelse legacy vs slot: vald ${plannerSummary.generationComparison.selectedEngine}, legacy ok=${plannerSummary.generationComparison.legacyPassed ? "ja" : "nej"}, slot ok=${plannerSummary.generationComparison.slotPassed ? "ja" : "nej"}, legacy övningar=${plannerSummary.generationComparison.legacyExerciseCount ?? "-"}, slot övningar=${plannerSummary.generationComparison.slotExerciseCount ?? "-"}, vald orsak=${plannerSummary.generationComparison.selectedBecause}`
+        : "- Jämförelse legacy vs slot: ej körd",
       historySummary
         ? `- Training history context: ${historySummary.recentWorkoutsCount} recent, ${historySummary.progressionMemoryExerciseCount} progression, ${historySummary.mediumTermWindowDays} dagar, data ${historySummary.dataQuality}${typeof historySummary.typicalWorkoutDurationMinutes === "number" ? `, typisk längd ${historySummary.typicalWorkoutDurationMinutes} min` : ""}`
         : "- Training history context: saknas",
@@ -210,6 +215,9 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       validationDiagnostics?.fallbackBiasWarning
         ? `- Fallback-bias: ${validationDiagnostics.fallbackBiasWarning}`
         : "- Fallback-bias: ingen tydlig",
+      validationDiagnostics?.safetyGateTriggered
+        ? `- Safety gate: aktiv (${validationDiagnostics.safetyGateRecoveryMode ?? "okänd strategi"}) eftersom ${validationDiagnostics.safetyGateReasons.join(", ")}`
+        : "- Safety gate: inte triggad",
       validationDiagnostics?.priorityMuscleResolutionStatus.length
         ? `- Priority status: ${validationDiagnostics.priorityMuscleResolutionStatus.map((entry) => `${entry.muscle}=${entry.status}`).join(", ")}`
         : "- Priority status: saknas",

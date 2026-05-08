@@ -1,3 +1,10 @@
+import type {
+  SimulationWorkoutGenerationMode,
+  WorkoutGenerationMode,
+} from "@/lib/workout-generation/types";
+
+export type { SimulationWorkoutGenerationMode };
+
 export type SimulationGoal =
   | "strength"
   | "hypertrophy"
@@ -254,6 +261,19 @@ export type SimulationPlannerDebugEntry = {
     passGenerationMode: "mock_synthetic" | "real_ai" | "fallback_mock";
     aiRequestUsed?: boolean;
     promptContextSummary?: string;
+    generationModeRequested?: WorkoutGenerationMode;
+    generationEngineUsed?: "legacy_ai_chain" | "slot_based_v1" | null;
+    generationFallbackUsed?: boolean;
+    generationFallbackReason?: string | null;
+    generationComparison?: {
+      selectedEngine: "legacy_ai_chain" | "slot_based_v1";
+      legacyPassed: boolean | null;
+      slotPassed: boolean | null;
+      legacyExerciseCount: number | null;
+      slotExerciseCount: number | null;
+      slotSafetyReasons: string[];
+      selectedBecause: string;
+    };
   };
   trainingHistoryContextSummary?: {
     recentWorkoutsCount: number;
@@ -320,6 +340,9 @@ export type SimulationPlannerDebugEntry = {
     roleMismatchReplacements: string[];
     genericFallbacksAdded: string[];
     finalQualityWarnings: string[];
+    safetyGateTriggered: boolean;
+    safetyGateReasons: string[];
+    safetyGateRecoveryMode: "restore_raw" | "safe_template" | null;
     recoveryLimitedSeverityByMuscle: Array<{
       muscle: string;
       severity: "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery";
@@ -434,6 +457,7 @@ export type SimulationConfig = {
   startDate: string;
   randomSeed: number;
   plannerMode?: SimulationPlannerMode;
+  generationMode?: SimulationWorkoutGenerationMode;
   scenario?: SimulationScenario;
   enablePlannerDebug?: boolean;
   enableMissedWorkouts: boolean;

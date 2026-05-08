@@ -22,10 +22,16 @@ import type {
   WeeklyPlanPromptItem,
 } from "@/lib/workouts/generate-workout-core";
 import {
-  generateWorkoutWithAiCore,
   normalizeFocusMuscles,
   normalizeSupersetPreference,
 } from "@/lib/workouts/generate-workout-core";
+import {
+  generateWorkoutWithMode,
+} from "@/lib/workouts/generate-workout-with-mode";
+import {
+  normalizeWorkoutGenerationMode,
+  type WorkoutGenerationMode,
+} from "@/lib/workouts/generation-mode";
 import type { WorkoutFocus } from "@/types/workout";
 
 function normalizeEquipmentList(input: unknown): string[] {
@@ -91,6 +97,7 @@ export async function POST(req: Request) {
       focusMuscles?: FocusMuscle[];
       avoidSupersets?: boolean;
       supersetPreference?: SupersetPreference | null;
+      generationMode?: WorkoutGenerationMode | null;
     };
 
     const goal =
@@ -165,6 +172,7 @@ export async function POST(req: Request) {
         )
       : [];
     const focusMuscles = normalizeFocusMuscles(body.focusMuscles);
+    const generationMode = normalizeWorkoutGenerationMode(body.generationMode);
     const selectedPlanMode =
       body.selectedPlanMode === "normal_training" ||
       body.selectedPlanMode === "recovery" ||
@@ -188,7 +196,7 @@ export async function POST(req: Request) {
         ])
       : [null, []];
 
-    const result = await generateWorkoutWithAiCore({
+    const result = await generateWorkoutWithMode({
       goal,
       durationMinutes,
       equipment,
@@ -213,6 +221,7 @@ export async function POST(req: Request) {
       supersetPreference: requestedSupersetPreference,
       settings,
       historyLogs,
+      generationMode,
     });
 
     if (!result.ok) {

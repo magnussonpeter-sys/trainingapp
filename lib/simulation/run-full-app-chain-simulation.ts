@@ -69,7 +69,14 @@ import type {
   SimulationReport,
   SimulationUserProfile,
 } from "@/lib/simulation/types";
-import { generateWorkoutWithAiCore } from "@/lib/workouts/generate-workout-core";
+import {
+  generateWorkoutForSpecificEngine,
+  generateWorkoutWithMode,
+} from "@/lib/workouts/generate-workout-with-mode";
+import {
+  normalizeSimulationWorkoutGenerationMode,
+  type WorkoutGenerationMode,
+} from "@/lib/workout-generation/types";
 import type { WorkoutFocus } from "@/types/workout";
 
 function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
@@ -84,6 +91,7 @@ function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
     totalDays,
     randomSeed: Math.max(1, Math.round(config?.randomSeed ?? DEFAULT_SIMULATION_CONFIG.randomSeed)),
     startDate: config?.startDate?.trim() || DEFAULT_SIMULATION_CONFIG.startDate,
+    generationMode: normalizeSimulationWorkoutGenerationMode(config?.generationMode),
     plannedWorkoutDayIndices: normalizePlannedWorkoutDayIndices(
       config?.plannedWorkoutDayIndices,
     ),
@@ -92,6 +100,161 @@ function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
       Math.round(config?.maxAiGeneratedWorkouts ?? 4),
       1,
     ),
+  };
+}
+
+function getGenerationEngineDebug(workout: {
+  aiDebug?: {
+    generationContext?: unknown;
+  };
+}) {
+  const context =
+    workout.aiDebug?.generationContext &&
+    typeof workout.aiDebug.generationContext === "object"
+      ? (workout.aiDebug.generationContext as Record<string, unknown>)
+      : null;
+
+  return {
+    generationModeRequested:
+      context?.generationModeRequested === "legacy_ai_chain" ||
+      context?.generationModeRequested === "slot_based_v1" ||
+      context?.generationModeRequested === "hybrid"
+        ? (context.generationModeRequested as WorkoutGenerationMode)
+        : null,
+    generationEngineUsed:
+      context?.generationEngineUsed === "legacy_ai_chain" ||
+      context?.generationEngineUsed === "slot_based_v1"
+        ? (context.generationEngineUsed as "legacy_ai_chain" | "slot_based_v1")
+        : null,
+    generationFallbackUsed: context?.generationFallbackUsed === true,
+    generationFallbackReason:
+      typeof context?.generationFallbackReason === "string" &&
+      context.generationFallbackReason.trim()
+        ? context.generationFallbackReason
+        : null,
+  };
+}
+
+function getWorkoutExerciseCount(workout: {
+  blocks: Array<{ exercises: unknown[] }>;
+}) {
+  return workout.blocks.reduce((sum, block) => sum + block.exercises.length, 0);
+}
+
+async function generateWorkoutForSimulationMode(params: {
+  generationMode: SimulationConfig["generationMode"];
+  input: Parameters<typeof generateWorkoutWithMode>[0];
+}) {
+  if (params.generationMode !== "compare_legacy_vs_slot") {
+    const generatedWorkout = await generateWorkoutWithMode(params.input);
+
+    return {
+      generatedWorkout,
+      generationEngineDebug:
+        generatedWorkout.ok
+          ? getGenerationEngineDebug(generatedWorkout.workout)
+          : {
+              generationModeRequested: null,
+              generationEngineUsed: null,
+              generationFallbackUsed: false,
+              generationFallbackReason: null,
+            },
+      generationComparison: null,
+    };
+  }
+
+  // Compare-mode runs both engines on the same context, then keeps the safest result.
+  const [slotRun, legacyRun] = await Promise.all([
+    generateWorkoutForSpecificEngine({
+      engine: "slot_based_v1",
+      input: {
+        ...params.input,
+        generationMode: "slot_based_v1",
+      },
+    }),
+    generateWorkoutForSpecificEngine({
+      engine: "legacy_ai_chain",
+      input: {
+        ...params.input,
+        generationMode: "legacy_ai_chain",
+      },
+    }),
+  ]);
+
+  const slotPassed = slotRun.result.ok && (slotRun.safety?.passed ?? false);
+  const legacyPassed = legacyRun.result.ok && (legacyRun.safety?.passed ?? false);
+  const slotExerciseCount = slotRun.result.ok
+    ? getWorkoutExerciseCount(slotRun.result.workout)
+    : null;
+  const legacyExerciseCount = legacyRun.result.ok
+    ? getWorkoutExerciseCount(legacyRun.result.workout)
+    : null;
+
+  if (slotPassed) {
+    return {
+      generatedWorkout: slotRun.result,
+      generationEngineDebug: {
+        generationModeRequested: "slot_based_v1" as WorkoutGenerationMode,
+        generationEngineUsed: "slot_based_v1" as const,
+        generationFallbackUsed: false,
+        generationFallbackReason: null,
+      },
+      generationComparison: {
+        selectedEngine: "slot_based_v1" as const,
+        legacyPassed,
+        slotPassed,
+        legacyExerciseCount,
+        slotExerciseCount,
+        slotSafetyReasons: slotRun.safety?.reasons ?? [],
+        selectedBecause: "slot_validation_passed",
+      },
+    };
+  }
+
+  if (legacyRun.result.ok) {
+    const fallbackReason = slotRun.result.ok
+      ? slotRun.safety?.reasons.join(", ") || "slot_validation_failed"
+      : slotRun.result.error;
+
+    return {
+      generatedWorkout: legacyRun.result,
+      generationEngineDebug: {
+        generationModeRequested: "hybrid" as WorkoutGenerationMode,
+        generationEngineUsed: "legacy_ai_chain" as const,
+        generationFallbackUsed: true,
+        generationFallbackReason: fallbackReason,
+      },
+      generationComparison: {
+        selectedEngine: "legacy_ai_chain" as const,
+        legacyPassed,
+        slotPassed,
+        legacyExerciseCount,
+        slotExerciseCount,
+        slotSafetyReasons: slotRun.safety?.reasons ?? [],
+        selectedBecause: fallbackReason,
+      },
+    };
+  }
+
+  return {
+    generatedWorkout: slotRun.result.ok ? slotRun.result : legacyRun.result,
+    generationEngineDebug: {
+      generationModeRequested: null,
+      generationEngineUsed: null,
+      generationFallbackUsed: false,
+      generationFallbackReason: slotRun.result.ok ? null : slotRun.result.error,
+    },
+    generationComparison: {
+      selectedEngine: (slotRun.result.ok
+        ? "slot_based_v1"
+        : "legacy_ai_chain") as "slot_based_v1" | "legacy_ai_chain",
+      legacyPassed,
+      slotPassed,
+      legacyExerciseCount,
+      slotExerciseCount,
+      slotSafetyReasons: slotRun.safety?.reasons ?? [],
+      selectedBecause: "both_engines_failed",
+    },
   };
 }
 
@@ -220,6 +383,9 @@ function extractValidationDiagnostics(value: unknown) {
       roleMismatchReplacements?: string[];
       genericFallbacksAdded?: string[];
       finalQualityWarnings?: string[];
+      safetyGateTriggered?: boolean;
+      safetyGateReasons?: string[];
+      safetyGateRecoveryMode?: "restore_raw" | "safe_template" | null;
       recoveryLimitedSeverityByMuscle?: Array<{
         muscle?: string;
         severity?: "hard_blocked" | "avoid_heavy_loading" | "allow_light_recovery";
@@ -477,6 +643,15 @@ function extractValidationDiagnostics(value: unknown) {
     finalQualityWarnings: Array.isArray(validation.finalQualityWarnings)
       ? validation.finalQualityWarnings
       : [],
+    safetyGateTriggered: validation.safetyGateTriggered === true,
+    safetyGateReasons: Array.isArray(validation.safetyGateReasons)
+      ? validation.safetyGateReasons
+      : [],
+    safetyGateRecoveryMode:
+      validation.safetyGateRecoveryMode === "restore_raw" ||
+      validation.safetyGateRecoveryMode === "safe_template"
+        ? validation.safetyGateRecoveryMode
+        : null,
     recoveryLimitedSeverityByMuscle: Array.isArray(validation.recoveryLimitedSeverityByMuscle)
       ? validation.recoveryLimitedSeverityByMuscle.filter(
           (
@@ -949,7 +1124,9 @@ export async function runFullAppChainSimulation(params?: {
           aiGeneratedWorkoutCount < (config.maxAiGeneratedWorkouts ?? 4);
 
         if (canUseRealAi) {
-          const generatedWorkout = await generateWorkoutWithAiCore({
+          const generationRun = await generateWorkoutForSimulationMode({
+            generationMode: config.generationMode,
+            input: {
             goal: effectiveSimulationProfile.goal,
             durationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
             equipment: effectiveSimulationProfile.availableEquipmentIds,
@@ -977,11 +1154,18 @@ export async function runFullAppChainSimulation(params?: {
             supersetPreference: null,
             settings: settingsSummary,
             historyLogs: workoutLogs,
+            generationMode:
+              config.generationMode === "compare_legacy_vs_slot"
+                ? "hybrid"
+                : config.generationMode,
+            },
           });
+          const generatedWorkout = generationRun.generatedWorkout;
 
           if (generatedWorkout.ok) {
             aiGeneratedWorkoutCount += 1;
             const normalizedWorkout = generatedWorkout.workout;
+            const generationEngineDebug = generationRun.generationEngineDebug;
             const plannedExercises = adaptNormalizedWorkoutToSimulationPlan(
               normalizedWorkout,
             );
@@ -1014,7 +1198,12 @@ export async function runFullAppChainSimulation(params?: {
               ),
               estimatedVolumeScore: workoutResult.estimatedLoadScore,
               plannerSource: "full_app_chain",
-              plannerNote: "Riktig veckoplanering och riktig AI-generering användes.",
+              plannerNote:
+                generationRun.generationComparison
+                  ? `Jämförelse kördes mellan slot och legacy. Vald motor: ${generationRun.generationComparison.selectedEngine}.`
+                  : generationEngineDebug.generationFallbackUsed
+                  ? `Riktig veckoplanering användes. Slot-motorn underkändes och passet genererades med legacy fallback (${generationEngineDebug.generationFallbackReason ?? "okänd orsak"}).`
+                  : `Riktig veckoplanering och AI-generering användes via ${generationEngineDebug.generationEngineUsed ?? "legacy_ai_chain"}.`,
               passGenerationMode: "real_ai",
             };
 
@@ -1063,6 +1252,16 @@ export async function runFullAppChainSimulation(params?: {
                   passGenerationMode: "real_ai",
                   aiRequestUsed: true,
                   promptContextSummary,
+                  generationModeRequested:
+                    generationEngineDebug.generationModeRequested ?? undefined,
+                  generationEngineUsed:
+                    generationEngineDebug.generationEngineUsed ?? null,
+                  generationFallbackUsed:
+                    generationEngineDebug.generationFallbackUsed,
+                  generationFallbackReason:
+                    generationEngineDebug.generationFallbackReason,
+                  generationComparison:
+                    generationRun.generationComparison ?? undefined,
                 },
                 trainingHistoryContextSummary: {
                   recentWorkoutsCount: trainingHistoryContext.recentWorkouts.length,
@@ -1368,7 +1567,9 @@ export async function runFullAppChainSimulation(params?: {
         aiGeneratedWorkoutCount < (config.maxAiGeneratedWorkouts ?? 4);
 
       if (canUseRealAi) {
-        const generatedWorkout = await generateWorkoutWithAiCore({
+        const generationRun = await generateWorkoutForSimulationMode({
+          generationMode: config.generationMode,
+          input: {
           goal: effectiveSimulationProfile.goal,
           durationMinutes: spontaneousPlan.targetDurationMin,
           equipment: effectiveSimulationProfile.availableEquipmentIds,
@@ -1396,11 +1597,18 @@ export async function runFullAppChainSimulation(params?: {
           supersetPreference: null,
           settings: settingsSummary,
           historyLogs: workoutLogs,
+          generationMode:
+            config.generationMode === "compare_legacy_vs_slot"
+              ? "hybrid"
+              : config.generationMode,
+          },
         });
+        const generatedWorkout = generationRun.generatedWorkout;
 
         if (generatedWorkout.ok) {
           aiGeneratedWorkoutCount += 1;
           const normalizedWorkout = generatedWorkout.workout;
+          const generationEngineDebug = generationRun.generationEngineDebug;
           const plannedExercises = adaptNormalizedWorkoutToSimulationPlan(
             normalizedWorkout,
           );
@@ -1439,7 +1647,11 @@ export async function runFullAppChainSimulation(params?: {
             estimatedVolumeScore: workoutResult.estimatedLoadScore,
             plannerSource: "full_app_chain",
             plannerNote:
-              "Scenario lade in ett spontant pass som AI-genererades och påverkar nästa veckoplanbeslut.",
+              generationRun.generationComparison
+                ? `Scenario lade in ett spontant pass och jämförde slot mot legacy. Vald motor: ${generationRun.generationComparison.selectedEngine}.`
+                : generationEngineDebug.generationFallbackUsed
+                ? `Scenario lade in ett spontant pass. Slot-motorn underkändes och legacy användes som fallback (${generationEngineDebug.generationFallbackReason ?? "okänd orsak"}).`
+                : `Scenario lade in ett spontant pass som genererades via ${generationEngineDebug.generationEngineUsed ?? "legacy_ai_chain"} och påverkar nästa veckoplanbeslut.`,
             passGenerationMode: "real_ai",
           };
 
@@ -1487,6 +1699,16 @@ export async function runFullAppChainSimulation(params?: {
                 passGenerationMode: "real_ai",
                 aiRequestUsed: true,
                 promptContextSummary,
+                generationModeRequested:
+                  generationEngineDebug.generationModeRequested ?? undefined,
+                generationEngineUsed:
+                  generationEngineDebug.generationEngineUsed ?? null,
+                generationFallbackUsed:
+                  generationEngineDebug.generationFallbackUsed,
+                generationFallbackReason:
+                  generationEngineDebug.generationFallbackReason,
+                generationComparison:
+                  generationRun.generationComparison ?? undefined,
               },
               trainingHistoryContextSummary: {
                 recentWorkoutsCount: trainingHistoryContext.recentWorkouts.length,

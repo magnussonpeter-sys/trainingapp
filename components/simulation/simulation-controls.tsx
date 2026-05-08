@@ -8,6 +8,7 @@ import type {
   SimulationReport,
   SimulationScenario,
   SimulationSportFocus,
+  SimulationWorkoutGenerationMode,
   SimulationWeeklyPlanFlexibility,
 } from "@/lib/simulation/types";
 
@@ -47,6 +48,7 @@ type SimulationControlsProps = {
   onMaxAiGeneratedWorkoutsChange: (value: number) => void;
   onMinDurationMinutesChange: (minutes: number) => void;
   onPlannerModeChange: (mode: SimulationPlannerMode) => void;
+  onGenerationModeChange: (mode: SimulationWorkoutGenerationMode) => void;
   onPriorityMusclesChange: (muscles: SimulationPriorityMuscle[]) => void;
   onPreferredSessionDurationMinChange: (minutes: number) => void;
   onRun: () => void;
@@ -58,6 +60,7 @@ type SimulationControlsProps = {
   onWeightKgChange: (weightKg: number) => void;
   onWeeklyPlanFlexibilityChange: (value: SimulationWeeklyPlanFlexibility) => void;
   plannerMode: SimulationPlannerMode;
+  generationMode: SimulationWorkoutGenerationMode;
   plannedWorkoutDayIndices: number[];
   preferredSessionDurationMin: number;
   priorityMuscles: SimulationPriorityMuscle[];
@@ -403,6 +406,27 @@ export default function SimulationControls(props: SimulationControlsProps) {
                 : props.plannerMode === "hybrid_ai"
                   ? "Använder simulationens egen AI-planner. Bra för AI-tendenser, men inte hela appkedjan."
                   : "Snabb lokal simulering utan AI. Bra för grova mönster."}
+          </span>
+        </label>
+
+        <label className="grid gap-2 text-sm font-medium text-slate-700">
+          Genereringsmotor
+          <select
+            value={props.generationMode}
+            onChange={(event) =>
+              props.onGenerationModeChange(
+                event.target.value as SimulationWorkoutGenerationMode,
+              )
+            }
+            className="min-h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-slate-950 outline-none focus:border-emerald-400"
+          >
+            <option value="legacy_ai_chain">Legacy AI-kedja</option>
+            <option value="slot_based_v1">Slot-baserad v1</option>
+            <option value="hybrid">Hybrid: slot först, legacy fallback</option>
+            <option value="compare_legacy_vs_slot">Jämför legacy mot slot</option>
+          </select>
+          <span className="text-xs font-normal text-slate-500">
+            Påverkar bara riktiga AI-pass i full app-kedjan. Compare kör båda motorerna på samma underlag och visar vilken som valdes.
           </span>
         </label>
       </div>

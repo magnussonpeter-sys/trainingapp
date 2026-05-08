@@ -9,6 +9,8 @@ import type {
   SimulationSportFocus,
   SimulationWeeklyPlanFlexibility,
 } from "@/lib/simulation/types";
+import type { SimulationWorkoutGenerationMode } from "@/lib/workout-generation/types";
+import { normalizeSimulationWorkoutGenerationMode } from "@/lib/workout-generation/types";
 
 type StoredSimulationSettings = {
   version: 1;
@@ -31,6 +33,7 @@ type StoredSimulationSettings = {
   priorityMuscles?: SimulationPriorityMuscle[];
   selectedGymId?: string;
   plannerMode?: SimulationPlannerMode;
+  generationMode?: SimulationWorkoutGenerationMode;
   maxAiGeneratedWorkouts?: number;
   plannedWorkoutDayIndices?: number[];
 };
@@ -171,6 +174,10 @@ export function getStoredSimulationSettings(): StoredSimulationSettings | null {
       selectedGymId:
         typeof parsed.selectedGymId === "string" ? parsed.selectedGymId : undefined,
       plannerMode: isPlannerMode(parsed.plannerMode) ? parsed.plannerMode : undefined,
+      generationMode:
+        typeof parsed.generationMode === "string"
+          ? normalizeSimulationWorkoutGenerationMode(parsed.generationMode)
+          : undefined,
       maxAiGeneratedWorkouts:
         normalizePositiveNumber(parsed.maxAiGeneratedWorkouts) ?? undefined,
       plannedWorkoutDayIndices: Array.isArray(parsed.plannedWorkoutDayIndices)
