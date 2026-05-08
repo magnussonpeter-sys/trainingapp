@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 
+import { getExerciseById, type ExerciseCatalogItem } from "@/lib/exercise-catalog";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
 import {
   validateGeneratedWorkout,
@@ -12,11 +13,15 @@ import { buildWorkoutGenerationCoachContext } from "@/lib/workout-generation/coa
 import { attachWorkoutGenerationDebug } from "@/lib/workout-generation/debug";
 import { getDefaultTrainingConstraints } from "@/lib/workout-generation/injury-constraints";
 import { buildWorkoutSlotPlan } from "@/lib/workout-generation/slot-planner";
-import { selectExercisesForSlots } from "@/lib/workout-generation/exercise-selector";
+import {
+  getExerciseRoleCandidates,
+  selectExercisesForSlots,
+} from "@/lib/workout-generation/exercise-selector";
 import { validateSlotWorkout } from "@/lib/workout-generation/slot-validator";
 import type {
   SlotExerciseSelection,
   SlotWorkoutDebug,
+  WorkoutSlot,
   WorkoutSlotRole,
   WorkoutGenerationMode,
 } from "@/lib/workout-generation/types";
@@ -25,6 +30,7 @@ import type {
   GenerateWorkoutWithAiCoreResult,
   SupersetPreference,
 } from "@/lib/workouts/generate-workout-core";
+import type { Exercise, Workout } from "@/types/workout";
 
 const slotClient = process.env.OPENAI_API_KEY
   ? new OpenAI({
@@ -57,6 +63,26 @@ type SlotAiSelectionDebug = {
   prompt: string | null;
   rawText: string | null;
   parsedResponse: SlotAiSelectionResponse | null;
+};
+
+type FinalContractEvaluation = {
+  contractGateTriggered: boolean;
+  contractGateReason: string[];
+  finalContractPassed: boolean;
+  protectedSlots: string[];
+  requiredSlots: string[];
+  missingRequiredSlots: string[];
+  lostProtectedSlots: string[];
+  sportRelevantSlots: string[];
+  goalLossReason: string[];
+  sportLossReason: string[];
+  fallbackBiasWarning: string | null;
+};
+
+type RestoreAttemptResult = {
+  workout: Workout;
+  repairedSlots: string[];
+  repairLog: SlotWorkoutDebug["repairLog"];
 };
 
 function getSportProtectedRoles(params: {
@@ -158,6 +184,400 @@ function buildSlotCandidate(params: {
   } satisfies AiGeneratedWorkoutCandidate;
 }
 
+function buildWorkoutExerciseFromCatalog(
+  exerciseId: string,
+): Exercise | null {
+  const catalogExercise = getExerciseById(exerciseId);
+
+  if (!catalogExercise) {
+    return null;
+  }
+
+  const isTimeBased =
+    typeof catalogExercise.defaultDuration === "number" &&
+    catalogExercise.defaultDuration > 0 &&
+    typeof catalogExercise.defaultReps !== "number";
+
+  return {
+    id: catalogExercise.id,
+    name: catalogExercise.name,
+    description: catalogExercise.description,
+    sets: catalogExercise.defaultSets,
+    reps: isTimeBased ? null : catalogExercise.defaultReps ?? 10,
+    duration: isTimeBased ? catalogExercise.defaultDuration ?? 30 : null,
+    sidedness: catalogExercise.sidedness,
+    ringSetup: catalogExercise.ringSetup,
+    rest: catalogExercise.defaultRest,
+  };
+}
+
+function getProtectedSlotIds(params: {
+  slots: WorkoutSlot[];
+  selections: SlotExerciseSelection[];
+  coachContext: ReturnType<typeof buildWorkoutGenerationCoachContext>["coachContext"];
+}) {
+  const sportProtectedRoles = new Set(getSportProtectedRoles({
+    sportFocus: params.coachContext.sportFocus,
+  }));
+
+  return params.slots
+    .filter((slot) => {
+      if (slot.required) {
+        return true;
+      }
+
+      const selection = params.selections.find((item) => item.slotId === slot.id);
+      if (!selection) {
+        return false;
+      }
+
+      if (sportProtectedRoles.has(selection.role)) {
+        return true;
+      }
+
+      if (params.coachContext.goal === "strength") {
+        return ["main_push", "main_pull", "main_squat", "main_hinge"].includes(
+          selection.role,
+        );
+      }
+
+      if (
+        params.coachContext.goal === "hypertrophy" &&
+        params.coachContext.durationMinutes >= 35
+      ) {
+        return [
+          "direct_biceps",
+          "direct_triceps",
+          "shoulder_accessory",
+          "rear_delt_scapula",
+          "calves",
+          "core",
+          "carry",
+        ].includes(selection.role);
+      }
+
+      return false;
+    })
+    .map((slot) => slot.id);
+}
+
+function getProtectedRoleTargets(params: {
+  slots: WorkoutSlot[];
+  selections: SlotExerciseSelection[];
+  coachContext: ReturnType<typeof buildWorkoutGenerationCoachContext>["coachContext"];
+}) {
+  const protectedSlotIds = new Set(getProtectedSlotIds(params));
+
+  return new Map(
+    params.slots
+      .filter((slot) => protectedSlotIds.has(slot.id))
+      .map((slot) => {
+        const selection = params.selections.find((item) => item.slotId === slot.id);
+        const shouldLockSelectedRole =
+          Boolean(selection) &&
+          (
+            params.coachContext.goal === "strength" ||
+            getSportProtectedRoles({
+              sportFocus: params.coachContext.sportFocus,
+            }).includes(selection?.role ?? slot.role) ||
+            (params.coachContext.goal === "hypertrophy" &&
+              [
+                "direct_biceps",
+                "direct_triceps",
+                "shoulder_accessory",
+                "rear_delt_scapula",
+                "calves",
+                "core",
+                "carry",
+              ].includes(selection?.role ?? slot.role))
+          );
+
+        return [
+          slot.id,
+          shouldLockSelectedRole && selection ? [selection.role] : slot.allowedRoles,
+        ] as const;
+      }),
+  );
+}
+
+function getWorkoutExerciseSnapshots(workout: Workout) {
+  const snapshots: Array<{
+    blockIndex: number;
+    exerciseIndex: number;
+    exercise: Exercise;
+    catalog: ExerciseCatalogItem | null;
+    roles: WorkoutSlotRole[];
+  }> = [];
+
+  for (const [blockIndex, block] of (workout.blocks ?? []).entries()) {
+    for (const [exerciseIndex, exercise] of block.exercises.entries()) {
+      const catalog = getExerciseById(exercise.id);
+      snapshots.push({
+        blockIndex,
+        exerciseIndex,
+        exercise,
+        catalog,
+        roles: catalog ? getExerciseRoleCandidates(catalog) : [],
+      });
+    }
+  }
+
+  return snapshots;
+}
+
+function slotCoveredByWorkout(params: {
+  slot: WorkoutSlot;
+  workout: Workout;
+}) {
+  return getWorkoutExerciseSnapshots(params.workout).some((snapshot) =>
+    snapshot.roles.some((role) => params.slot.allowedRoles.includes(role)),
+  );
+}
+
+function evaluateFinalContract(params: {
+  slotPlan: ReturnType<typeof buildWorkoutSlotPlan>;
+  selections: SlotExerciseSelection[];
+  workout: Workout;
+  coachContext: ReturnType<typeof buildWorkoutGenerationCoachContext>["coachContext"];
+  validationDebug: ReturnType<typeof validateGeneratedWorkout>["debug"]["validation"];
+}) {
+  const requiredSlots = params.slotPlan.slots
+    .filter((slot) => slot.required)
+    .map((slot) => slot.id);
+  const protectedSlots = getProtectedSlotIds({
+    slots: params.slotPlan.slots,
+    selections: params.selections,
+    coachContext: params.coachContext,
+  });
+  const protectedRoleTargets = getProtectedRoleTargets({
+    slots: params.slotPlan.slots,
+    selections: params.selections,
+    coachContext: params.coachContext,
+  });
+  const missingRequiredSlots = requiredSlots.filter((slotId) => {
+    const slot = params.slotPlan.slots.find((candidate) => candidate.id === slotId);
+    return slot ? !slotCoveredByWorkout({ slot, workout: params.workout }) : true;
+  });
+  const lostProtectedSlots = protectedSlots.filter((slotId) => {
+    const targetRoles = protectedRoleTargets.get(slotId) ?? [];
+    return !getWorkoutExerciseSnapshots(params.workout).some((snapshot) =>
+      snapshot.roles.some((role) => targetRoles.includes(role)),
+    );
+  });
+  const qualityThreshold =
+    params.coachContext.selectedFocus === "recovery_strength" ? 70 : 80;
+  const focusThreshold =
+    params.coachContext.selectedFocus === "recovery_strength" ? 70 : 85;
+  const reasons: string[] = [];
+  const goalLossReason: string[] = [];
+  const sportLossReason: string[] = [];
+
+  if (params.validationDebug.qualityPreservationScore < qualityThreshold) {
+    reasons.push(`quality_below_threshold:${params.validationDebug.qualityPreservationScore}`);
+  }
+  if (params.validationDebug.focusIntegrityScore < focusThreshold) {
+    reasons.push(`focus_integrity_below_threshold:${params.validationDebug.focusIntegrityScore}`);
+  }
+  if (missingRequiredSlots.length > 0) {
+    reasons.push(...missingRequiredSlots.map((slotId) => `missing_required_slot_after_normalization:${slotId}`));
+  }
+  if (lostProtectedSlots.length > 0) {
+    reasons.push(...lostProtectedSlots.map((slotId) => `protected_slot_lost:${slotId}`));
+  }
+  if (
+    params.coachContext.goal === "strength" &&
+    params.validationDebug.loadedProgressionExerciseCount < 1
+  ) {
+    reasons.push("missing_loaded_main_lift_after_normalization");
+    goalLossReason.push("Loaded huvudlyft saknas trots styrkemål och kompatibel utrustning.");
+  }
+  if (
+    params.coachContext.goal === "strength" &&
+    params.coachContext.selectedFocus === "full_body" &&
+    params.coachContext.durationMinutes >= 30 &&
+    !params.validationDebug.finalExercises.some((exercise) =>
+      ["primary_hinge", "glute_accessory", "hamstring_accessory"].includes(
+        exercise.exerciseRole,
+      ),
+    )
+  ) {
+    reasons.push("full_body_strength_missing_hinge_after_normalization");
+    goalLossReason.push("Full body strength tappade hinge/posterior chain i slutpasset.");
+  }
+  if (
+    params.coachContext.goal === "hypertrophy" &&
+    params.coachContext.durationMinutes >= 35 &&
+    params.validationDebug.lostUsefulRoles.length > 0
+  ) {
+    reasons.push("hypertrophy_useful_roles_lost");
+    goalLossReason.push("Målrelevanta accessoar- eller volymroller tappades i hypertrofipasset.");
+  }
+  if (
+    params.coachContext.sportFocus &&
+    (params.validationDebug.sportSpecificityLoss >= 20 ||
+      params.validationDebug.lostSportRelevantExercises.length > 0)
+  ) {
+    reasons.push("sport_relevant_role_loss");
+    sportLossReason.push(
+      "Sportrelevanta roller eller övningar tappades trots att de var skyddade i kontraktet.",
+    );
+  }
+  if (
+    params.validationDebug.roleMismatchReplacements.length > 0 &&
+    (missingRequiredSlots.length > 0 || lostProtectedSlots.length > 0)
+  ) {
+    reasons.push("role_mismatch_replacement_in_required_or_protected_slot");
+  }
+  if (
+    params.validationDebug.genericFallbacksAdded.length > 0 &&
+    params.validationDebug.lostPrimaryOrHighValueExercises.length > 0
+  ) {
+    reasons.push("generic_fallback_replaced_high_value_exercise");
+  }
+
+  const fallbackBiasWarning =
+    params.validationDebug.fallbackBiasWarning ??
+    (params.validationDebug.repeatedVariantGroups.length > 0 &&
+    params.validationDebug.fallbackRepeats.length > 0
+      ? "Fallback-varianten återkom samtidigt som mer specifika roller tappades."
+      : null);
+
+  const hardReasons = reasons.filter((reason) => {
+    if (params.coachContext.selectedFocus !== "recovery_strength") {
+      if (
+        reason.startsWith("quality_below_threshold") ||
+        reason.startsWith("focus_integrity_below_threshold")
+      ) {
+        return true;
+      }
+    }
+
+    return (
+      reason.includes("missing_required_slot") ||
+      reason.includes("protected_slot_lost") ||
+      reason.includes("missing_loaded_main_lift") ||
+      reason.includes("missing_hinge") ||
+      reason.includes("role_mismatch_replacement")
+    );
+  });
+
+  return {
+    contractGateTriggered: reasons.length > 0,
+    contractGateReason: reasons,
+    finalContractPassed: hardReasons.length === 0,
+    protectedSlots,
+    requiredSlots,
+    missingRequiredSlots,
+    lostProtectedSlots,
+    sportRelevantSlots: protectedSlots.filter((slotId) => {
+      const slot = params.slotPlan.slots.find((candidate) => candidate.id === slotId);
+      return slot
+        ? slot.allowedRoles.some((role) =>
+            getSportProtectedRoles({ sportFocus: params.coachContext.sportFocus }).includes(role),
+          )
+        : false;
+    }),
+    goalLossReason,
+    sportLossReason,
+    fallbackBiasWarning,
+  } satisfies FinalContractEvaluation;
+}
+
+function attemptRestoreProtectedSlots(params: {
+  workout: Workout;
+  slotPlan: ReturnType<typeof buildWorkoutSlotPlan>;
+  selections: SlotExerciseSelection[];
+  missingSlotIds: string[];
+}) {
+  const repairLog: RestoreAttemptResult["repairLog"] = [];
+  const repairedSlots: string[] = [];
+  const workoutCopy: Workout = {
+    ...params.workout,
+    blocks: (params.workout.blocks ?? []).map((block) => ({
+      ...block,
+      exercises: [...block.exercises],
+    })),
+  };
+
+  for (const slotId of params.missingSlotIds) {
+    const selection = params.selections.find((item) => item.slotId === slotId);
+    const slot = params.slotPlan.slots.find((item) => item.id === slotId);
+    const restoreExercise = selection
+      ? buildWorkoutExerciseFromCatalog(selection.exerciseId)
+      : null;
+
+    if (!selection || !slot || !restoreExercise) {
+      repairLog.push({
+        slotId,
+        repairReason: "restore_missing_selection_or_catalog",
+        repairFromExercise: selection?.exerciseName ?? null,
+        repairToExercise: null,
+        originalRole: selection?.role ?? null,
+        replacementRole: null,
+        roleEquivalent: false,
+        restoreAttempted: true,
+        restoreSucceeded: false,
+        restoreRejectedReason: "missing_slot_selection_or_catalog_entry",
+      });
+      continue;
+    }
+
+    const snapshots = getWorkoutExerciseSnapshots(workoutCopy);
+    const replaceable = snapshots.find((snapshot) => {
+      const coveredSlots = params.slotPlan.slots.filter((candidateSlot) =>
+        snapshot.roles.some((role) => candidateSlot.allowedRoles.includes(role)),
+      );
+      const coversRequiredOrProtected = coveredSlots.some(
+        (candidateSlot) =>
+          candidateSlot.required || params.missingSlotIds.includes(candidateSlot.id),
+      );
+
+      return !coversRequiredOrProtected;
+    });
+
+    if (!replaceable) {
+      repairLog.push({
+        slotId,
+        repairReason: "restore_no_replaceable_exercise",
+        repairFromExercise: selection.exerciseName,
+        repairToExercise: null,
+        originalRole: selection.role,
+        replacementRole: null,
+        roleEquivalent: false,
+        restoreAttempted: true,
+        restoreSucceeded: false,
+        restoreRejectedReason: "all_remaining_exercises_cover_required_or_missing_slots",
+      });
+      continue;
+    }
+
+    workoutCopy.blocks?.[replaceable.blockIndex]?.exercises.splice(
+      replaceable.exerciseIndex,
+      1,
+      restoreExercise,
+    );
+    repairedSlots.push(slotId);
+    repairLog.push({
+      slotId,
+      repairReason: "restore_selected_slot_exercise",
+      repairFromExercise: replaceable.exercise.name,
+      repairToExercise: selection.exerciseName,
+      originalRole: replaceable.roles[0] ?? null,
+      replacementRole: selection.role,
+      roleEquivalent: slot.allowedRoles.includes(selection.role),
+      restoreAttempted: true,
+      restoreSucceeded: true,
+      restoreRejectedReason: null,
+    });
+  }
+
+  return {
+    workout: workoutCopy,
+    repairedSlots,
+    repairLog,
+  } satisfies RestoreAttemptResult;
+}
+
 function buildSlotDebug(params: {
   goalConfigId: string;
   coachContext: ReturnType<typeof buildWorkoutGenerationCoachContext>["coachContext"];
@@ -168,7 +588,15 @@ function buildSlotDebug(params: {
   safeTemplateReason?: string | null;
   slotFailureReasons?: string[];
   aiSelectionDebug: SlotAiSelectionDebug;
+  contractEvaluation?: FinalContractEvaluation;
+  restoreResult?: RestoreAttemptResult | null;
+  retryAttempted?: boolean;
+  retryReason?: string | null;
 }) {
+  const repeatedVariantGroups = params.selection.selections
+    .map((selection) => selection.variantGroup)
+    .filter((variantGroup, index, values) => values.indexOf(variantGroup) !== index);
+
   return {
     selectedGoalConfig: params.goalConfigId,
     coachDecision: {
@@ -183,6 +611,9 @@ function buildSlotDebug(params: {
     },
     slotTemplateId: params.slotPlan.templateId,
     plannedSlots: params.slotPlan.slots,
+    contractSlots: params.slotPlan.slots,
+    requiredSlots: params.slotPlan.slots.filter((slot) => slot.required).map((slot) => slot.id),
+    protectedSlots: params.contractEvaluation?.protectedSlots ?? [],
     slotReasons: params.slotPlan.slots.map((slot) => ({
       slotId: slot.id,
       role: slot.role,
@@ -190,7 +621,25 @@ function buildSlotDebug(params: {
     })),
     candidatesPerSlot: params.selection.candidatesPerSlot,
     selectedExercisePerSlot: params.selection.selections,
+    selectedScorePerSlot: Object.fromEntries(
+      params.selection.selections.map((selection) => [selection.slotId, selection.score]),
+    ),
+    selectedScoreBreakdown: Object.fromEntries(
+      params.selection.selections.map((selection) => [
+        selection.slotId,
+        selection.scoreBreakdown,
+      ]),
+    ),
     rejectedCandidates: params.selection.rejectedCandidates,
+    rejectedCandidatesTopReasons: Object.fromEntries(
+      Object.entries(params.selection.rejectedCandidates).map(([slotId, candidates]) => [
+        slotId,
+        candidates
+          .flatMap((candidate) => candidate.rejectedReasons)
+          .filter((reason, index, values) => values.indexOf(reason) === index)
+          .slice(0, 5),
+      ]),
+    ),
     slotCandidateCounts: Object.fromEntries(
       Object.entries(params.selection.candidatesPerSlot).map(([slotId, candidates]) => [
         slotId,
@@ -208,6 +657,9 @@ function buildSlotDebug(params: {
     slotValidationPassed: params.slotValidation.slotValidationPassed,
     missingRequiredSlots: params.slotValidation.missingRequiredSlots,
     invalidSlotExercises: params.slotValidation.invalidSlotExercises,
+    contractViolations: params.slotValidation.contractViolations,
+    repairedSlots: params.restoreResult?.repairedSlots ?? [],
+    repairLog: params.restoreResult?.repairLog ?? [],
     slotFailureReasons: params.slotFailureReasons ?? params.slotValidation.safetyGateReasons,
     safeTemplateUsed: params.safeTemplateUsed ?? false,
     safeTemplateReason: params.safeTemplateReason ?? null,
@@ -229,7 +681,29 @@ function buildSlotDebug(params: {
         .filter((entry) => entry.severity !== "none")
         .map((entry) => `${entry.muscle}: ${entry.severity} (${entry.reason})`),
     safetyGateReasons: params.slotValidation.safetyGateReasons,
+    fallbackMode:
+      params.safeTemplateUsed && params.slotValidation.slotValidationPassed
+        ? "safe_template"
+        : "none",
+    contractGateTriggered: params.contractEvaluation?.contractGateTriggered ?? false,
+    contractGateReason: params.contractEvaluation?.contractGateReason ?? [],
+    retryAttempted: params.retryAttempted ?? false,
+    retryReason: params.retryReason ?? null,
+    finalContractPassed:
+      params.contractEvaluation?.finalContractPassed ?? params.slotValidation.finalContractPassed,
     finalSlotCoverage: params.slotValidation.finalSlotCoverage,
+    sportRelevantSlots: params.contractEvaluation?.sportRelevantSlots ?? [],
+    sportLossReason: params.contractEvaluation?.sportLossReason ?? [],
+    goalLossReason: params.contractEvaluation?.goalLossReason ?? [],
+    repeatedVariantGroups,
+    variationPenaltyApplied: params.selection.selections.some((selection) =>
+      selection.scoreBreakdown.some((entry) =>
+        ["variant_repeat_penalty", "variant_cooldown_penalty", "recent_exercise_penalty"].includes(
+          entry.code,
+        ),
+      ),
+    ),
+    fallbackBiasWarning: params.contractEvaluation?.fallbackBiasWarning ?? null,
     finalWorkoutQualityScore: params.slotValidation.finalWorkoutQualityScore,
   } satisfies SlotWorkoutDebug;
 }
@@ -264,6 +738,8 @@ function buildSlotAiPrompt(params: {
     slots: params.slotPlan.slots.map((slot) => ({
       slotId: slot.id,
       role: slot.role,
+      label: slot.label,
+      allowedRoles: slot.allowedRoles,
       required: slot.required,
       priority: slot.priority,
       reason: slot.reason,
@@ -409,9 +885,18 @@ function mergeAiSelections(params: {
       usedExerciseIds.add(validCandidate.exerciseId);
       mergedSelections.push({
         slotId: slot.id,
-        role: slot.role,
+        slotLabel: slot.label,
+        role: validCandidate.matchedRole,
+        contractRoles: slot.allowedRoles,
         exerciseId: validCandidate.exerciseId,
         exerciseName: validCandidate.exerciseName,
+        movementPattern: validCandidate.movementPattern,
+        variantGroup: validCandidate.variantGroup,
+        primaryMuscles: validCandidate.primaryMuscles,
+        secondaryMuscles: validCandidate.secondaryMuscles,
+        requiredEquipment: validCandidate.requiredEquipment,
+        score: validCandidate.score,
+        scoreBreakdown: validCandidate.scoreBreakdown,
         reason:
           aiSelection.reason?.trim() ||
           localSelection?.reason ||
@@ -493,6 +978,136 @@ async function runSlotPlanningPass(params: {
   };
 }
 
+function buildParsedWorkoutWithContext(params: {
+  input: GenerateWorkoutWithAiCoreInput & {
+    generationMode?: WorkoutGenerationMode | null;
+  };
+  workout: Workout;
+  validatedWorkout: ReturnType<typeof validateGeneratedWorkout>;
+  slotDebug: SlotWorkoutDebug;
+  activePass: Awaited<ReturnType<typeof runSlotPlanningPass>>;
+  trainingHistoryContext: ReturnType<typeof buildWorkoutGenerationCoachContext>["trainingHistoryContext"];
+  candidate: AiGeneratedWorkoutCandidate;
+}) {
+  return {
+    ...params.workout,
+    goal: params.input.goal,
+    duration: params.workout.duration ?? params.input.durationMinutes,
+    gym: params.input.gym,
+    gymLabel: params.input.gymLabel,
+    plannedFocus:
+      params.input.selectedPlanMode === "recovery"
+        ? "full_body"
+        : params.input.nextFocus,
+    availableEquipment: params.input.equipment,
+    aiDebug: {
+      request: {
+        goal: params.input.goal,
+        durationMinutes: params.input.durationMinutes,
+        nextFocus: params.input.nextFocus,
+        selectedPlanMode: params.input.selectedPlanMode,
+        focusIntent: params.input.focusIntent,
+      },
+      generationContext: {
+        generationModeRequested: params.input.generationMode ?? "slot_based_v1",
+        selectedGoalConfig: params.slotDebug.selectedGoalConfig,
+        coachDecision: params.slotDebug.coachDecision,
+        selectedFocus: params.slotDebug.coachDecision.selectedFocus,
+        slotTemplateId: params.slotDebug.slotTemplateId,
+        plannedSlots: params.slotDebug.plannedSlots,
+        contractSlots: params.slotDebug.contractSlots,
+        requiredSlots: params.slotDebug.requiredSlots,
+        protectedSlots: params.slotDebug.protectedSlots,
+        slotReasons: params.slotDebug.slotReasons,
+        candidatesPerSlot: params.slotDebug.candidatesPerSlot,
+        selectedExercisePerSlot: params.slotDebug.selectedExercisePerSlot,
+        selectedScorePerSlot: params.slotDebug.selectedScorePerSlot,
+        selectedScoreBreakdown: params.slotDebug.selectedScoreBreakdown,
+        rejectedCandidates: params.slotDebug.rejectedCandidates,
+        rejectedCandidatesTopReasons: params.slotDebug.rejectedCandidatesTopReasons,
+        contractViolations: params.slotDebug.contractViolations,
+        contractGateTriggered: params.slotDebug.contractGateTriggered,
+        contractGateReason: params.slotDebug.contractGateReason,
+        fallbackMode: params.slotDebug.fallbackMode,
+        finalContractPassed: params.slotDebug.finalContractPassed,
+        repairedSlots: params.slotDebug.repairedSlots,
+        repairLog: params.slotDebug.repairLog,
+        slotValidationDebug: {
+          slotValidationPassed: params.slotDebug.slotValidationPassed,
+          missingRequiredSlots: params.slotDebug.missingRequiredSlots,
+          invalidSlotExercises: params.slotDebug.invalidSlotExercises,
+          contractViolations: params.slotDebug.contractViolations,
+          safetyGateReasons: params.slotDebug.safetyGateReasons,
+          finalSlotCoverage: params.slotDebug.finalSlotCoverage,
+          finalContractPassed: params.slotDebug.finalContractPassed,
+          finalWorkoutQualityScore: params.slotDebug.finalWorkoutQualityScore,
+        },
+        slotAiRequested: params.slotDebug.slotAiRequested,
+        slotAiUsed: params.slotDebug.slotAiUsed,
+        slotAiModel: params.slotDebug.slotAiModel,
+        slotAiCoachText: params.slotDebug.slotAiCoachText,
+        slotAiInvalidChoices: params.slotDebug.slotAiInvalidChoices,
+        slotAiError: params.slotDebug.slotAiError,
+        recentVariantGroups: params.slotDebug.recentVariantGroups,
+        sportFocusRelevantRoles: params.slotDebug.sportFocusRelevantRoles,
+        sportFocusProtectedRoles: params.slotDebug.sportFocusProtectedRoles,
+        sportRelevantSlots: params.slotDebug.sportRelevantSlots,
+        sportLossReason: params.slotDebug.sportLossReason,
+        goalLossReason: params.slotDebug.goalLossReason,
+        repeatedVariantGroups: params.slotDebug.repeatedVariantGroups,
+        variationPenaltyApplied: params.slotDebug.variationPenaltyApplied,
+        retryAttempted: params.slotDebug.retryAttempted,
+        retryReason: params.slotDebug.retryReason,
+        recentWorkoutsSummary: params.trainingHistoryContext.recentWorkouts,
+      },
+      prompt:
+        params.activePass.aiSelectionDebug.prompt ??
+        "slot_based_v1 generated locally from goal config, coach context and slots.",
+      rawAiText:
+        params.activePass.aiSelectionDebug.rawText ?? JSON.stringify(params.candidate, null, 2),
+      parsedAiResponse: params.activePass.aiSelectionDebug.parsedResponse ?? params.candidate,
+      validatedWorkout: params.validatedWorkout.debug,
+    },
+  };
+}
+
+function finalizeSlotWorkout(params: {
+  workout: Workout;
+  input: GenerateWorkoutWithAiCoreInput & {
+    generationMode?: WorkoutGenerationMode | null;
+  };
+  slotDebug: SlotWorkoutDebug;
+  activePass: Awaited<ReturnType<typeof runSlotPlanningPass>>;
+  trainingHistoryContext: ReturnType<typeof buildWorkoutGenerationCoachContext>["trainingHistoryContext"];
+  candidate: AiGeneratedWorkoutCandidate;
+  validatedWorkout: ReturnType<typeof validateGeneratedWorkout>;
+}) {
+  const parsedWithContext = buildParsedWorkoutWithContext(params);
+  const normalizedWorkout = normalizePreviewWorkout(parsedWithContext);
+
+  if (!normalizedWorkout) {
+    return null;
+  }
+
+  return attachWorkoutGenerationDebug({
+    workout: {
+      ...normalizedWorkout,
+      aiDebug: {
+        ...normalizedWorkout.aiDebug,
+        normalizedWorkout,
+      },
+    },
+    generationModeRequested: params.input.generationMode ?? "slot_based_v1",
+    generationEngineUsed: "slot_based_v1",
+    generationFallbackUsed: false,
+    generationFallbackReason: null,
+    slotValidationPassed: params.activePass.slotValidation.slotValidationPassed,
+    legacyValidationPassed: null,
+    finalSafetyGateReasons: params.activePass.slotValidation.safetyGateReasons,
+    slotDebug: params.slotDebug,
+  });
+}
+
 export async function generateWorkoutWithSlotBasedV1(
   input: GenerateWorkoutWithAiCoreInput & {
     generationMode?: WorkoutGenerationMode | null;
@@ -514,21 +1129,6 @@ export async function generateWorkoutWithSlotBasedV1(
       });
   const activePass =
     safeTemplatePass?.slotValidation.slotValidationPassed ? safeTemplatePass : initialPass;
-  const slotDebug = buildSlotDebug({
-    goalConfigId: activePass.slotPlan.goalConfig.id,
-    coachContext,
-    slotPlan: activePass.slotPlan,
-    selection: activePass.selection,
-    slotValidation: activePass.slotValidation,
-    safeTemplateUsed: Boolean(safeTemplatePass?.slotValidation.slotValidationPassed),
-    safeTemplateReason:
-      safeTemplatePass?.slotValidation.slotValidationPassed
-        ? initialPass.slotValidation.safetyGateReasons.join(", ") ||
-          "required_slots_missing"
-        : null,
-    slotFailureReasons: initialPass.slotValidation.safetyGateReasons,
-    aiSelectionDebug: activePass.aiSelectionDebug,
-  });
 
   if (!activePass.slotValidation.slotValidationPassed) {
     return {
@@ -538,120 +1138,157 @@ export async function generateWorkoutWithSlotBasedV1(
     };
   }
 
-  const candidate = buildSlotCandidate({
-    selectedFocus: coachContext.selectedFocus,
-    durationMinutes: input.durationMinutes,
-    selections: activePass.selection.selections,
-    coachText: activePass.aiSelectionDebug.coachText,
-  });
-  const focusContext = buildValidationFocusContext({
-    input,
-    coachContext,
-  });
-  const validated = validateGeneratedWorkout({
-    focusContext,
-    availableEquipment: input.equipment,
-    candidate,
-    durationMinutes: input.durationMinutes,
-    goal: coachContext.goal,
-    gym: input.gym,
-    gymLabel: input.gymLabel,
-    recentExerciseIds: coachContext.recentExerciseIds,
-    recentVariantGroups: coachContext.recentVariantGroups,
-    weeklyBudget: input.weeklyBudget,
-    lessOftenExerciseIds: input.lessOftenExerciseIds,
-    avoidSupersets: input.avoidSupersets,
-    supersetPreference:
-      input.supersetPreference ??
-      (input.avoidSupersets ? "avoid_all" : ("allowed" satisfies SupersetPreference)),
-  });
+  async function createValidatedSlotResult(params: {
+    pass: typeof activePass;
+    safeTemplateUsed: boolean;
+    safeTemplateReason: string | null;
+    retryAttempted?: boolean;
+    retryReason?: string | null;
+  }) {
+    const candidate = buildSlotCandidate({
+      selectedFocus: coachContext.selectedFocus,
+      durationMinutes: input.durationMinutes,
+      selections: params.pass.selection.selections,
+      coachText: params.pass.aiSelectionDebug.coachText,
+    });
+    const focusContext = buildValidationFocusContext({
+      input,
+      coachContext,
+    });
+    const validated = validateGeneratedWorkout({
+      focusContext,
+      availableEquipment: input.equipment,
+      candidate,
+      durationMinutes: input.durationMinutes,
+      goal: coachContext.goal,
+      gym: input.gym,
+      gymLabel: input.gymLabel,
+      recentExerciseIds: coachContext.recentExerciseIds,
+      recentVariantGroups: coachContext.recentVariantGroups,
+      weeklyBudget: input.weeklyBudget,
+      lessOftenExerciseIds: input.lessOftenExerciseIds,
+      avoidSupersets: input.avoidSupersets,
+      supersetPreference:
+        input.supersetPreference ??
+        (input.avoidSupersets ? "avoid_all" : ("allowed" satisfies SupersetPreference)),
+    });
 
-  const parsedWithContext = {
-    ...validated.workout,
-    goal: input.goal,
-    duration: validated.workout.duration ?? input.durationMinutes,
-    gym: input.gym,
-    gymLabel: input.gymLabel,
-    plannedFocus:
-      input.selectedPlanMode === "recovery" ? "full_body" : input.nextFocus,
-    availableEquipment: input.equipment,
-    aiDebug: {
-      request: {
-        goal: input.goal,
-        durationMinutes: input.durationMinutes,
-        nextFocus: input.nextFocus,
-        selectedPlanMode: input.selectedPlanMode,
-        focusIntent: input.focusIntent,
-      },
-      generationContext: {
-        generationModeRequested: input.generationMode ?? "slot_based_v1",
-        selectedGoalConfig: slotDebug.selectedGoalConfig,
-        coachDecision: slotDebug.coachDecision,
-        selectedFocus: slotDebug.coachDecision.selectedFocus,
-        slotTemplateId: slotDebug.slotTemplateId,
-        plannedSlots: slotDebug.plannedSlots,
-        slotReasons: slotDebug.slotReasons,
-        candidatesPerSlot: slotDebug.candidatesPerSlot,
-        selectedExercisePerSlot: slotDebug.selectedExercisePerSlot,
-        rejectedCandidates: slotDebug.rejectedCandidates,
-        slotValidationDebug: {
-          slotValidationPassed: slotDebug.slotValidationPassed,
-          missingRequiredSlots: slotDebug.missingRequiredSlots,
-          invalidSlotExercises: slotDebug.invalidSlotExercises,
-          safetyGateReasons: slotDebug.safetyGateReasons,
-          finalSlotCoverage: slotDebug.finalSlotCoverage,
-          finalWorkoutQualityScore: slotDebug.finalWorkoutQualityScore,
-        },
-        slotAiRequested: slotDebug.slotAiRequested,
-        slotAiUsed: slotDebug.slotAiUsed,
-        slotAiModel: slotDebug.slotAiModel,
-        slotAiCoachText: slotDebug.slotAiCoachText,
-        slotAiInvalidChoices: slotDebug.slotAiInvalidChoices,
-        slotAiError: slotDebug.slotAiError,
-        recentVariantGroups: slotDebug.recentVariantGroups,
-        sportFocusRelevantRoles: slotDebug.sportFocusRelevantRoles,
-        sportFocusProtectedRoles: slotDebug.sportFocusProtectedRoles,
-        recentWorkoutsSummary: trainingHistoryContext.recentWorkouts,
-      },
-      prompt:
-        activePass.aiSelectionDebug.prompt ??
-        "slot_based_v1 generated locally from goal config, coach context and slots.",
-      rawAiText:
-        activePass.aiSelectionDebug.rawText ?? JSON.stringify(candidate, null, 2),
-      parsedAiResponse:
-        activePass.aiSelectionDebug.parsedResponse ?? candidate,
-      validatedWorkout: validated.debug,
-    },
-  };
-  const normalizedWorkout = normalizePreviewWorkout(parsedWithContext);
+    const initialContractEvaluation = evaluateFinalContract({
+      slotPlan: params.pass.slotPlan,
+      selections: params.pass.selection.selections,
+      workout: validated.workout,
+      coachContext,
+      validationDebug: validated.debug.validation,
+    });
 
-  if (!normalizedWorkout) {
+    const missingProtectedSlots = initialContractEvaluation.lostProtectedSlots;
+    const restoreResult =
+      missingProtectedSlots.length > 0
+        ? attemptRestoreProtectedSlots({
+            workout: validated.workout,
+            slotPlan: params.pass.slotPlan,
+            selections: params.pass.selection.selections,
+            missingSlotIds: missingProtectedSlots,
+          })
+        : null;
+
+    const restoredContractEvaluation = restoreResult
+      ? evaluateFinalContract({
+          slotPlan: params.pass.slotPlan,
+          selections: params.pass.selection.selections,
+          workout: restoreResult.workout,
+          coachContext,
+          validationDebug: validated.debug.validation,
+        })
+      : initialContractEvaluation;
+
+    const finalWorkout =
+      restoreResult && restoredContractEvaluation.finalContractPassed
+        ? restoreResult.workout
+        : validated.workout;
+    const finalContractEvaluation =
+      restoreResult && restoredContractEvaluation.finalContractPassed
+        ? restoredContractEvaluation
+        : initialContractEvaluation;
+
+    const slotDebug = buildSlotDebug({
+      goalConfigId: params.pass.slotPlan.goalConfig.id,
+      coachContext,
+      slotPlan: params.pass.slotPlan,
+      selection: params.pass.selection,
+      slotValidation: params.pass.slotValidation,
+      safeTemplateUsed: params.safeTemplateUsed,
+      safeTemplateReason: params.safeTemplateReason,
+      slotFailureReasons: params.pass.slotValidation.safetyGateReasons,
+      aiSelectionDebug: params.pass.aiSelectionDebug,
+      contractEvaluation: finalContractEvaluation,
+      restoreResult,
+      retryAttempted: params.retryAttempted,
+      retryReason: params.retryReason,
+    });
+
+    const workout = finalizeSlotWorkout({
+      workout: finalWorkout,
+      input,
+      slotDebug,
+      activePass: params.pass,
+      trainingHistoryContext,
+      candidate,
+      validatedWorkout: validated,
+    });
+
     return {
-      ok: false,
-      status: 500,
-      error: "Kunde inte normalisera slot-baserat träningspass",
+      workout,
+      slotDebug,
+      contractEvaluation: finalContractEvaluation,
+      validated,
+    };
+  }
+
+  const initialResult = await createValidatedSlotResult({
+    pass: activePass,
+    safeTemplateUsed: Boolean(safeTemplatePass?.slotValidation.slotValidationPassed),
+    safeTemplateReason:
+      safeTemplatePass?.slotValidation.slotValidationPassed
+        ? initialPass.slotValidation.safetyGateReasons.join(", ") || "required_slots_missing"
+        : null,
+  });
+
+  if (
+    initialResult.workout &&
+    initialResult.contractEvaluation.finalContractPassed &&
+    !initialResult.contractEvaluation.contractGateTriggered
+  ) {
+    return {
+      ok: true,
+      workout: initialResult.workout,
+    };
+  }
+
+  const fallbackPass =
+    safeTemplatePass ?? (await runSlotPlanningPass({ coachContext, safeTemplateMode: true }));
+  const fallbackResult = await createValidatedSlotResult({
+    pass: fallbackPass,
+    safeTemplateUsed: true,
+    safeTemplateReason:
+      initialResult.contractEvaluation.contractGateReason.join(", ") ||
+      "contract_gate_retry",
+    retryAttempted: true,
+    retryReason: initialResult.contractEvaluation.contractGateReason.join(", ") || null,
+  });
+
+  if (fallbackResult.workout && fallbackResult.contractEvaluation.finalContractPassed) {
+    return {
+      ok: true,
+      workout: fallbackResult.workout,
     };
   }
 
   return {
-    ok: true,
-    workout: attachWorkoutGenerationDebug({
-      workout: {
-        ...normalizedWorkout,
-        aiDebug: {
-          ...normalizedWorkout.aiDebug,
-          normalizedWorkout,
-        },
-      },
-      generationModeRequested: input.generationMode ?? "slot_based_v1",
-      generationEngineUsed: "slot_based_v1",
-      generationFallbackUsed: false,
-      generationFallbackReason: null,
-      slotValidationPassed: activePass.slotValidation.slotValidationPassed,
-      legacyValidationPassed: null,
-      finalSafetyGateReasons: activePass.slotValidation.safetyGateReasons,
-      slotDebug,
-    }),
+    ok: false,
+    status: 500,
+    error:
+      "slot_based_v1 kunde inte uppfylla slot-kontraktet efter restore-first och safe template.",
   };
 }
 

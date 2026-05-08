@@ -14,7 +14,9 @@ import type {
   WorkoutSlotRole,
 } from "@/lib/workout-generation/types";
 
-function getExerciseRoleCandidates(exercise: ExerciseCatalogItem): WorkoutSlotRole[] {
+export function getExerciseRoleCandidates(
+  exercise: ExerciseCatalogItem,
+): WorkoutSlotRole[] {
   const roles = new Set<WorkoutSlotRole>();
 
   if (
@@ -71,6 +73,37 @@ function getExerciseRoleCandidates(exercise: ExerciseCatalogItem): WorkoutSlotRo
   return Array.from(roles);
 }
 
+function getBestSlotRoleMatch(params: {
+  slot: WorkoutSlot;
+  exercise: ExerciseCatalogItem;
+}) {
+  const candidateRoles = getExerciseRoleCandidates(params.exercise);
+  const matchedRole = params.slot.allowedRoles.find((role) =>
+    candidateRoles.includes(role),
+  );
+
+  return {
+    matchedRole: matchedRole ?? null,
+    candidateRoles,
+  };
+}
+
+function getGoalSpecificity(exercise: ExerciseCatalogItem, goal: WorkoutCoachContext["goal"]) {
+  const tags = (exercise.primaryGoalTags ?? []).map((tag) => tag.toLowerCase());
+
+  if (goal === "strength") {
+    return tags.includes("styrka") ? 2 : tags.includes("hypertrofi") ? 1 : 0;
+  }
+  if (goal === "hypertrophy") {
+    return tags.includes("hypertrofi") ? 2 : tags.includes("styrka") ? 1 : 0;
+  }
+  if (goal === "body_composition") {
+    return tags.includes("hypertrofi") || tags.includes("allmän hälsa") ? 1 : 0;
+  }
+
+  return 0;
+}
+
 function getRecoverySeverityForExercise(params: {
   exercise: ExerciseCatalogItem;
   coachContext: WorkoutCoachContext;
@@ -116,44 +149,20 @@ function violatesConstraint(params: {
 }
 
 function isLoadedStrengthCandidate(exercise: ExerciseCatalogItem) {
-  return [
-    "bench_press",
-    "row",
-    "romanian_deadlift",
-    "deadlift",
-    "squat",
-    "lunge",
-    "pull_up",
-    "lat_pulldown",
-    "overhead_press",
-  ].includes(exercise.variantGroup);
-}
-
-function getSportProtectedRoles(coachContext: WorkoutCoachContext): WorkoutSlotRole[] {
-  if (coachContext.sportFocus === "cycling") {
-    return [
-      "main_squat",
-      "main_hinge",
-      "unilateral_lower",
-      "calves",
-      "core",
-    ];
-  }
-  if (coachContext.sportFocus === "alpine_skiing") {
-    return [
-      "main_squat",
-      "main_hinge",
-      "unilateral_lower",
-      "calves",
-      "core",
-      "carry",
-    ];
-  }
-  if (coachContext.sportFocus === "surf_sports") {
-    return ["main_pull", "core", "carry", "rear_delt_scapula"];
-  }
-
-  return [];
+  return (
+    exercise.requiredEquipment.some((equipment) => equipment !== "bodyweight") &&
+    [
+      "bench_press",
+      "row",
+      "romanian_deadlift",
+      "deadlift",
+      "squat",
+      "lunge",
+      "pull_up",
+      "lat_pulldown",
+      "overhead_press",
+    ].includes(exercise.variantGroup)
+  );
 }
 
 function isOptionalAccessoryFocusCompatible(params: {
@@ -187,271 +196,215 @@ function isOptionalAccessoryFocusCompatible(params: {
   return true;
 }
 
-function addGoalSpecificScoring(params: {
-  exercise: ExerciseCatalogItem;
-  slot: WorkoutSlot;
-  coachContext: WorkoutCoachContext;
-  scoreBreakdown: RankedExerciseCandidate["scoreBreakdown"];
-}) {
-  let score = 0;
-  const isStrength = params.coachContext.goal === "strength";
-  const roles = getExerciseRoleCandidates(params.exercise);
-
-  if (isStrength && ["main_push", "main_pull", "main_squat", "main_hinge"].includes(params.slot.role)) {
-    const mainLiftBonus = isLoadedStrengthCandidate(params.exercise) ? 26 : 10;
-    score += mainLiftBonus;
-    params.scoreBreakdown.push({
-      code: "strength_main_lift_bonus",
-      amount: mainLiftBonus,
-      reason: "Styrkemålet prioriterar belastningsbara huvudlyft i huvudslotar.",
-    });
-
-    if (params.exercise.requiredEquipment.some((equipment) => equipment !== "bodyweight")) {
-      score += 12;
-      params.scoreBreakdown.push({
-        code: "loadability_bonus",
-        amount: 12,
-        reason: "Övningen är lätt att progressa med yttre belastning.",
-      });
-    }
-
-    if (params.exercise.variantGroup === "romanian_deadlift" || params.exercise.variantGroup === "deadlift") {
-      score += 10;
-      params.scoreBreakdown.push({
-        code: "progression_potential_bonus",
-        amount: 10,
-        reason: "Hinge-övningen har tydlig progression och styrkespecificitet.",
-      });
-    }
+function getSportProtectedRoles(coachContext: WorkoutCoachContext): WorkoutSlotRole[] {
+  if (coachContext.sportFocus === "cycling") {
+    return [
+      "main_squat",
+      "main_hinge",
+      "unilateral_lower",
+      "calves",
+      "core",
+    ];
+  }
+  if (coachContext.sportFocus === "alpine_skiing") {
+    return [
+      "main_squat",
+      "main_hinge",
+      "unilateral_lower",
+      "calves",
+      "core",
+      "carry",
+    ];
+  }
+  if (coachContext.sportFocus === "surf_sports") {
+    return ["main_pull", "rear_delt_scapula", "core", "carry"];
   }
 
-  if (
-    isStrength &&
-    ["core", "carry", "optional_accessory", "rehab_control"].includes(params.slot.role) &&
-    !roles.includes("main_push") &&
-    !roles.includes("main_pull") &&
-    !roles.includes("main_squat") &&
-    !roles.includes("main_hinge")
-  ) {
-    score -= 10;
-    params.scoreBreakdown.push({
-      code: "accessory_penalty_for_strength",
-      amount: -10,
-      reason: "Styrkepass låter accessoarer komma efter huvudlyften när de konkurrerar om plats.",
-    });
-  }
-
-  if (
-    params.coachContext.goal === "hypertrophy" &&
-    ["direct_biceps", "direct_triceps", "shoulder_accessory", "rear_delt_scapula", "calves"].includes(
-      params.slot.role,
-    )
-  ) {
-    score += 10;
-    params.scoreBreakdown.push({
-      code: "hypertrophy_accessory_bonus",
-      amount: 10,
-      reason: "Hypertrofi tillåter fler målspecifika accessoarer när sloten redan finns.",
-    });
-  }
-
-  return score;
+  return [];
 }
 
-function addSportSpecificScoring(params: {
-  exercise: ExerciseCatalogItem;
-  slot: WorkoutSlot;
-  coachContext: WorkoutCoachContext;
-  scoreBreakdown: RankedExerciseCandidate["scoreBreakdown"];
-}) {
-  let score = 0;
-  const sportRelevance = getSportRelevanceHint(
-    params.exercise,
-    params.coachContext.sportFocus,
-  );
-
-  if (sportRelevance > 0) {
-    const bonus = sportRelevance * 7;
-    score += bonus;
-    params.scoreBreakdown.push({
-      code: "sport_focus_score_bonus",
-      amount: bonus,
-      reason: "Övningen stödjer valt sportfokus utan att ta över huvudmålet.",
-    });
-  }
-
-  const protectedRoles = getSportProtectedRoles(params.coachContext);
-  if (protectedRoles.includes(params.slot.role)) {
-    score += 6;
-    params.scoreBreakdown.push({
-      code: "sport_protected_role_bonus",
-      amount: 6,
-      reason: `Rollen ${params.slot.role} är extra relevant för sportfokuset.`,
-    });
-  }
-
-  if (
-    params.coachContext.sportFocus === "cycling" &&
-    params.exercise.variantGroup === "mountain_climber"
-  ) {
-    score -= 16;
-    params.scoreBreakdown.push({
-      code: "conditioning_penalty",
-      amount: -16,
-      reason: "Mountain climbers prioriteras ned när bättre cykelrelevant bål/ben-arbete finns.",
-    });
-  }
-
-  return score;
+function addScore(
+  scoreBreakdown: RankedExerciseCandidate["scoreBreakdown"],
+  code: string,
+  amount: number,
+  reason: string,
+) {
+  scoreBreakdown.push({ code, amount, reason });
+  return amount;
 }
 
-function addVariationScoring(params: {
-  exercise: ExerciseCatalogItem;
-  coachContext: WorkoutCoachContext;
-  usedVariantGroups: string[];
-  scoreBreakdown: RankedExerciseCandidate["scoreBreakdown"];
-}) {
-  let score = 0;
-
-  if (params.usedVariantGroups.includes(params.exercise.variantGroup)) {
-    score -= 18;
-    params.scoreBreakdown.push({
-      code: "variant_repeat_penalty",
-      amount: -18,
-      reason: "Variantgruppen har redan använts i passet.",
-    });
-  } else {
-    score += 8;
-    params.scoreBreakdown.push({
-      code: "fresh_variant_bonus",
-      amount: 8,
-      reason: "Ny variantgrupp ger bättre variation inom passet.",
-    });
-  }
-
-  if (params.coachContext.recentVariantGroups.includes(params.exercise.variantGroup)) {
-    score -= 14;
-    params.scoreBreakdown.push({
-      code: "variant_cooldown_penalty",
-      amount: -14,
-      reason: "Variantgruppen har använts nyligen och får en mild cooldown när alternativ finns.",
-    });
-  }
-
-  if (params.coachContext.recentExerciseIds.includes(params.exercise.id)) {
-    score -= 8;
-    params.scoreBreakdown.push({
-      code: "recent_exercise_penalty",
-      amount: -8,
-      reason: "Exakt samma övning har använts nyligen och kan roteras bort om annat är likvärdigt.",
-    });
-  }
-
-  return score;
-}
-
-function addExerciseSpecificPenalties(params: {
-  exercise: ExerciseCatalogItem;
-  slot: WorkoutSlot;
-  coachContext: WorkoutCoachContext;
-  scoreBreakdown: RankedExerciseCandidate["scoreBreakdown"];
-}) {
-  let score = 0;
-
-  if (
-    params.exercise.id === "pike_push_up" &&
-    params.coachContext.experienceLevel === "beginner"
-  ) {
-    score -= 24;
-    params.scoreBreakdown.push({
-      code: "complexity_penalty",
-      amount: -24,
-      reason: "Pike push-ups får tydlig komplexitetsstraff för nybörjare.",
-    });
-  }
-
-  if (
-    params.exercise.variantGroup === "mountain_climber" &&
-    ["strength", "hypertrophy"].includes(params.coachContext.goal)
-  ) {
-    score -= 18;
-    params.scoreBreakdown.push({
-      code: "conditioning_penalty",
-      amount: -18,
-      reason: "Mountain climbers prioriteras ned i styrke- och hypertrofipass.",
-    });
-  }
-
-  if (
-    params.slot.role === "optional_accessory" &&
-    !isOptionalAccessoryFocusCompatible({
-      exercise: params.exercise,
-      focus: params.coachContext.selectedFocus,
-    })
-  ) {
-    score -= 4_000;
-    params.scoreBreakdown.push({
-      code: "off_focus_accessory_penalty",
-      amount: -4000,
-      reason: "Optional accessory måste vara fokuskompatibel och får inte fylla fel kroppsdel.",
-    });
-  }
-
-  if (
-    params.coachContext.selectedFocus === "lower_body" &&
-    ["close_grip_push_up", "push_up", "bodyweight_bench_dip"].includes(params.exercise.id)
-  ) {
-    score -= 3_000;
-    params.scoreBreakdown.push({
-      code: "replacement_focus_mismatch_penalty",
-      amount: -3000,
-      reason: "Lower body ska inte fyllas med överkroppspress som accessoar när benroller saknas.",
-    });
-  }
-
-  return score;
-}
-
-function scoreExerciseForSlot(params: {
+export function scoreExerciseForSlot(params: {
   exercise: ExerciseCatalogItem;
   slot: WorkoutSlot;
   coachContext: WorkoutCoachContext;
   usedVariantGroups: string[];
+  usedMovementPatterns: ExerciseCatalogItem["movementPattern"][];
 }) {
   const scoreBreakdown: RankedExerciseCandidate["scoreBreakdown"] = [];
   const rejectedReasons: string[] = [];
-  const roles = getExerciseRoleCandidates(params.exercise);
-  const matchedSlotRole = roles.includes(params.slot.role);
-  let score = 0;
+  const { matchedRole } = getBestSlotRoleMatch({
+    slot: params.slot,
+    exercise: params.exercise,
+  });
 
-  if (!matchedSlotRole) {
+  if (!matchedRole) {
     rejectedReasons.push("role_mismatch");
     return {
       score: -10_000,
-      matchedSlotRole,
+      matchedRole: params.slot.role,
+      matchedSlotRole: false,
       scoreBreakdown,
       rejectedReasons,
     };
   }
 
-  score += 100;
-  scoreBreakdown.push({
-    code: "role_match",
-    amount: 100,
-    reason: `Övningen matchar slotrollen ${params.slot.role}.`,
-  });
+  let score = 0;
+  score += addScore(
+    scoreBreakdown,
+    "slot_role_match",
+    matchedRole === params.slot.role ? 100 : 88,
+    matchedRole === params.slot.role
+      ? `Övningen matchar slotens primära roll ${params.slot.role}.`
+      : `Övningen matchar en tillåten slot-roll (${matchedRole}) inom kontraktet.`,
+  );
 
   if (
-    params.slot.allowedMovementPatterns &&
-    !params.slot.allowedMovementPatterns.includes(params.exercise.movementPattern)
+    params.slot.preferredMovementPatterns?.includes(params.exercise.movementPattern)
   ) {
-    rejectedReasons.push("movement_pattern_not_allowed");
-    score -= 1000;
+    score += addScore(
+      scoreBreakdown,
+      "movement_pattern_match",
+      22,
+      "Övningens rörelsemönster passar slotens önskade mönster.",
+    );
+  } else if (
+    params.slot.preferredMovementPatterns &&
+    params.slot.preferredMovementPatterns.length > 0
+  ) {
+    score += addScore(
+      scoreBreakdown,
+      "movement_pattern_partial",
+      6,
+      "Övningen är rollrätt men träffar inte slotens förstahandsmönster exakt.",
+    );
   }
 
-  if (params.slot.blockedMovementPatterns?.includes(params.exercise.movementPattern)) {
-    rejectedReasons.push("movement_pattern_blocked");
-    score -= 1000;
+  if (
+    params.slot.forbiddenMovementPatterns?.includes(params.exercise.movementPattern)
+  ) {
+    rejectedReasons.push("forbidden_movement_pattern");
+    score += addScore(
+      scoreBreakdown,
+      "forbidden_movement_pattern_penalty",
+      -4_000,
+      "Övningen bryter mot slotens förbjudna rörelsemönster.",
+    );
+  }
+
+  const goalSpecificity = getGoalSpecificity(
+    params.exercise,
+    params.coachContext.goal,
+  );
+  if (goalSpecificity >= (params.slot.minGoalSpecificity ?? 0)) {
+    score += addScore(
+      scoreBreakdown,
+      "goal_specificity",
+      goalSpecificity * 12,
+      "Övningen stödjer huvudmålet för sloten.",
+    );
+  } else if ((params.slot.minGoalSpecificity ?? 0) > 0) {
+    score += addScore(
+      scoreBreakdown,
+      "goal_specificity_penalty",
+      -((params.slot.minGoalSpecificity ?? 0) - goalSpecificity) * 12,
+      "Övningen är mindre målspecifik än slotkontraktet önskar.",
+    );
+  }
+
+  if (params.coachContext.goal === "strength") {
+    if (
+      ["main_push", "main_pull", "main_squat", "main_hinge"].includes(matchedRole)
+    ) {
+      if (isLoadedStrengthCandidate(params.exercise)) {
+        score += addScore(
+          scoreBreakdown,
+          "strength_main_lift_bonus",
+          28,
+          "Strength prioriterar belastningsbara huvudlyft i required slots.",
+        );
+        score += addScore(
+          scoreBreakdown,
+          "progression_value_bonus",
+          14,
+          "Övningen har tydlig progression via vikt och reps.",
+        );
+      } else if (
+        params.exercise.requiredEquipment.every((equipment) => equipment === "bodyweight")
+      ) {
+        score += addScore(
+          scoreBreakdown,
+          "bodyweight_fallback_penalty",
+          -(params.slot.allowBodyweightFallback ? 10 : 22),
+          "Kroppsviktsvariant rankas ned när strength-pass har bättre belastningsbara alternativ.",
+        );
+      }
+    } else if (
+      ["core", "carry", "optional_accessory", "rehab_control"].includes(matchedRole)
+    ) {
+      score += addScore(
+        scoreBreakdown,
+        "accessory_penalty_for_strength",
+        -8,
+        "Små accessoarer kommer efter huvudlyften i styrkepass.",
+      );
+    }
+  } else if (
+    params.coachContext.goal === "hypertrophy" &&
+    ["direct_biceps", "direct_triceps", "shoulder_accessory", "calves"].includes(
+      matchedRole,
+    )
+  ) {
+    score += addScore(
+      scoreBreakdown,
+      "hypertrophy_accessory_bonus",
+      10,
+      "Hypertrofi gynnas av målspecifika accessoarer när kontraktet redan bär basen.",
+    );
+  }
+
+  const priorityMatches = params.coachContext.focusCompatiblePriorities.filter(
+    (muscle) =>
+      params.exercise.primaryMuscles.includes(muscle) ||
+      params.exercise.secondaryMuscles?.includes(muscle),
+  ).length;
+  if (priorityMatches > 0) {
+    score += addScore(
+      scoreBreakdown,
+      "priority_muscle_match",
+      priorityMatches * 10,
+      "Övningen träffar fokuskompatibla prioriterade muskler.",
+    );
+  }
+
+  const sportRelevance = getSportRelevanceHint(
+    params.exercise,
+    params.coachContext.sportFocus,
+  );
+  if (sportRelevance > 0) {
+    score += addScore(
+      scoreBreakdown,
+      "sport_relevance_bonus",
+      Math.round(sportRelevance * 7),
+      "Övningen stödjer sportfokus som bonus utan att ta över huvudmålet.",
+    );
+  }
+  if (getSportProtectedRoles(params.coachContext).includes(matchedRole)) {
+    score += addScore(
+      scoreBreakdown,
+      "sport_protected_role_bonus",
+      5,
+      `Rollen ${matchedRole} är extra relevant för valt sportfokus.`,
+    );
   }
 
   const recoverySeverity = getRecoverySeverityForExercise({
@@ -460,27 +413,38 @@ function scoreExerciseForSlot(params: {
   });
   if (recoverySeverity === "hard_blocked") {
     rejectedReasons.push("recovery_hard_block");
-    score -= 5_000;
-  } else if (
-    recoverySeverity === "avoid_heavy_loading" &&
-    params.slot.intensityHint === "hard"
-  ) {
-    score -= 30;
-    scoreBreakdown.push({
-      code: "recovery_penalty",
-      amount: -30,
-      reason: "Muskeln är recovery-limited och tung belastning bör undvikas.",
-    });
+    score += addScore(
+      scoreBreakdown,
+      "recovery_hard_block_penalty",
+      -5_000,
+      "Övningen är hårt blockerad av återhämtningsregler.",
+    );
+  } else if (recoverySeverity === "avoid_heavy_loading") {
+    if (params.slot.intensityHint === "hard") {
+      score += addScore(
+        scoreBreakdown,
+        "recovery_penalty",
+        -24,
+        "Återhämtningen talar för lättare eller mindre belastande alternativ.",
+      );
+    } else {
+      score += addScore(
+        scoreBreakdown,
+        "recovery_light_fit",
+        8,
+        "Övningen fungerar som lättare variant trots recovery-begränsning.",
+      );
+    }
   } else if (
     recoverySeverity === "allow_light_recovery" &&
-    params.slot.intensityHint === "light"
+    (params.slot.allowRecoveryLight || params.slot.intensityHint === "light")
   ) {
-    score += 10;
-    scoreBreakdown.push({
-      code: "light_recovery_match",
-      amount: 10,
-      reason: "Övningen passar som lätt återhämtningsvariant.",
-    });
+    score += addScore(
+      scoreBreakdown,
+      "recovery_safe_bonus",
+      10,
+      "Övningen passar som lätt återhämtningsvariant i sloten.",
+    );
   }
 
   if (
@@ -490,62 +454,171 @@ function scoreExerciseForSlot(params: {
     })
   ) {
     rejectedReasons.push("constraint_blocked");
-    score -= 5_000;
+    score += addScore(
+      scoreBreakdown,
+      "constraint_penalty",
+      -5_000,
+      "Övningen bryter mot aktiv constraint/skadebegränsning.",
+    );
   }
 
-  const focusPriorityMatches = params.coachContext.focusCompatiblePriorities.filter(
-    (muscle) =>
-      params.exercise.primaryMuscles.includes(muscle) ||
-      params.exercise.secondaryMuscles?.includes(muscle),
-  ).length;
-  if (focusPriorityMatches > 0) {
-    const bonus = focusPriorityMatches * 12;
-    score += bonus;
-    scoreBreakdown.push({
-      code: "focus_priority_match",
-      amount: bonus,
-      reason: "Övningen träffar fokuskompatibla prioriteringar.",
-    });
+  if (params.usedVariantGroups.includes(params.exercise.variantGroup)) {
+    score += addScore(
+      scoreBreakdown,
+      "recent_variant_penalty",
+      -18,
+      "Variantgruppen används redan i passet och roteras ned.",
+    );
+  } else {
+    score += addScore(
+      scoreBreakdown,
+      "fresh_variant_bonus",
+      6,
+      "Ny variantgrupp förbättrar variationen inom passet.",
+    );
   }
 
-  score += addGoalSpecificScoring({
-    exercise: params.exercise,
-    slot: params.slot,
-    coachContext: params.coachContext,
-    scoreBreakdown,
-  });
-  score += addSportSpecificScoring({
-    exercise: params.exercise,
-    slot: params.slot,
-    coachContext: params.coachContext,
-    scoreBreakdown,
-  });
-  score += addVariationScoring({
-    exercise: params.exercise,
-    coachContext: params.coachContext,
-    usedVariantGroups: params.usedVariantGroups,
-    scoreBreakdown,
-  });
-  score += addExerciseSpecificPenalties({
-    exercise: params.exercise,
-    slot: params.slot,
-    coachContext: params.coachContext,
-    scoreBreakdown,
-  });
+  if (params.coachContext.recentVariantGroups.includes(params.exercise.variantGroup)) {
+    score += addScore(
+      scoreBreakdown,
+      "variant_cooldown_penalty",
+      -12,
+      "Variantgruppen har använts nyligen och får mild cooldown.",
+    );
+  }
+
+  if (params.usedMovementPatterns.includes(params.exercise.movementPattern)) {
+    score += addScore(
+      scoreBreakdown,
+      "duplicate_pattern_penalty",
+      -10,
+      "Passet innehåller redan samma rörelsemönster och får därför mild variationsstraff.",
+    );
+  }
+
+  if (params.coachContext.recentExerciseIds.includes(params.exercise.id)) {
+    score += addScore(
+      scoreBreakdown,
+      "recent_exercise_penalty",
+      -8,
+      "Exakt samma övning gjordes nyligen och roteras ned om annat är likvärdigt.",
+    );
+  }
+
+  if (
+    params.slot.role === "optional_accessory" &&
+    !isOptionalAccessoryFocusCompatible({
+      exercise: params.exercise,
+      focus: params.coachContext.selectedFocus,
+    })
+  ) {
+    rejectedReasons.push("off_focus_optional_accessory");
+    score += addScore(
+      scoreBreakdown,
+      "off_focus_penalty",
+      -4_000,
+      "Optional accessory måste vara fokuskompatibel i den här modellen.",
+    );
+  }
+
+  if (
+    params.coachContext.selectedFocus === "lower_body" &&
+    ["main_push", "direct_triceps"].includes(matchedRole) &&
+    !["carry", "core", "rehab_control"].includes(matchedRole)
+  ) {
+    rejectedReasons.push("off_focus_lower_body");
+    score += addScore(
+      scoreBreakdown,
+      "off_focus_penalty",
+      -3_000,
+      "Lower body får inte repareras med överkroppspress när lower-roller saknas.",
+    );
+  }
+
+  if (
+    params.coachContext.selectedFocus === "upper_body" &&
+    matchedRole === "calves"
+  ) {
+    rejectedReasons.push("off_focus_upper_body");
+    score += addScore(
+      scoreBreakdown,
+      "off_focus_penalty",
+      -2_500,
+      "Upper body får inte fyllas med calves när press/drag ska skyddas.",
+    );
+  }
+
+  if (
+    params.exercise.requiredEquipment.every((equipment) => equipment === "bodyweight") &&
+    params.coachContext.selectedEquipment.some((equipment) => equipment !== "bodyweight") &&
+    !params.slot.allowBodyweightFallback &&
+    ["main_push", "main_pull", "main_squat", "main_hinge", "unilateral_lower"].includes(
+      matchedRole,
+    )
+  ) {
+    score += addScore(
+      scoreBreakdown,
+      "bodyweight_fallback_penalty",
+      -18,
+      "Sloten föredrar belastningsbar utrustning framför kroppsviktsfallback när sådan finns.",
+    );
+  }
 
   if (params.exercise.riskLevel === "low") {
-    score += 8;
+    score += addScore(
+      scoreBreakdown,
+      "risk_safe_bonus",
+      6,
+      "Låg risk gör övningen lättare att använda robust inom slotkontraktet.",
+    );
   } else if (
     params.coachContext.experienceLevel === "beginner" &&
     params.exercise.riskLevel === "high"
   ) {
     rejectedReasons.push("risk_too_high_for_beginner");
-    score -= 2_000;
+    score += addScore(
+      scoreBreakdown,
+      "risk_penalty",
+      -2_500,
+      "Övningen är för riskabel för nybörjarnivån.",
+    );
+  } else if (params.exercise.riskLevel === "medium") {
+    score += addScore(
+      scoreBreakdown,
+      "risk_penalty",
+      -4,
+      "Medelhög risk ger ett litet säkerhetsavdrag jämfört med enklare alternativ.",
+    );
+  }
+
+  if (
+    params.exercise.id === "pike_push_up" &&
+    params.coachContext.experienceLevel === "beginner"
+  ) {
+    score += addScore(
+      scoreBreakdown,
+      "complexity_penalty",
+      -20,
+      "Pike push-ups får tydligt komplexitetsavdrag för nybörjare.",
+    );
+  }
+
+  if (
+    params.exercise.variantGroup === "mountain_climber" &&
+    ["strength", "hypertrophy"].includes(params.coachContext.goal)
+  ) {
+    score += addScore(
+      scoreBreakdown,
+      "conditioning_penalty",
+      -18,
+      "Conditioning-liknande core prioriteras ned när bättre bålalternativ finns.",
+    );
   }
 
   return {
     score,
-    matchedSlotRole,
+    matchedRole,
+    matchedSlotRole: true,
     scoreBreakdown,
     rejectedReasons,
   };
@@ -555,6 +628,7 @@ export function getCandidatesForSlot(params: {
   slot: WorkoutSlot;
   coachContext: WorkoutCoachContext;
   usedVariantGroups: string[];
+  usedMovementPatterns: ExerciseCatalogItem["movementPattern"][];
 }) {
   const exercises = getAvailableExercises(params.coachContext.selectedEquipment);
 
@@ -565,6 +639,7 @@ export function getCandidatesForSlot(params: {
         slot: params.slot,
         coachContext: params.coachContext,
         usedVariantGroups: params.usedVariantGroups,
+        usedMovementPatterns: params.usedMovementPatterns,
       });
 
       return {
@@ -572,7 +647,16 @@ export function getCandidatesForSlot(params: {
         candidate: {
           exerciseId: exercise.id,
           exerciseName: exercise.name,
+          source: params.coachContext.recentExerciseIds.includes(exercise.id)
+            ? "history"
+            : "catalog",
           slotRole: params.slot.role,
+          matchedRole: scoring.matchedRole,
+          movementPattern: exercise.movementPattern,
+          variantGroup: exercise.variantGroup,
+          primaryMuscles: exercise.primaryMuscles,
+          secondaryMuscles: exercise.secondaryMuscles,
+          requiredEquipment: exercise.requiredEquipment,
           score: scoring.score,
           scoreBreakdown: scoring.scoreBreakdown,
           rejectedReasons: scoring.rejectedReasons,
@@ -588,6 +672,7 @@ export function selectExercisesForSlots(params: {
   allowSafeTemplateFallback?: boolean;
 }) {
   const usedVariantGroups: string[] = [];
+  const usedMovementPatterns: ExerciseCatalogItem["movementPattern"][] = [];
   const selections: SlotExerciseSelection[] = [];
   const candidatesPerSlot: Record<string, RankedExerciseCandidate[]> = {};
   const rejectedCandidates: Record<string, RankedExerciseCandidate[]> = {};
@@ -597,6 +682,7 @@ export function selectExercisesForSlots(params: {
       slot,
       coachContext: params.coachContext,
       usedVariantGroups,
+      usedMovementPatterns,
     });
     const accepted = ranked.filter((entry) => entry.candidate.score > 0).slice(0, 8);
     const rejected = ranked.filter((entry) => entry.candidate.score <= 0).slice(0, 8);
@@ -604,34 +690,47 @@ export function selectExercisesForSlots(params: {
     candidatesPerSlot[slot.id] = accepted.map((entry) => entry.candidate);
     rejectedCandidates[slot.id] = rejected.map((entry) => entry.candidate);
 
+    // Safe-template mode still respects the same slot contract. It just lowers the
+    // acceptance threshold so required slots can be filled with the safest matching role.
     const safeFallback =
       params.allowSafeTemplateFallback && slot.required
         ? ranked.find(
             (entry) =>
+              entry.candidate.matchedRole &&
               !entry.candidate.rejectedReasons.includes("role_mismatch") &&
-              !entry.candidate.rejectedReasons.includes("movement_pattern_not_allowed") &&
-              !entry.candidate.rejectedReasons.includes("movement_pattern_blocked") &&
+              !entry.candidate.rejectedReasons.includes("forbidden_movement_pattern") &&
               !entry.candidate.rejectedReasons.includes("constraint_blocked") &&
               !entry.candidate.rejectedReasons.includes("recovery_hard_block") &&
               !entry.candidate.rejectedReasons.includes("risk_too_high_for_beginner"),
           )
         : undefined;
+
     const selected = accepted[0] ?? safeFallback;
     if (!selected) {
       continue;
     }
 
     usedVariantGroups.push(selected.exercise.variantGroup);
+    usedMovementPatterns.push(selected.exercise.movementPattern);
     selections.push({
       slotId: slot.id,
-      role: slot.role,
+      slotLabel: slot.label,
+      role: selected.candidate.matchedRole,
+      contractRoles: slot.allowedRoles,
       exerciseId: selected.exercise.id,
       exerciseName: selected.exercise.name,
+      movementPattern: selected.exercise.movementPattern,
+      variantGroup: selected.exercise.variantGroup,
+      primaryMuscles: selected.exercise.primaryMuscles,
+      secondaryMuscles: selected.exercise.secondaryMuscles,
+      requiredEquipment: selected.exercise.requiredEquipment,
+      score: selected.candidate.score,
+      scoreBreakdown: selected.candidate.scoreBreakdown,
       reason:
         selected.candidate.scoreBreakdown[0]?.reason ??
         (accepted[0]
-          ? "Valdes som högst rankad kandidat inom sloten."
-          : "Valdes som säker mallkandidat när ordinarie sloturval inte räckte."),
+          ? "Valdes som högst rankad kandidat inom slotkontraktet."
+          : "Valdes som säkraste kontraktsmatch när ordinarie rankning inte räckte."),
       selectionSource: accepted[0] ? "local_rank" : "fallback",
       candidates: accepted.map((entry) => entry.candidate),
     });

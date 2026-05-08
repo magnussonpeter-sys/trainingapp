@@ -49,6 +49,7 @@ export type WorkoutPreparationFeedback = {
 export type WorkoutAiDebug = {
   request?: unknown;
   generationContext?: unknown;
+  validation?: unknown;
   prompt?: string;
   rawAiText?: string;
   parsedAiResponse?: unknown;

@@ -18,11 +18,49 @@ export function attachWorkoutGenerationDebug(params: {
     typeof params.workout.aiDebug.generationContext === "object"
       ? (params.workout.aiDebug.generationContext as Record<string, unknown>)
       : {};
+  const existingValidation =
+    params.workout.aiDebug?.validation &&
+    typeof params.workout.aiDebug.validation === "object"
+      ? (params.workout.aiDebug.validation as Record<string, unknown>)
+      : {};
 
   return {
     ...params.workout,
     aiDebug: {
       ...params.workout.aiDebug,
+      validation: {
+        ...existingValidation,
+        ...(params.slotDebug
+          ? {
+              slotModel: {
+                contractSlots: params.slotDebug.contractSlots,
+                requiredSlots: params.slotDebug.requiredSlots,
+                protectedSlots: params.slotDebug.protectedSlots,
+                candidatesPerSlot: params.slotDebug.candidatesPerSlot,
+                selectedPerSlot: params.slotDebug.selectedExercisePerSlot,
+                selectedScorePerSlot: params.slotDebug.selectedScorePerSlot,
+                selectedScoreBreakdown: params.slotDebug.selectedScoreBreakdown,
+                rejectedCandidatesTopReasons:
+                  params.slotDebug.rejectedCandidatesTopReasons,
+                contractViolations: params.slotDebug.contractViolations,
+                repairedSlots: params.slotDebug.repairedSlots,
+                repairLog: params.slotDebug.repairLog,
+                fallbackMode:
+                  params.slotDebug.fallbackMode ??
+                  (params.slotDebug.safeTemplateUsed ? "safe_template" : "none"),
+                contractGateTriggered: params.slotDebug.contractGateTriggered,
+                contractGateReason: params.slotDebug.contractGateReason,
+                finalContractPassed: params.slotDebug.finalContractPassed,
+                sportRelevantSlots: params.slotDebug.sportRelevantSlots,
+                sportLossReason: params.slotDebug.sportLossReason,
+                goalLossReason: params.slotDebug.goalLossReason,
+                repeatedVariantGroups: params.slotDebug.repeatedVariantGroups,
+                variationPenaltyApplied:
+                  params.slotDebug.variationPenaltyApplied,
+              },
+            }
+          : {}),
+      },
       generationContext: {
         ...existingGenerationContext,
         generationModeRequested: params.generationModeRequested,
@@ -39,13 +77,29 @@ export function attachWorkoutGenerationDebug(params: {
               selectedFocus: params.slotDebug.coachDecision.selectedFocus,
               slotTemplateId: params.slotDebug.slotTemplateId,
               plannedSlots: params.slotDebug.plannedSlots,
+              contractSlots: params.slotDebug.contractSlots,
+              requiredSlots: params.slotDebug.requiredSlots,
+              protectedSlots: params.slotDebug.protectedSlots,
               slotReasons: params.slotDebug.slotReasons,
               candidatesPerSlot: params.slotDebug.candidatesPerSlot,
               selectedExercisePerSlot: params.slotDebug.selectedExercisePerSlot,
+              selectedScorePerSlot: params.slotDebug.selectedScorePerSlot,
+              selectedScoreBreakdown: params.slotDebug.selectedScoreBreakdown,
               rejectedCandidates: params.slotDebug.rejectedCandidates,
+              rejectedCandidatesTopReasons:
+                params.slotDebug.rejectedCandidatesTopReasons,
               slotCandidateCounts: params.slotDebug.slotCandidateCounts,
               rejectedCandidatesBySlot: params.slotDebug.rejectedCandidatesBySlot,
+              contractViolations: params.slotDebug.contractViolations,
+              repairedSlots: params.slotDebug.repairedSlots,
+              repairLog: params.slotDebug.repairLog,
               slotFailureReasons: params.slotDebug.slotFailureReasons,
+              fallbackMode: params.slotDebug.fallbackMode,
+              contractGateTriggered: params.slotDebug.contractGateTriggered,
+              contractGateReason: params.slotDebug.contractGateReason,
+              retryAttempted: params.slotDebug.retryAttempted,
+              retryReason: params.slotDebug.retryReason,
+              finalContractPassed: params.slotDebug.finalContractPassed,
               safeTemplateUsed: params.slotDebug.safeTemplateUsed,
               safeTemplateReason: params.slotDebug.safeTemplateReason,
               slotAiRequested: params.slotDebug.slotAiRequested,
@@ -57,14 +111,23 @@ export function attachWorkoutGenerationDebug(params: {
               recentVariantGroups: params.slotDebug.recentVariantGroups,
               sportFocusRelevantRoles: params.slotDebug.sportFocusRelevantRoles,
               sportFocusProtectedRoles: params.slotDebug.sportFocusProtectedRoles,
+              sportRelevantSlots: params.slotDebug.sportRelevantSlots,
+              sportLossReason: params.slotDebug.sportLossReason,
+              goalLossReason: params.slotDebug.goalLossReason,
+              repeatedVariantGroups: params.slotDebug.repeatedVariantGroups,
+              variationPenaltyApplied:
+                params.slotDebug.variationPenaltyApplied,
+              fallbackBiasWarning: params.slotDebug.fallbackBiasWarning,
               slotRecoveryModificationSummary:
                 params.slotDebug.slotRecoveryModificationSummary,
               slotValidationDebug: {
                 slotValidationPassed: params.slotDebug.slotValidationPassed,
                 missingRequiredSlots: params.slotDebug.missingRequiredSlots,
                 invalidSlotExercises: params.slotDebug.invalidSlotExercises,
+                contractViolations: params.slotDebug.contractViolations,
                 safetyGateReasons: params.slotDebug.safetyGateReasons,
                 finalSlotCoverage: params.slotDebug.finalSlotCoverage,
+                finalContractPassed: params.slotDebug.finalContractPassed,
                 finalWorkoutQualityScore: params.slotDebug.finalWorkoutQualityScore,
               },
             }

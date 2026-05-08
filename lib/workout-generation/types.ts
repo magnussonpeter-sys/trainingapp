@@ -50,18 +50,30 @@ export type SlotProgressionHint =
 
 export type WorkoutSlot = {
   id: string;
+  label: string;
   role: WorkoutSlotRole;
+  allowedRoles: WorkoutSlotRole[];
   required: boolean;
   priority: number;
   targetMuscles?: MuscleBudgetGroup[];
-  allowedMovementPatterns?: MovementPattern[];
-  blockedMovementPatterns?: MovementPattern[];
+  preferredMovementPatterns?: MovementPattern[];
+  forbiddenMovementPatterns?: MovementPattern[];
   preferredEquipment?: string[];
+  minGoalSpecificity?: number;
+  allowRecoveryLight?: boolean;
+  allowBodyweightFallback?: boolean;
   minSets?: number;
   maxSets?: number;
   intensityHint?: SlotIntensityHint;
   progressionHint?: SlotProgressionHint;
   reason: string;
+};
+
+export type WorkoutSlotContract = {
+  templateId: string;
+  goalConfigId: string;
+  targetSlotCount: number;
+  slots: WorkoutSlot[];
 };
 
 export type TrainingGoalConfig = {
@@ -169,7 +181,14 @@ export type ExerciseCandidateScore = {
 export type RankedExerciseCandidate = {
   exerciseId: string;
   exerciseName: string;
+  source: "catalog" | "history" | "ai";
   slotRole: WorkoutSlotRole;
+  matchedRole: WorkoutSlotRole;
+  movementPattern: MovementPattern;
+  variantGroup: string;
+  primaryMuscles: string[];
+  secondaryMuscles?: string[];
+  requiredEquipment: string[];
   score: number;
   scoreBreakdown: Array<{
     code: string;
@@ -181,9 +200,18 @@ export type RankedExerciseCandidate = {
 
 export type SlotExerciseSelection = {
   slotId: string;
+  slotLabel: string;
   role: WorkoutSlotRole;
+  contractRoles: WorkoutSlotRole[];
   exerciseId: string;
   exerciseName: string;
+  movementPattern: MovementPattern;
+  variantGroup: string;
+  primaryMuscles: string[];
+  secondaryMuscles?: string[];
+  requiredEquipment: string[];
+  score: number;
+  scoreBreakdown: RankedExerciseCandidate["scoreBreakdown"];
   reason: string;
   selectionSource: "local_rank" | "ai_rank" | "fallback";
   candidates: RankedExerciseCandidate[];
@@ -203,6 +231,9 @@ export type SlotWorkoutDebug = {
   };
   slotTemplateId: string;
   plannedSlots: WorkoutSlot[];
+  contractSlots: WorkoutSlot[];
+  requiredSlots: string[];
+  protectedSlots: string[];
   slotReasons: Array<{
     slotId: string;
     role: WorkoutSlotRole;
@@ -210,12 +241,29 @@ export type SlotWorkoutDebug = {
   }>;
   candidatesPerSlot: Record<string, RankedExerciseCandidate[]>;
   selectedExercisePerSlot: SlotExerciseSelection[];
+  selectedScorePerSlot: Record<string, number>;
+  selectedScoreBreakdown: Record<string, RankedExerciseCandidate["scoreBreakdown"]>;
   rejectedCandidates: Record<string, RankedExerciseCandidate[]>;
+  rejectedCandidatesTopReasons: Record<string, string[]>;
   slotCandidateCounts: Record<string, number>;
   rejectedCandidatesBySlot: Record<string, string[]>;
   slotValidationPassed: boolean;
   missingRequiredSlots: string[];
   invalidSlotExercises: string[];
+  contractViolations: string[];
+  repairedSlots: string[];
+  repairLog: Array<{
+    slotId: string;
+    repairReason: string;
+    repairFromExercise: string | null;
+    repairToExercise: string | null;
+    originalRole: WorkoutSlotRole | null;
+    replacementRole: WorkoutSlotRole | null;
+    roleEquivalent: boolean;
+    restoreAttempted: boolean;
+    restoreSucceeded: boolean;
+    restoreRejectedReason: string | null;
+  }>;
   slotFailureReasons: string[];
   safeTemplateUsed: boolean;
   safeTemplateReason: string | null;
@@ -234,7 +282,19 @@ export type SlotWorkoutDebug = {
   sportFocusProtectedRoles: WorkoutSlotRole[];
   slotRecoveryModificationSummary: string[];
   safetyGateReasons: string[];
+  fallbackMode: "none" | "safe_template";
+  contractGateTriggered: boolean;
+  contractGateReason: string[];
+  retryAttempted: boolean;
+  retryReason: string | null;
+  finalContractPassed: boolean;
   finalSlotCoverage: string[];
+  sportRelevantSlots: string[];
+  sportLossReason: string[];
+  goalLossReason: string[];
+  repeatedVariantGroups: string[];
+  variationPenaltyApplied: boolean;
+  fallbackBiasWarning: string | null;
   finalWorkoutQualityScore: number;
 };
 
