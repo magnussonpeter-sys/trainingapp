@@ -9,6 +9,37 @@ import type { TrainingGap } from "@/lib/planning/training-gap";
 import type { PlannedTrainingMode } from "@/lib/weekly-workout-structure";
 import type { WeeklyPlanContext } from "@/lib/planning/weekly-plan";
 
+function isBodyweightOnlyEquipment(equipment: string[]) {
+  return equipment.every((item) => item === "bodyweight");
+}
+
+function formatWorkoutGenerationError(params: {
+  rawError: string;
+  goal: string;
+  equipment: string[];
+  nextFocus?: WorkoutFocus | null;
+}) {
+  const raw = params.rawError.toLowerCase();
+  const bodyweightOnly = isBodyweightOnlyEquipment(params.equipment);
+
+  if (
+    raw.includes("slot_based_v1 kunde inte uppfylla") ||
+    raw.includes("slot_based_v1 kunde inte uppfylla ett genomförbart kontrakt")
+  ) {
+    if (bodyweightOnly && params.nextFocus === "upper_body" && raw.includes("main_pull")) {
+      return "Det valda gymmet saknar dragövningar för ett balanserat överkroppspass. Välj ett gym med ringar, chinsstång, kabel eller hantlar, eller skapa ett begränsat pass.";
+    }
+
+    if (params.goal === "strength" && raw.includes("missing_loaded_main_lift")) {
+      return "Det valda gymmet saknar ett belastningsbart huvudlyft för ett styrkepass. Välj mer utrustning eller byt till ett mindre begränsat pass.";
+    }
+
+    return "Det gick inte att bygga ett balanserat AI-pass med vald längd, fokus och utrustning. Prova gärna ett annat gym, en lite längre passlängd eller ett eget pass.";
+  }
+
+  return params.rawError || "Failed to generate workout";
+}
+
 export async function generateWorkout(params: {
   userId: string;
   goal: string;
@@ -69,7 +100,14 @@ export async function generateWorkout(params: {
   const data = await res.json();
 
   if (!res.ok || !data.ok) {
-    throw new Error(data?.error || "Failed to generate workout");
+    throw new Error(
+      formatWorkoutGenerationError({
+        rawError: data?.error || "Failed to generate workout",
+        goal: params.goal,
+        equipment: params.equipment,
+        nextFocus: params.nextFocus,
+      }),
+    );
   }
 
   return {

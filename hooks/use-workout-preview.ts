@@ -10,6 +10,7 @@ import {
   extractEquipmentIdsFromRecords,
 } from "@/lib/equipment";
 import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-workout";
+import { getGeneratedWorkout } from "@/lib/workout-storage";
 import {
   applyExerciseProgression,
   type WorkoutGymEquipmentItem,
@@ -635,7 +636,10 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
         setGyms(loadedGyms);
         setGymsLoaded(true);
 
-        const normalized = normalizePreviewWorkout(draft) as Workout | null;
+        const fallbackGenerated = draft ? null : getGeneratedWorkout(userId);
+        const normalized = normalizePreviewWorkout(
+          draft ?? fallbackGenerated,
+        ) as Workout | null;
 
         if (!normalized) {
           setWorkout(null);

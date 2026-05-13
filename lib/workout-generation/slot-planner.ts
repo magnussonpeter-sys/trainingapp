@@ -1,5 +1,8 @@
+import { getAvailableExercises } from "@/lib/exercise-catalog";
 import { getTrainingGoalConfig } from "@/lib/workout-generation/goal-config";
+import { getExerciseRoleCandidates } from "@/lib/workout-generation/exercise-selector";
 import type {
+  SlotContractMode,
   TrainingGoalConfig,
   WorkoutCoachContext,
   WorkoutSlot,
@@ -57,6 +60,152 @@ function createContractSlot(params: {
   } satisfies WorkoutSlot;
 }
 
+function hasFeasibleRoleMatch(params: {
+  availableExercises: ReturnType<typeof getAvailableExercises>;
+  roles: WorkoutSlotRole[];
+}) {
+  if (params.roles.length === 0) {
+    return false;
+  }
+
+  return params.availableExercises.some((exercise) => {
+    const candidateRoles = getExerciseRoleCandidates(exercise);
+    return candidateRoles.some((role) => params.roles.includes(role));
+  });
+}
+
+function getFallbackRoleFamilies(params: {
+  focus: WorkoutCoachContext["selectedFocus"];
+  slotLabel: string;
+}): WorkoutSlotRole[][] {
+  if (params.focus === "upper_body") {
+    if (params.slotLabel === "main_push") {
+      return [
+        ["main_push"],
+        ["direct_triceps", "shoulder_accessory", "rear_delt_scapula"],
+        ["core", "recovery_light"],
+        ["optional_accessory"],
+      ];
+    }
+
+    if (params.slotLabel === "main_pull") {
+      return [
+        ["main_pull"],
+        ["rear_delt_scapula", "shoulder_accessory", "direct_biceps"],
+        ["core", "recovery_light"],
+        ["optional_accessory"],
+      ];
+    }
+
+    return [
+      ["direct_biceps", "direct_triceps", "shoulder_accessory", "rear_delt_scapula", "core"],
+      ["main_push", "main_pull"],
+      ["optional_accessory"],
+    ];
+  }
+
+  if (params.focus === "lower_body") {
+    if (params.slotLabel === "main_hinge") {
+      return [
+        ["main_hinge"],
+        ["main_squat", "unilateral_lower"],
+        ["core", "carry", "recovery_light"],
+        ["calves"],
+      ];
+    }
+
+    return [
+      ["main_squat", "unilateral_lower"],
+      ["main_hinge"],
+      ["core", "carry", "recovery_light"],
+      ["calves"],
+    ];
+  }
+
+  if (params.focus === "recovery_strength") {
+    if (params.slotLabel === "safe_pull_or_push") {
+      return [
+        ["main_pull", "main_push", "recovery_light"],
+        ["rear_delt_scapula", "shoulder_accessory", "core"],
+        ["carry", "rehab_control"],
+      ];
+    }
+
+    if (params.slotLabel === "safe_glute_or_hinge_light") {
+      return [
+        ["recovery_light", "main_hinge", "main_squat", "unilateral_lower"],
+        ["core", "carry", "rehab_control"],
+      ];
+    }
+
+    return [
+      ["core", "carry", "rehab_control"],
+      ["rear_delt_scapula", "recovery_light"],
+    ];
+  }
+
+  if (params.slotLabel === "main_pull") {
+    return [
+      ["main_pull"],
+      ["rear_delt_scapula", "shoulder_accessory", "direct_biceps"],
+      ["core", "carry", "recovery_light"],
+    ];
+  }
+
+  if (params.slotLabel === "main_push") {
+    return [
+      ["main_push"],
+      ["direct_triceps", "shoulder_accessory", "rear_delt_scapula"],
+      ["core", "recovery_light"],
+    ];
+  }
+
+  if (params.slotLabel === "main_lower" || params.slotLabel === "support_lower_or_core") {
+    return [
+      ["main_squat", "unilateral_lower", "main_hinge"],
+      ["core", "carry", "recovery_light"],
+    ];
+  }
+
+  return [
+    ["main_hinge", "main_squat", "unilateral_lower"],
+    ["core", "carry", "rear_delt_scapula", "recovery_light"],
+  ];
+}
+
+function getFeasibleAllowedRoles(params: {
+  slot: WorkoutSlot;
+  coachContext: WorkoutCoachContext;
+  availableExercises: ReturnType<typeof getAvailableExercises>;
+}) {
+  // Degraded/emergency contracts should stay focus-compatible, but must also
+  // acknowledge when the selected equipment makes the original role impossible.
+  if (
+    hasFeasibleRoleMatch({
+      availableExercises: params.availableExercises,
+      roles: params.slot.allowedRoles,
+    })
+  ) {
+    return params.slot.allowedRoles;
+  }
+
+  for (const roles of getFallbackRoleFamilies({
+    focus: params.coachContext.selectedFocus,
+    slotLabel: params.slot.label,
+  })) {
+    if (
+      hasFeasibleRoleMatch({
+        availableExercises: params.availableExercises,
+        roles,
+      })
+    ) {
+      return roles;
+    }
+  }
+
+  return params.slot.allowedRoles;
+}
+
 function buildUpperBodyContract(params: {
   templateId: string;
   goalConfig: TrainingGoalConfig;
@@ -96,6 +245,31 @@ function buildUpperBodyContract(params: {
       reason: "Överkroppspass behöver alltid en tydlig dragroll.",
     }),
   ];
+
+  if (params.targetSlotCount >= 3 && params.targetSlotCount < 4) {
+    slots.push(
+      createContractSlot({
+        templateId: params.templateId,
+        index: slots.length,
+        label: "support_upper_short",
+        role: "shoulder_accessory",
+        allowedRoles: [
+          "direct_biceps",
+          "direct_triceps",
+          "shoulder_accessory",
+          "rear_delt_scapula",
+          "core",
+        ],
+        required: true,
+        priority: 84,
+        minGoalSpecificity: 0,
+        allowRecoveryLight: true,
+        allowBodyweightFallback: true,
+        progressionHint: "maintenance",
+        reason: "Korta överkroppspass behöver en tredje fokuskompatibel slot så passet inte blir för tunt.",
+      }),
+    );
+  }
 
   if (params.targetSlotCount >= 4) {
     slots.push(
@@ -198,6 +372,26 @@ function buildLowerBodyContract(params: {
       reason: "Underkroppspass behöver alltid en hinge eller tydlig posterior-chain-roll.",
     }),
   ];
+
+  if (params.targetSlotCount >= 3 && params.targetSlotCount < 4) {
+    slots.push(
+      createContractSlot({
+        templateId: params.templateId,
+        index: slots.length,
+        label: "support_lower_short",
+        role: "unilateral_lower",
+        allowedRoles: ["unilateral_lower", "main_squat", "main_hinge", "core", "carry", "calves"],
+        required: true,
+        priority: 84,
+        preferredMovementPatterns: ["lunge", "squat", "hinge", "core", "carry"],
+        minGoalSpecificity: 0,
+        allowRecoveryLight: true,
+        allowBodyweightFallback: true,
+        progressionHint: "maintenance",
+        reason: "Korta underkroppspass behöver en tredje lower-kompatibel slot för att uppfylla minimum-kontraktet.",
+      }),
+    );
+  }
 
   if (params.targetSlotCount >= 4) {
     slots.push(
@@ -460,9 +654,11 @@ function buildRecoveryStrengthContract(params: {
 
 export function buildSlotContract(params: {
   coachContext: WorkoutCoachContext;
+  mode?: SlotContractMode;
 }): WorkoutSlotContract {
   const goalConfig = getTrainingGoalConfig(params.coachContext.goal);
-  const templateId = `${goalConfig.id}:${params.coachContext.selectedFocus}:${params.coachContext.durationMinutes}`;
+  const contractMode = params.mode ?? "full";
+  const templateId = `${goalConfig.id}:${params.coachContext.selectedFocus}:${params.coachContext.durationMinutes}:${contractMode}`;
   const targetSlotCount = clampSlotCount({
     durationMinutes: params.coachContext.durationMinutes,
     goal: params.coachContext.goal,
@@ -495,16 +691,33 @@ export function buildSlotContract(params: {
               targetSlotCount,
             });
 
-  return {
-    templateId,
-    goalConfigId: goalConfig.id,
-    targetSlotCount,
-    slots,
-  };
+  const contract =
+    contractMode === "full"
+      ? ({
+          templateId,
+          goalConfigId: goalConfig.id,
+          targetSlotCount,
+          mode: contractMode,
+          slots,
+        } satisfies WorkoutSlotContract)
+      : buildDegradedSlotContract({
+          baseContract: {
+            templateId,
+            goalConfigId: goalConfig.id,
+            targetSlotCount,
+            mode: "full",
+            slots,
+          },
+          coachContext: params.coachContext,
+          mode: contractMode,
+        });
+
+  return contract;
 }
 
 export function buildWorkoutSlotPlan(params: {
   coachContext: WorkoutCoachContext;
+  mode?: SlotContractMode;
 }) {
   const contract = buildSlotContract(params);
 
@@ -512,6 +725,188 @@ export function buildWorkoutSlotPlan(params: {
     templateId: contract.templateId,
     targetSlotCount: contract.targetSlotCount,
     goalConfig: getTrainingGoalConfig(params.coachContext.goal),
+    contractMode: contract.mode ?? params.mode ?? "full",
     slots: contract.slots,
+  };
+}
+
+function buildDegradedSlotContract(params: {
+  baseContract: WorkoutSlotContract;
+  coachContext: WorkoutCoachContext;
+  mode: Exclude<SlotContractMode, "full">;
+}): WorkoutSlotContract {
+  const { baseContract, coachContext, mode } = params;
+  const availableExercises = getAvailableExercises(coachContext.selectedEquipment);
+
+  const cloneSlot = (
+    slot: WorkoutSlot,
+    overrides: Partial<WorkoutSlot> = {},
+  ): WorkoutSlot => ({
+    ...slot,
+    ...overrides,
+    minGoalSpecificity: overrides.minGoalSpecificity ?? 0,
+    allowRecoveryLight: overrides.allowRecoveryLight ?? true,
+    allowBodyweightFallback: overrides.allowBodyweightFallback ?? true,
+  });
+
+  const cloneRelaxedSlot = (
+    slot: WorkoutSlot,
+    overrides: Partial<WorkoutSlot> = {},
+  ): WorkoutSlot => {
+    const allowedRoles =
+      overrides.allowedRoles ??
+      getFeasibleAllowedRoles({
+        slot: {
+          ...slot,
+          ...overrides,
+          allowedRoles: overrides.allowedRoles ?? slot.allowedRoles,
+        },
+        coachContext,
+        availableExercises,
+      });
+
+    return cloneSlot(slot, {
+      ...overrides,
+      allowedRoles,
+      role: overrides.role ?? allowedRoles[0] ?? slot.role,
+    });
+  };
+
+  const findSlot = (label: string) =>
+    baseContract.slots.find((slot) => slot.label === label) ?? null;
+
+  const degradedSlots: WorkoutSlot[] = [];
+
+  // Degraded contracts keep the minimum slot structure, while dropping
+  // optional protected roles that can make the full contract impossible.
+  if (coachContext.selectedFocus === "full_body") {
+    const lowerSlot = findSlot("main_lower");
+    const pushSlot = findSlot("main_push");
+    const pullSlot = findSlot("main_pull");
+    const supportSlot = findSlot("secondary_lower") ?? findSlot("core_or_carry");
+
+    if (lowerSlot) {
+      degradedSlots.push(
+        cloneRelaxedSlot(lowerSlot, {
+          required: true,
+          allowedRoles: ["main_squat", "unilateral_lower", "main_hinge"],
+          preferredMovementPatterns: ["squat", "lunge", "hinge"],
+        }),
+      );
+    }
+    if (pushSlot) degradedSlots.push(cloneRelaxedSlot(pushSlot, { required: true }));
+    if (pullSlot) degradedSlots.push(cloneRelaxedSlot(pullSlot, { required: true }));
+    if (supportSlot) {
+      degradedSlots.push(
+        cloneRelaxedSlot(supportSlot, {
+          label: "support_lower_or_core",
+          role: "main_hinge",
+          allowedRoles: ["main_hinge", "core", "carry", "rear_delt_scapula"],
+          required: true,
+          preferredMovementPatterns: ["hinge", "core", "carry"],
+        }),
+      );
+    }
+  } else if (coachContext.selectedFocus === "lower_body") {
+    const lowerSlot = findSlot("main_squat_or_unilateral");
+    const hingeSlot = findSlot("main_hinge");
+    const supportSlot = findSlot("secondary_lower") ?? findSlot("support_lower_short");
+    const optionalSlot = findSlot("core_or_carry") ?? findSlot("calves_or_posterior_chain");
+
+    if (lowerSlot) degradedSlots.push(cloneRelaxedSlot(lowerSlot, { required: true }));
+    if (hingeSlot) degradedSlots.push(cloneRelaxedSlot(hingeSlot, { required: true }));
+    if (supportSlot) {
+      degradedSlots.push(
+        cloneRelaxedSlot(supportSlot, {
+          required: true,
+          allowedRoles: ["unilateral_lower", "main_squat", "main_hinge", "recovery_light"],
+        }),
+      );
+    }
+    if (optionalSlot && mode === "emergency") {
+      degradedSlots.push(
+        cloneRelaxedSlot(optionalSlot, {
+          required: false,
+          allowedRoles: ["core", "carry", "calves", "main_hinge", "recovery_light"],
+        }),
+      );
+    }
+  } else if (coachContext.selectedFocus === "upper_body") {
+    const pushSlot = findSlot("main_push");
+    const pullSlot = findSlot("main_pull");
+    const supportSlot =
+      findSlot("secondary_push_or_pull") ??
+      findSlot("arm_or_shoulder") ??
+      findSlot("support_upper_short");
+
+    if (pushSlot) degradedSlots.push(cloneRelaxedSlot(pushSlot, { required: true }));
+    if (pullSlot) degradedSlots.push(cloneRelaxedSlot(pullSlot, { required: true }));
+    if (supportSlot) {
+      degradedSlots.push(
+        cloneRelaxedSlot(supportSlot, {
+          label: "support_upper",
+          role: "direct_triceps",
+          allowedRoles: [
+            "direct_biceps",
+            "direct_triceps",
+            "shoulder_accessory",
+            "rear_delt_scapula",
+            "core",
+          ],
+          required: true,
+        }),
+      );
+    }
+  } else {
+    const safeUpper = findSlot("safe_pull_or_push");
+    const safeLower = findSlot("safe_glute_or_hinge_light");
+    const safeSupport = findSlot("core_or_carry_or_control");
+
+    if (safeUpper) degradedSlots.push(cloneRelaxedSlot(safeUpper, { required: true }));
+    if (safeLower) degradedSlots.push(cloneRelaxedSlot(safeLower, { required: true }));
+    if (safeSupport) {
+      degradedSlots.push(
+        cloneRelaxedSlot(safeSupport, {
+          required: mode !== "emergency",
+          allowedRoles: ["core", "carry", "rehab_control", "rear_delt_scapula"],
+        }),
+      );
+    }
+  }
+
+  const finalSlots =
+    degradedSlots.length > 0
+      ? degradedSlots
+      : baseContract.slots.map((slot) =>
+          cloneSlot(slot, {
+            required: slot.required,
+          }),
+        );
+
+  // Minimum contract still needs enough slots to build a meaningful short session.
+  if (coachContext.durationMinutes >= 15 && finalSlots.length < 3) {
+    for (const slot of baseContract.slots) {
+      if (finalSlots.some((existing) => existing.label === slot.label)) {
+        continue;
+      }
+
+      finalSlots.push(
+        cloneSlot(slot, {
+          required: true,
+        }),
+      );
+
+      if (finalSlots.length >= 3) {
+        break;
+      }
+    }
+  }
+
+  return {
+    templateId: baseContract.templateId,
+    goalConfigId: baseContract.goalConfigId,
+    targetSlotCount: finalSlots.length,
+    mode,
+    slots: finalSlots,
   };
 }

@@ -35,6 +35,7 @@ import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
+import { saveGeneratedWorkout } from "@/lib/workout-storage";
 import { generateWorkout } from "@/lib/workout-generator";
 
 const WEEKDAY_OPTIONS: Array<{ value: Weekday; label: string }> = [
@@ -429,6 +430,14 @@ export default function WeeklyPlanPage() {
       });
 
       saveWorkoutDraft(userId, {
+        ...workout,
+        duration: weeklyPlanStatus.suggestedNextDurationMinutes,
+        gym: gymId,
+        gymLabel,
+        availableEquipment: equipment,
+        plannedFocus: recommendedFocus,
+      });
+      saveGeneratedWorkout(userId, {
         ...workout,
         duration: weeklyPlanStatus.suggestedNextDurationMinutes,
         gym: gymId,

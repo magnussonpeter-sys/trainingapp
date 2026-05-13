@@ -30,6 +30,7 @@ import {
   type SportFocus,
 } from "@/types/training-profile";
 import type { Workout, WorkoutFocus } from "@/types/workout";
+import type { WorkoutGenerationMode } from "@/lib/workout-generation/types";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -43,6 +44,7 @@ export type UserSettingsSummary = {
   experience_level?: string | null;
   training_goal?: string | null;
   sport_focus?: SportFocus | null;
+  generation_mode?: WorkoutGenerationMode | null;
   avoid_supersets?: boolean | null;
   superset_preference?: "allowed" | "avoid_all" | "avoid_all_dumbbell" | null;
   primary_priority_muscle?: string | null;

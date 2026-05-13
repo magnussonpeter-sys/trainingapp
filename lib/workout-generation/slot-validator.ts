@@ -3,48 +3,17 @@ import type {
   SlotExerciseSelection,
   WorkoutCoachContext,
   WorkoutSlot,
-  WorkoutSlotRole,
 } from "@/lib/workout-generation/types";
 
-function getRequiredCoverageSummary(params: {
-  focus: WorkoutCoachContext["selectedFocus"];
-  selectedRoles: WorkoutSlotRole[];
+function getContractCoverageSummary(params: {
   durationMinutes: number;
 }) {
   const reasons: string[] = [];
-  const roles = new Set(params.selectedRoles);
 
-  if (params.durationMinutes >= 15 && params.selectedRoles.length < 3) {
+  // Slot-kontraktet avgör vilka roller som krävs. Här lägger vi bara på
+  // generella minimikrav som gäller oavsett fokus eller kontraktsläge.
+  if (params.durationMinutes >= 15) {
     reasons.push("too_few_exercises_for_duration");
-  }
-
-  if (params.focus === "upper_body") {
-    if (!roles.has("main_push")) reasons.push("missing_main_push");
-    if (!roles.has("main_pull")) reasons.push("missing_main_pull");
-  } else if (params.focus === "lower_body") {
-    if (!(roles.has("main_squat") || roles.has("unilateral_lower"))) {
-      reasons.push("missing_lower_base");
-    }
-    if (!roles.has("main_hinge")) {
-      reasons.push("missing_hinge_or_glute");
-    }
-  } else if (params.focus === "recovery_strength") {
-    if (!(roles.has("main_pull") || roles.has("main_push"))) {
-      reasons.push("missing_light_pull_or_push");
-    }
-    if (!(roles.has("recovery_light") || roles.has("main_hinge") || roles.has("main_squat"))) {
-      reasons.push("missing_light_glute_or_hinge");
-    }
-    if (!(roles.has("core") || roles.has("carry") || roles.has("rehab_control"))) {
-      reasons.push("missing_light_core_or_control");
-    }
-  } else {
-    if (!(roles.has("main_squat") || roles.has("unilateral_lower"))) {
-      reasons.push("missing_full_body_lower");
-    }
-    if (!roles.has("main_push")) reasons.push("missing_full_body_push");
-    if (!roles.has("main_pull")) reasons.push("missing_full_body_pull");
-    if (!roles.has("main_hinge")) reasons.push("missing_full_body_hinge");
   }
 
   return reasons;
@@ -103,11 +72,11 @@ export function validateSlotWorkout(params: {
 
   const safetyGateReasons = [
     ...contractViolations,
-    ...getRequiredCoverageSummary({
-      focus: params.coachContext.selectedFocus,
-      selectedRoles,
-      durationMinutes: params.coachContext.durationMinutes,
-    }),
+    ...(params.selections.length < 3
+      ? getContractCoverageSummary({
+          durationMinutes: params.coachContext.durationMinutes,
+        })
+      : []),
   ];
 
   const slotValidationPassed = safetyGateReasons.length === 0;

@@ -5,6 +5,7 @@ import {
   type SportFocus,
   type TrainingGoal,
 } from "@/types/training-profile";
+import type { WorkoutGenerationMode } from "@/lib/workout-generation/types";
 
 type CachedPriorityMuscle =
   | "chest"
@@ -26,6 +27,7 @@ type CachedSupersetPreference =
 type HomeSettingsCacheValue = {
   training_goal?: TrainingGoal | null;
   sport_focus?: SportFocus | null;
+  generation_mode?: WorkoutGenerationMode | null;
   avoid_supersets?: boolean | null;
   superset_preference?: CachedSupersetPreference | null;
   primary_priority_muscle?: CachedPriorityMuscle | null;
@@ -67,6 +69,14 @@ function isCachedSupersetPreference(
   );
 }
 
+function isCachedGenerationMode(value: unknown): value is WorkoutGenerationMode {
+  return (
+    value === "legacy_ai_chain" ||
+    value === "slot_based_v1" ||
+    value === "hybrid"
+  );
+}
+
 function getStorageKey(userId: string) {
   return `home_settings_cache:${userId}`;
 }
@@ -86,6 +96,7 @@ export function getCachedHomeSettings(userId: string) {
     const parsed = JSON.parse(raw) as {
       training_goal?: unknown;
       sport_focus?: unknown;
+      generation_mode?: unknown;
       avoid_supersets?: unknown;
       superset_preference?: unknown;
       primary_priority_muscle?: unknown;
@@ -98,6 +109,9 @@ export function getCachedHomeSettings(userId: string) {
         ? parsed.training_goal
         : null,
       sport_focus: isSportFocus(parsed.sport_focus) ? parsed.sport_focus : null,
+      generation_mode: isCachedGenerationMode(parsed.generation_mode)
+        ? parsed.generation_mode
+        : null,
       avoid_supersets:
         typeof parsed.avoid_supersets === "boolean"
           ? parsed.avoid_supersets

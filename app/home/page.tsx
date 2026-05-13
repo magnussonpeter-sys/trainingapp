@@ -45,7 +45,7 @@ import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 import { getPendingSyncQueue } from "@/lib/workout-flow/pending-sync-store";
-import { getActiveWorkout } from "@/lib/workout-storage";
+import { getActiveWorkout, saveGeneratedWorkout } from "@/lib/workout-storage";
 import {
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
@@ -784,6 +784,7 @@ function TodayFocusCard(props: {
   selectedGymId: string;
   onSelectGym: (value: string) => void;
   recommendedDurationMinutes: number;
+  actionDurationMinutes: number;
   onAction: () => void;
   isGenerating: boolean;
   hasActiveWorkout: boolean;
@@ -820,7 +821,7 @@ function TodayFocusCard(props: {
 
           <div className="mt-5 flex flex-wrap gap-2.5">
             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900">
-              {props.recommendedDurationMinutes} min
+              {props.actionDurationMinutes} min
             </span>
             <button
               type="button"
@@ -1090,6 +1091,7 @@ function QuickStartCard(props: {
 
           <div className="space-y-3">
             <select
+              id="home-duration-preset"
               value={props.selectedDurationPreset}
               onChange={(event) => props.setSelectedDurationPreset(event.target.value)}
               className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
@@ -1104,6 +1106,7 @@ function QuickStartCard(props: {
 
             {props.selectedDurationPreset === "custom" ? (
               <input
+                id="home-duration-custom-input"
                 type="number"
                 min={5}
                 max={180}
@@ -1488,6 +1491,8 @@ export default function HomePage() {
   const [serverWeeklyPlanStatus, setServerWeeklyPlanStatus] = useState<WeeklyPlanStatus | null>(null);
   const [serverWeeklyPlanContext, setServerWeeklyPlanContext] = useState<WeeklyPlanContext | null>(null);
   const hasAppliedInitialGymRef = useRef(false);
+  const selectedDurationPresetRef = useRef<string>("30");
+  const customDurationInputRef = useRef<string>("");
 
   const gymOptions = useMemo(() => {
     const normalizedGyms = (gyms as GymWithEquipment[]) ?? [];
@@ -1513,6 +1518,31 @@ export default function HomePage() {
 
     return clampDuration(Number(selectedDurationPreset));
   }, [customDurationInput, selectedDurationPreset]);
+
+  useEffect(() => {
+    selectedDurationPresetRef.current = selectedDurationPreset;
+    customDurationInputRef.current = customDurationInput;
+  }, [customDurationInput, selectedDurationPreset]);
+
+  function getCurrentRequestedDurationMinutes() {
+    const presetElement =
+      typeof document !== "undefined"
+        ? (document.getElementById("home-duration-preset") as HTMLSelectElement | null)
+        : null;
+    const customElement =
+      typeof document !== "undefined"
+        ? (document.getElementById("home-duration-custom-input") as HTMLInputElement | null)
+        : null;
+    const activePreset = presetElement?.value?.trim() || selectedDurationPresetRef.current;
+
+    if (activePreset === "custom") {
+      const activeCustomDuration =
+        customElement?.value?.trim() || customDurationInputRef.current;
+      return clampDuration(Number(activeCustomDuration));
+    }
+
+    return clampDuration(Number(activePreset));
+  }
 
   const weeklyStructure = useMemo(() => {
     return buildWeeklyWorkoutStructure({
@@ -1802,7 +1832,8 @@ export default function HomePage() {
         weeklyPlanStatus,
         weeklyStructure,
       });
-      const requestedDuration = homeRecommendation.durationMinutes;
+      // Use the user's explicit duration selection when generating the workout.
+      const requestedDuration = getCurrentRequestedDurationMinutes();
 
       const { workout } = await generateWorkout({
         userId,
@@ -1848,7 +1879,7 @@ export default function HomePage() {
         workoutFocusTag: homeRecommendation.focus,
         request: {
           goal,
-          durationMinutes,
+          durationMinutes: requestedDuration,
           equipment,
           gym: gymId,
           gymLabel,
@@ -1884,6 +1915,14 @@ export default function HomePage() {
 
       // Spara draft innan preview öppnas så run/preview kan återta samma flöde.
       saveWorkoutDraft(userId, {
+        ...workout,
+        duration: requestedDuration,
+        gym: gymId,
+        gymLabel,
+        availableEquipment: equipment,
+        plannedFocus: homeRecommendation.plannedFocus,
+      });
+      saveGeneratedWorkout(userId, {
         ...workout,
         duration: requestedDuration,
         gym: gymId,
@@ -1936,7 +1975,8 @@ export default function HomePage() {
         weeklyPlanStatus,
         weeklyStructure,
       });
-      const quickDuration = homeRecommendation.durationMinutes;
+      // Quick start should honor the same selected duration as preview generation.
+      const quickDuration = getCurrentRequestedDurationMinutes();
 
       const { workout } = await generateWorkout({
         userId,
@@ -2025,6 +2065,14 @@ export default function HomePage() {
         availableEquipment: equipment,
         plannedFocus: homeRecommendation.plannedFocus,
       });
+      saveGeneratedWorkout(userId, {
+        ...workout,
+        duration: quickDuration,
+        gym: gymId,
+        gymLabel,
+        availableEquipment: equipment,
+        plannedFocus: homeRecommendation.plannedFocus,
+      });
 
       router.push(`/workout/run?userId=${encodeURIComponent(userId)}`);
     } catch (error) {
@@ -2098,6 +2146,7 @@ export default function HomePage() {
           selectedGymId={selectedGymId}
           onSelectGym={handleSelectedGymChange}
           recommendedDurationMinutes={homeRecommendation.durationMinutes}
+          actionDurationMinutes={durationMinutes}
           onAction={handleQuickStartTodayWorkout}
           isGenerating={isGenerating}
           hasActiveWorkout={Boolean(activeWorkout)}
@@ -2120,11 +2169,13 @@ export default function HomePage() {
           selectedDurationPreset={selectedDurationPreset}
           setSelectedDurationPreset={(value) => {
             setHasManualDurationChoice(true);
+            selectedDurationPresetRef.current = value;
             setSelectedDurationPreset(value);
           }}
           customDurationInput={customDurationInput}
           setCustomDurationInput={(value) => {
             setHasManualDurationChoice(true);
+            customDurationInputRef.current = value;
             setCustomDurationInput(value);
           }}
           durationMinutes={durationMinutes}

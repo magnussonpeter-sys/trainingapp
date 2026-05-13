@@ -56,6 +56,7 @@ async function getUserSettingsSummary(userId: string) {
         experience_level,
         training_goal,
         sport_focus,
+        generation_mode,
         avoid_supersets,
         superset_preference,
         primary_priority_muscle,
@@ -172,7 +173,12 @@ export async function POST(req: Request) {
         )
       : [];
     const focusMuscles = normalizeFocusMuscles(body.focusMuscles);
-    const generationMode = normalizeWorkoutGenerationMode(body.generationMode);
+    const requestedGenerationMode =
+      body.generationMode === "legacy_ai_chain" ||
+      body.generationMode === "slot_based_v1" ||
+      body.generationMode === "hybrid"
+        ? body.generationMode
+        : null;
     const selectedPlanMode =
       body.selectedPlanMode === "normal_training" ||
       body.selectedPlanMode === "recovery" ||
@@ -195,6 +201,9 @@ export async function POST(req: Request) {
           getWorkoutLogsByUser(userId, 80),
         ])
       : [null, []];
+    const generationMode = normalizeWorkoutGenerationMode(
+      requestedGenerationMode ?? settings?.generation_mode ?? null,
+    );
 
     const result = await generateWorkoutWithMode({
       goal,

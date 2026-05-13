@@ -48,6 +48,8 @@ export type SlotProgressionHint =
   | "maintenance"
   | "rehab";
 
+export type SlotContractMode = "full" | "degraded" | "emergency";
+
 export type WorkoutSlot = {
   id: string;
   label: string;
@@ -73,6 +75,7 @@ export type WorkoutSlotContract = {
   templateId: string;
   goalConfigId: string;
   targetSlotCount: number;
+  mode?: SlotContractMode;
   slots: WorkoutSlot[];
 };
 
@@ -218,6 +221,18 @@ export type SlotExerciseSelection = {
 };
 
 export type SlotWorkoutDebug = {
+  feasible: boolean;
+  infeasibleReasons: string[];
+  missingRoles: WorkoutSlotRole[];
+  availableRoles: WorkoutSlotRole[];
+  equipmentLimitations: string[];
+  selectedFallbackStrategy:
+    | "full_contract"
+    | "degraded_contract"
+    | "emergency_contract"
+    | "friendly_error";
+  contractBeforeFeasibility: WorkoutSlot[];
+  contractAfterFeasibility: WorkoutSlot[];
   selectedGoalConfig: string;
   coachDecision: {
     reason: string;
@@ -247,6 +262,27 @@ export type SlotWorkoutDebug = {
   rejectedCandidatesTopReasons: Record<string, string[]>;
   slotCandidateCounts: Record<string, number>;
   rejectedCandidatesBySlot: Record<string, string[]>;
+  contractFailureStage:
+    | "candidate_collection"
+    | "slot_scoring"
+    | "ai_slot_selection"
+    | "validation_after_normalization"
+    | "restore_first"
+    | "role_equivalent_repair"
+    | "degraded_contract"
+    | "catalog_safe_template"
+    | "final_validation"
+    | "simulation_fallback"
+    | null;
+  failedSlots: string[];
+  optionalSlots: string[];
+  failedRoleFamilies: string[];
+  candidatesPerFailedSlot: Record<string, RankedExerciseCandidate[]>;
+  rejectedCandidatesPerFailedSlot: Record<string, RankedExerciseCandidate[]>;
+  rejectedBecauseEquipment: string[];
+  rejectedBecauseRecovery: string[];
+  rejectedBecauseRoleMismatch: string[];
+  rejectedBecauseRisk: string[];
   slotValidationPassed: boolean;
   missingRequiredSlots: string[];
   invalidSlotExercises: string[];
@@ -267,6 +303,16 @@ export type SlotWorkoutDebug = {
   slotFailureReasons: string[];
   safeTemplateUsed: boolean;
   safeTemplateReason: string | null;
+  safeTemplateAttempted: boolean;
+  safeTemplateExercises: string[];
+  safeTemplateRejectedReason: string | null;
+  degradedContractAttempted: boolean;
+  degradedContractSlots: string[];
+  degradedContractRejectedReason: string | null;
+  acceptedWithDegradedContract: boolean;
+  acceptedWithWarnings: boolean;
+  warningReasons: string[];
+  fallbackMockReason: string | null;
   slotAiRequested: boolean;
   slotAiUsed: boolean;
   slotAiModel: string | null;
@@ -282,7 +328,11 @@ export type SlotWorkoutDebug = {
   sportFocusProtectedRoles: WorkoutSlotRole[];
   slotRecoveryModificationSummary: string[];
   safetyGateReasons: string[];
-  fallbackMode: "none" | "safe_template";
+  fallbackMode:
+    | "none"
+    | "safe_template"
+    | "catalog_safe_template"
+    | "catalog_emergency_template";
   contractGateTriggered: boolean;
   contractGateReason: string[];
   retryAttempted: boolean;

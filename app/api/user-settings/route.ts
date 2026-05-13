@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { requireAuthorizedUserId } from "@/lib/server-auth";
 import { normalizeSportFocus } from "@/types/training-profile";
+import { normalizeWorkoutGenerationMode } from "@/lib/workout-generation/types";
 
 async function ensureUserSettingsColumns() {
   await pool.query(`
@@ -29,6 +30,10 @@ async function ensureUserSettingsColumns() {
     ADD COLUMN IF NOT EXISTS sport_focus TEXT NOT NULL DEFAULT 'none'
   `);
   await pool.query(`
+    ALTER TABLE user_settings
+    ADD COLUMN IF NOT EXISTS generation_mode TEXT NOT NULL DEFAULT 'legacy_ai_chain'
+  `);
+  await pool.query(`
     UPDATE user_settings
     SET sport_focus = CASE
       WHEN sport_focus = 'skiing' THEN 'alpine_skiing'
@@ -46,6 +51,14 @@ async function ensureUserSettingsColumns() {
         'general_athletic'
       ) THEN 'none'
       ELSE sport_focus
+    END
+  `);
+  await pool.query(`
+    UPDATE user_settings
+    SET generation_mode = CASE
+      WHEN generation_mode IS NULL THEN 'legacy_ai_chain'
+      WHEN generation_mode NOT IN ('legacy_ai_chain', 'slot_based_v1', 'hybrid') THEN 'legacy_ai_chain'
+      ELSE generation_mode
     END
   `);
 }
@@ -125,13 +138,17 @@ export async function POST(req: NextRequest) {
           ? "avoid_all"
           : "allowed";
     const normalizedSportFocus = normalizeSportFocus(sport_focus);
+    const normalizedGenerationMode = normalizeWorkoutGenerationMode(
+      body.generation_mode,
+      "legacy_ai_chain",
+    );
 
     const result = await pool.query(
       `
       INSERT INTO user_settings (
-        user_id, sex, age, weight_kg, height_cm, experience_level, training_goal, sport_focus, avoid_supersets, superset_preference, primary_priority_muscle, secondary_priority_muscle, tertiary_priority_muscle
+        user_id, sex, age, weight_kg, height_cm, experience_level, training_goal, sport_focus, generation_mode, avoid_supersets, superset_preference, primary_priority_muscle, secondary_priority_muscle, tertiary_priority_muscle
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
       ON CONFLICT (user_id)
       DO UPDATE SET
         sex = EXCLUDED.sex,
@@ -141,6 +158,7 @@ export async function POST(req: NextRequest) {
         experience_level = EXCLUDED.experience_level,
         training_goal = EXCLUDED.training_goal,
         sport_focus = EXCLUDED.sport_focus,
+        generation_mode = EXCLUDED.generation_mode,
         avoid_supersets = EXCLUDED.avoid_supersets,
         superset_preference = EXCLUDED.superset_preference,
         primary_priority_muscle = EXCLUDED.primary_priority_muscle,
@@ -158,6 +176,7 @@ export async function POST(req: NextRequest) {
         experience_level,
         training_goal,
         normalizedSportFocus,
+        normalizedGenerationMode,
         normalizedSupersetPreference === "avoid_all",
         normalizedSupersetPreference,
         primary_priority_muscle ?? null,

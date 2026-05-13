@@ -9,6 +9,7 @@ import { saveCachedHomeSettings } from "@/lib/home-settings-cache";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
+import type { WorkoutGenerationMode } from "@/lib/workout-generation/types";
 import type {
   SportFocus,
   TrainingGoal,
@@ -47,6 +48,7 @@ type UserSettingsResponse = {
     experience_level?: Experience | null;
     training_goal?: TrainingGoal | null;
     sport_focus?: SportFocus | null;
+    generation_mode?: WorkoutGenerationMode | null;
     avoid_supersets?: boolean | null;
     superset_preference?: SupersetPreference | null;
     primary_priority_muscle?: PriorityMuscle | null;
@@ -161,6 +163,8 @@ export default function SettingsPage() {
   const [experience, setExperience] = useState("");
   const [goal, setGoal] = useState("");
   const [sportFocus, setSportFocus] = useState<SportFocus>("none");
+  const [generationMode, setGenerationMode] =
+    useState<WorkoutGenerationMode>("legacy_ai_chain");
   const [supersetPreference, setSupersetPreference] =
     useState<SupersetPreference>("allowed");
   const [priorityMuscles, setPriorityMuscles] = useState<PriorityMuscle[]>([]);
@@ -250,6 +254,12 @@ export default function SettingsPage() {
           setExperience(s.experience_level ?? "");
           setGoal(s.training_goal ?? "");
           setSportFocus(s.sport_focus ?? "none");
+          setGenerationMode(
+            s.generation_mode === "slot_based_v1" ||
+              s.generation_mode === "hybrid"
+              ? s.generation_mode
+              : "legacy_ai_chain",
+          );
           setSupersetPreference(
             s.superset_preference === "allowed" ||
               s.superset_preference === "avoid_all" ||
@@ -366,6 +376,7 @@ export default function SettingsPage() {
           experience_level: experience || null,
           training_goal: goal || null,
           sport_focus: sportFocus,
+          generation_mode: generationMode,
           avoid_supersets: supersetPreference === "avoid_all",
           superset_preference: supersetPreference,
           primary_priority_muscle: primaryPriorityMuscle,
@@ -383,6 +394,7 @@ export default function SettingsPage() {
       saveCachedHomeSettings(userId, {
         training_goal: (goal || null) as TrainingGoal | null,
         sport_focus: sportFocus,
+        generation_mode: generationMode,
         avoid_supersets: supersetPreference === "avoid_all",
         superset_preference: supersetPreference,
         primary_priority_muscle: primaryPriorityMuscle,
@@ -756,6 +768,59 @@ export default function SettingsPage() {
                 </p>
               </div>
             )}
+          </div>
+        </section>
+
+        <section className={cn(uiCardClasses.section, uiCardClasses.sectionPadded)}>
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">
+                Passmotor
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Välj vilken passgenerator som ska användas som standard i appen.
+                Legacy är stabilast. Slot-baserad v1 är den nya modellen som vi
+                utvecklar vidare.
+              </p>
+            </div>
+
+            <div className="grid gap-3">
+              {[
+                {
+                  value: "legacy_ai_chain" as WorkoutGenerationMode,
+                  title: "Legacy AI-kedja",
+                  description:
+                    "Nuvarande standardkedja. Mest beprövad och bäst fallback-kompatibilitet.",
+                },
+                {
+                  value: "slot_based_v1" as WorkoutGenerationMode,
+                  title: "Slot-baserad v1",
+                  description:
+                    "Nyare modell med tydligare passstruktur och starkare slot-kontrakt.",
+                },
+              ].map((option) => {
+                const selected = generationMode === option.value;
+
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setGenerationMode(option.value)}
+                    className={cn(
+                      "rounded-[24px] border p-4 text-left transition",
+                      selected
+                        ? "border-lime-500 bg-lime-100 shadow-sm"
+                        : "border-slate-200 bg-white hover:bg-slate-50",
+                    )}
+                  >
+                    <div className="font-semibold text-slate-950">{option.title}</div>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {option.description}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </section>
 

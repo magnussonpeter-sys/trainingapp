@@ -33,9 +33,21 @@ export function attachWorkoutGenerationDebug(params: {
         ...(params.slotDebug
           ? {
               slotModel: {
+                feasible: params.slotDebug.feasible,
+                infeasibleReasons: params.slotDebug.infeasibleReasons,
+                missingRoles: params.slotDebug.missingRoles,
+                availableRoles: params.slotDebug.availableRoles,
+                equipmentLimitations: params.slotDebug.equipmentLimitations,
+                selectedFallbackStrategy:
+                  params.slotDebug.selectedFallbackStrategy,
+                contractBeforeFeasibility:
+                  params.slotDebug.contractBeforeFeasibility,
+                contractAfterFeasibility:
+                  params.slotDebug.contractAfterFeasibility,
                 contractSlots: params.slotDebug.contractSlots,
                 requiredSlots: params.slotDebug.requiredSlots,
                 protectedSlots: params.slotDebug.protectedSlots,
+                optionalSlots: params.slotDebug.optionalSlots,
                 candidatesPerSlot: params.slotDebug.candidatesPerSlot,
                 selectedPerSlot: params.slotDebug.selectedExercisePerSlot,
                 selectedScorePerSlot: params.slotDebug.selectedScorePerSlot,
@@ -43,11 +55,37 @@ export function attachWorkoutGenerationDebug(params: {
                 rejectedCandidatesTopReasons:
                   params.slotDebug.rejectedCandidatesTopReasons,
                 contractViolations: params.slotDebug.contractViolations,
+                contractFailureStage: params.slotDebug.contractFailureStage,
+                failedSlots: params.slotDebug.failedSlots,
+                failedRoleFamilies: params.slotDebug.failedRoleFamilies,
+                candidatesPerFailedSlot: params.slotDebug.candidatesPerFailedSlot,
+                rejectedCandidatesPerFailedSlot:
+                  params.slotDebug.rejectedCandidatesPerFailedSlot,
+                rejectedBecauseEquipment:
+                  params.slotDebug.rejectedBecauseEquipment,
+                rejectedBecauseRecovery: params.slotDebug.rejectedBecauseRecovery,
+                rejectedBecauseRoleMismatch:
+                  params.slotDebug.rejectedBecauseRoleMismatch,
+                rejectedBecauseRisk: params.slotDebug.rejectedBecauseRisk,
                 repairedSlots: params.slotDebug.repairedSlots,
                 repairLog: params.slotDebug.repairLog,
                 fallbackMode:
                   params.slotDebug.fallbackMode ??
                   (params.slotDebug.safeTemplateUsed ? "safe_template" : "none"),
+                safeTemplateAttempted: params.slotDebug.safeTemplateAttempted,
+                safeTemplateExercises: params.slotDebug.safeTemplateExercises,
+                safeTemplateRejectedReason:
+                  params.slotDebug.safeTemplateRejectedReason,
+                degradedContractAttempted:
+                  params.slotDebug.degradedContractAttempted,
+                degradedContractSlots: params.slotDebug.degradedContractSlots,
+                degradedContractRejectedReason:
+                  params.slotDebug.degradedContractRejectedReason,
+                acceptedWithDegradedContract:
+                  params.slotDebug.acceptedWithDegradedContract,
+                acceptedWithWarnings: params.slotDebug.acceptedWithWarnings,
+                warningReasons: params.slotDebug.warningReasons,
+                fallbackMockReason: params.slotDebug.fallbackMockReason,
                 contractGateTriggered: params.slotDebug.contractGateTriggered,
                 contractGateReason: params.slotDebug.contractGateReason,
                 finalContractPassed: params.slotDebug.finalContractPassed,
@@ -73,6 +111,17 @@ export function attachWorkoutGenerationDebug(params: {
         ...(params.slotDebug
           ? {
               selectedGoalConfig: params.slotDebug.selectedGoalConfig,
+              feasible: params.slotDebug.feasible,
+              infeasibleReasons: params.slotDebug.infeasibleReasons,
+              missingRoles: params.slotDebug.missingRoles,
+              availableRoles: params.slotDebug.availableRoles,
+              equipmentLimitations: params.slotDebug.equipmentLimitations,
+              selectedFallbackStrategy:
+                params.slotDebug.selectedFallbackStrategy,
+              contractBeforeFeasibility:
+                params.slotDebug.contractBeforeFeasibility,
+              contractAfterFeasibility:
+                params.slotDebug.contractAfterFeasibility,
               coachDecision: params.slotDebug.coachDecision,
               selectedFocus: params.slotDebug.coachDecision.selectedFocus,
               slotTemplateId: params.slotDebug.slotTemplateId,
@@ -90,11 +139,38 @@ export function attachWorkoutGenerationDebug(params: {
                 params.slotDebug.rejectedCandidatesTopReasons,
               slotCandidateCounts: params.slotDebug.slotCandidateCounts,
               rejectedCandidatesBySlot: params.slotDebug.rejectedCandidatesBySlot,
+              contractFailureStage: params.slotDebug.contractFailureStage,
+              failedSlots: params.slotDebug.failedSlots,
+              optionalSlots: params.slotDebug.optionalSlots,
+              failedRoleFamilies: params.slotDebug.failedRoleFamilies,
+              candidatesPerFailedSlot: params.slotDebug.candidatesPerFailedSlot,
+              rejectedCandidatesPerFailedSlot:
+                params.slotDebug.rejectedCandidatesPerFailedSlot,
+              rejectedBecauseEquipment:
+                params.slotDebug.rejectedBecauseEquipment,
+              rejectedBecauseRecovery: params.slotDebug.rejectedBecauseRecovery,
+              rejectedBecauseRoleMismatch:
+                params.slotDebug.rejectedBecauseRoleMismatch,
+              rejectedBecauseRisk: params.slotDebug.rejectedBecauseRisk,
               contractViolations: params.slotDebug.contractViolations,
               repairedSlots: params.slotDebug.repairedSlots,
               repairLog: params.slotDebug.repairLog,
               slotFailureReasons: params.slotDebug.slotFailureReasons,
               fallbackMode: params.slotDebug.fallbackMode,
+              safeTemplateAttempted: params.slotDebug.safeTemplateAttempted,
+              safeTemplateExercises: params.slotDebug.safeTemplateExercises,
+              safeTemplateRejectedReason:
+                params.slotDebug.safeTemplateRejectedReason,
+              degradedContractAttempted:
+                params.slotDebug.degradedContractAttempted,
+              degradedContractSlots: params.slotDebug.degradedContractSlots,
+              degradedContractRejectedReason:
+                params.slotDebug.degradedContractRejectedReason,
+              acceptedWithDegradedContract:
+                params.slotDebug.acceptedWithDegradedContract,
+              acceptedWithWarnings: params.slotDebug.acceptedWithWarnings,
+              warningReasons: params.slotDebug.warningReasons,
+              fallbackMockReason: params.slotDebug.fallbackMockReason,
               contractGateTriggered: params.slotDebug.contractGateTriggered,
               contractGateReason: params.slotDebug.contractGateReason,
               retryAttempted: params.slotDebug.retryAttempted,

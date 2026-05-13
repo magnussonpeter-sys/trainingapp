@@ -107,12 +107,49 @@ function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
 function getGenerationEngineDebug(workout: {
   aiDebug?: {
     generationContext?: unknown;
+    validation?: unknown;
   };
 }) {
   const context =
     workout.aiDebug?.generationContext &&
     typeof workout.aiDebug.generationContext === "object"
       ? (workout.aiDebug.generationContext as Record<string, unknown>)
+      : null;
+
+  const derivedSlotModel =
+    context &&
+    typeof context === "object" &&
+    (Array.isArray((context as Record<string, unknown>).contractSlots) ||
+      typeof (context as Record<string, unknown>).contractGateTriggered === "boolean")
+      ? {
+          contractSlots: (context as Record<string, unknown>).contractSlots,
+          requiredSlots: (context as Record<string, unknown>).requiredSlots,
+          protectedSlots: (context as Record<string, unknown>).protectedSlots,
+          selectedPerSlot:
+            (context as Record<string, unknown>).selectedExercisePerSlot,
+          selectedScorePerSlot:
+            (context as Record<string, unknown>).selectedScorePerSlot,
+          rejectedCandidatesTopReasons:
+            (context as Record<string, unknown>).rejectedCandidatesTopReasons,
+          contractViolations:
+            (context as Record<string, unknown>).contractViolations,
+          contractGateTriggered:
+            (context as Record<string, unknown>).contractGateTriggered,
+          contractGateReason:
+            (context as Record<string, unknown>).contractGateReason,
+          finalContractPassed:
+            (context as Record<string, unknown>).finalContractPassed,
+          fallbackMode: (context as Record<string, unknown>).fallbackMode,
+          repairLog: (context as Record<string, unknown>).repairLog,
+          safeTemplateUsed:
+            (context as Record<string, unknown>).safeTemplateUsed,
+          safeTemplateReason:
+            (context as Record<string, unknown>).safeTemplateReason,
+          degradedContractAttempted:
+            (context as Record<string, unknown>).degradedContractAttempted,
+          acceptedWithDegradedContract:
+            (context as Record<string, unknown>).acceptedWithDegradedContract,
+        }
       : null;
 
   return {
@@ -133,7 +170,64 @@ function getGenerationEngineDebug(workout: {
       context.generationFallbackReason.trim()
         ? context.generationFallbackReason
         : null,
+    slotModel:
+      workout.aiDebug?.validation &&
+      typeof workout.aiDebug.validation === "object" &&
+      "slotModel" in (workout.aiDebug.validation as Record<string, unknown>)
+        ? ((workout.aiDebug.validation as Record<string, unknown>).slotModel as
+            | Record<string, unknown>
+            | null)
+        : derivedSlotModel,
   };
+}
+
+function getSlotModelDebugFromWorkout(workout: {
+  aiDebug?: {
+    generationContext?: unknown;
+    validation?: unknown;
+  };
+}) {
+  const validation =
+    workout.aiDebug?.validation && typeof workout.aiDebug.validation === "object"
+      ? (workout.aiDebug.validation as Record<string, unknown>)
+      : null;
+
+  if (validation?.slotModel && typeof validation.slotModel === "object") {
+    return validation.slotModel as Record<string, unknown>;
+  }
+
+  const context =
+    workout.aiDebug?.generationContext &&
+    typeof workout.aiDebug.generationContext === "object"
+      ? (workout.aiDebug.generationContext as Record<string, unknown>)
+      : null;
+
+  if (!context) {
+    return null;
+  }
+
+  if (!Array.isArray(context.contractSlots) && typeof context.contractGateTriggered !== "boolean") {
+    return null;
+  }
+
+  return {
+    contractSlots: context.contractSlots,
+    requiredSlots: context.requiredSlots,
+    protectedSlots: context.protectedSlots,
+    selectedPerSlot: context.selectedExercisePerSlot,
+    selectedScorePerSlot: context.selectedScorePerSlot,
+    rejectedCandidatesTopReasons: context.rejectedCandidatesTopReasons,
+    contractViolations: context.contractViolations,
+    contractGateTriggered: context.contractGateTriggered,
+    contractGateReason: context.contractGateReason,
+    finalContractPassed: context.finalContractPassed,
+    fallbackMode: context.fallbackMode,
+    repairLog: context.repairLog,
+    safeTemplateUsed: context.safeTemplateUsed,
+    safeTemplateReason: context.safeTemplateReason,
+    degradedContractAttempted: context.degradedContractAttempted,
+    acceptedWithDegradedContract: context.acceptedWithDegradedContract,
+  } satisfies Record<string, unknown>;
 }
 
 function getWorkoutExerciseCount(workout: {
@@ -159,6 +253,7 @@ async function generateWorkoutForSimulationMode(params: {
               generationEngineUsed: null,
               generationFallbackUsed: false,
               generationFallbackReason: null,
+              slotModel: null,
             },
       generationComparison: null,
     };
@@ -199,6 +294,9 @@ async function generateWorkoutForSimulationMode(params: {
         generationEngineUsed: "slot_based_v1" as const,
         generationFallbackUsed: false,
         generationFallbackReason: null,
+        slotModel: slotRun.result.ok
+          ? getGenerationEngineDebug(slotRun.result.workout).slotModel
+          : null,
       },
       generationComparison: {
         selectedEngine: "slot_based_v1" as const,
@@ -212,7 +310,7 @@ async function generateWorkoutForSimulationMode(params: {
     };
   }
 
-  if (legacyRun.result.ok) {
+  if (legacyPassed) {
     const fallbackReason = slotRun.result.ok
       ? slotRun.safety?.reasons.join(", ") || "slot_validation_failed"
       : slotRun.result.error;
@@ -224,6 +322,9 @@ async function generateWorkoutForSimulationMode(params: {
         generationEngineUsed: "legacy_ai_chain" as const,
         generationFallbackUsed: true,
         generationFallbackReason: fallbackReason,
+        slotModel: legacyRun.result.ok
+          ? getGenerationEngineDebug(legacyRun.result.workout).slotModel
+          : null,
       },
       generationComparison: {
         selectedEngine: "legacy_ai_chain" as const,
@@ -250,6 +351,9 @@ async function generateWorkoutForSimulationMode(params: {
         generationEngineUsed: "slot_based_v1" as const,
         generationFallbackUsed: true,
         generationFallbackReason: "both_slot_and_legacy_failed_safe_template_used",
+        slotModel: safeTemplateRun.ok
+          ? getGenerationEngineDebug(safeTemplateRun.workout).slotModel
+          : null,
       },
       generationComparison: {
         selectedEngine: "safe_slot_template" as const,
@@ -270,6 +374,11 @@ async function generateWorkoutForSimulationMode(params: {
       generationEngineUsed: null,
       generationFallbackUsed: false,
       generationFallbackReason: slotRun.result.ok ? null : slotRun.result.error,
+      slotModel: slotRun.result.ok
+        ? getGenerationEngineDebug(slotRun.result.workout).slotModel
+        : legacyRun.result.ok
+          ? getGenerationEngineDebug(legacyRun.result.workout).slotModel
+          : null,
     },
     generationComparison: {
       selectedEngine: (slotRun.result.ok
@@ -280,7 +389,7 @@ async function generateWorkoutForSimulationMode(params: {
       legacyExerciseCount,
       slotExerciseCount,
       slotSafetyReasons: slotRun.safety?.reasons ?? [],
-      selectedBecause: "both_engines_failed",
+      selectedBecause: "both_engines_failed_no_safe_template",
     },
   };
 }
@@ -1296,6 +1405,9 @@ export async function runFullAppChainSimulation(params?: {
                     generationEngineDebug.generationFallbackUsed,
                   generationFallbackReason:
                     generationEngineDebug.generationFallbackReason,
+                  slotModel:
+                    getSlotModelDebugFromWorkout(generatedWorkout.workout) ??
+                    undefined,
                   generationComparison:
                     generationRun.generationComparison ?? undefined,
                 },
@@ -1390,6 +1502,7 @@ export async function runFullAppChainSimulation(params?: {
                   passGenerationMode: "fallback_mock",
                   aiRequestUsed: true,
                   promptContextSummary,
+                  generationFallbackReason: generatedWorkout.error,
                 },
                 trainingHistoryContextSummary: {
                   recentWorkoutsCount: trainingHistoryContext.recentWorkouts.length,
@@ -1743,6 +1856,9 @@ export async function runFullAppChainSimulation(params?: {
                   generationEngineDebug.generationFallbackUsed,
                 generationFallbackReason:
                   generationEngineDebug.generationFallbackReason,
+                slotModel:
+                  getSlotModelDebugFromWorkout(generatedWorkout.workout) ??
+                  undefined,
                 generationComparison:
                   generationRun.generationComparison ?? undefined,
               },

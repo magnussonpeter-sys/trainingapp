@@ -265,6 +265,7 @@ export type SimulationPlannerDebugEntry = {
     generationEngineUsed?: "legacy_ai_chain" | "slot_based_v1" | null;
     generationFallbackUsed?: boolean;
     generationFallbackReason?: string | null;
+    slotModel?: Record<string, unknown> | null;
     generationComparison?: {
       selectedEngine: "legacy_ai_chain" | "slot_based_v1" | "safe_slot_template";
       legacyPassed: boolean | null;
