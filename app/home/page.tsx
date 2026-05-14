@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import AppToast from "@/components/shared/app-toast";
+import GoalFeedbackCard from "@/components/home/goal-feedback-card";
 import { useHomeData } from "@/hooks/use-home-data";
 import { getDailyHomeWisdom } from "@/lib/get-daily-home-wisdom";
 import {
@@ -38,6 +39,7 @@ import {
 } from "@/lib/planning/weekly-plan";
 import { getLocalWeeklyPlanSettings } from "@/lib/planning/weekly-plan-local-store";
 import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
+import { buildGoalFeedback } from "@/lib/planning/goal-feedback";
 import type { TrainingGap } from "@/lib/planning/training-gap";
 import { generateWorkout } from "@/lib/workout-generator";
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
@@ -1193,6 +1195,12 @@ function WeeklyInsightsPanel(props: {
   onOpenHistoryDay: (date: string) => void;
   onStartWorkout: () => void;
 }) {
+  const weeklyCompletionPercent = Math.round(props.weeklyStructure.trainingGap.completionRatio * 100);
+  const thirtyDayEffect = props.weeklyStructure.trainingGap.thirtyDayEffect;
+  const thirtyDaySetCompletionPercent = thirtyDayEffect
+    ? Math.round(thirtyDayEffect.setCompletionRatio * 100)
+    : 0;
+
   return (
     <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
       <div className="flex items-center justify-between gap-3">
@@ -1212,16 +1220,35 @@ function WeeklyInsightsPanel(props: {
 
       {props.showWeeklyInsights ? (
         <div className="mt-5 space-y-6">
-          {props.weeklyStructure.trainingGap.thirtyDayEffect ? (
+          {thirtyDayEffect ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                Den här veckan
+              </p>
+              <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-lime-400"
+                  style={{
+                    // Veckovärdet ska kunna visa 0% när inga pass är genomförda den här veckan.
+                    width: `${Math.max(0, Math.min(100, weeklyCompletionPercent))}%`,
+                  }}
+                />
+              </div>
+              <p className="mt-3 text-base leading-7 text-slate-700">
+                Du har genomfört cirka{" "}
+                <span className="font-medium text-slate-900">{weeklyCompletionPercent}%</span> av
+                veckoplanen.
+              </p>
+
+              <div className="mt-5 border-t border-slate-200 pt-4">
               <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
                 Senaste 30 dagarna
               </p>
               <p className="mt-2 text-lg font-semibold tracking-tight text-slate-950">
-                {props.weeklyStructure.trainingGap.thirtyDayEffect.estimatedEffectLabel}
+                {thirtyDayEffect.estimatedEffectLabel}
               </p>
               <p className="mt-2 text-base leading-7 text-slate-700">
-                {props.weeklyStructure.trainingGap.thirtyDayEffect.estimatedEffectMessage}
+                {thirtyDayEffect.estimatedEffectMessage}
               </p>
               <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white">
                 <div
@@ -1231,24 +1258,18 @@ function WeeklyInsightsPanel(props: {
                       8,
                       Math.min(
                         100,
-                        Math.round(
-                          props.weeklyStructure.trainingGap.thirtyDayEffect.setCompletionRatio * 100,
-                        ),
+                        thirtyDaySetCompletionPercent,
                       ),
                     )}%`,
                   }}
                 />
               </div>
               <p className="mt-3 text-base leading-7 text-slate-700">
-                Du har genomfört cirka{" "}
-                <span className="font-medium text-slate-900">
-                  {Math.round(
-                    props.weeklyStructure.trainingGap.thirtyDayEffect.setCompletionRatio * 100,
-                  )}
-                  %
-                </span>{" "}
-                av planerad träningsvolym.
+                De senaste 30 dagarna motsvarar cirka{" "}
+                <span className="font-medium text-slate-900">{thirtyDaySetCompletionPercent}%</span>{" "}
+                av planerad 30-dagarsvolym.
               </p>
+              </div>
             </div>
           ) : null}
 
@@ -1603,6 +1624,35 @@ export default function HomePage() {
       currentRecommendation: homeRecommendation,
     });
   }, [homeRecommendation, weeklyPlanState, weeklyStructure, workoutLogs]);
+  const goalFeedback = useMemo(() => {
+    return buildGoalFeedback({
+      logs: workoutLogs,
+      goal: settings?.training_goal ?? null,
+      experienceLevel: settings?.experience_level ?? null,
+      sportFocus: settings?.sport_focus ?? null,
+      trainingGap: weeklyStructure.trainingGap,
+      goalTrajectory: weeklyStructure.goalTrajectory,
+      muscleBudget: weeklyStructure.muscleBudget,
+      plannedSessionsThisWeek: weeklyPlanStatus?.plannedSessions ?? null,
+      completedSessionsThisWeek: weeklyPlanStatus?.completedSessions ?? null,
+      missedSessionsThisWeek: weeklyPlanState?.missedSessions.length ?? null,
+      plannedMinutesThisWeek: weeklyPlanStatus?.targetMinutes ?? null,
+      completedMinutesThisWeek: weeklyPlanStatus?.completedMinutes ?? null,
+    });
+  }, [
+    settings?.experience_level,
+    settings?.sport_focus,
+    settings?.training_goal,
+    weeklyPlanState?.missedSessions.length,
+    weeklyPlanStatus?.completedMinutes,
+    weeklyPlanStatus?.completedSessions,
+    weeklyPlanStatus?.plannedSessions,
+    weeklyPlanStatus?.targetMinutes,
+    weeklyStructure.goalTrajectory,
+    weeklyStructure.muscleBudget,
+    weeklyStructure.trainingGap,
+    workoutLogs,
+  ]);
 
   useEffect(() => {
     if (!userId) {
@@ -2135,6 +2185,12 @@ export default function HomePage() {
           onLogout={handleLogout}
           isLoggingOut={isLoggingOut}
           pendingCount={pendingCount}
+        />
+
+        <GoalFeedbackCard
+          feedback={goalFeedback}
+          onStartRecommended={handleQuickStartTodayWorkout}
+          onShowDetails={() => setShowWeeklyInsights(true)}
         />
 
         <TodayFocusCard

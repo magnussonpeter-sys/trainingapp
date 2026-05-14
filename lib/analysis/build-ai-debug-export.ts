@@ -1837,6 +1837,7 @@ function buildCurrentPlanSnapshot(params: {
     patternPreferredFocus,
     reasonForSelectedFocus: params.weeklyStructure.summaryText,
     coachDecision: params.weeklyStructure.coachDecision,
+    goalFeedback: params.weeklyStructure.goalFeedback,
     goalTrajectory: params.weeklyStructure.goalTrajectory,
     trainingGap: params.weeklyStructure.trainingGap,
     optimalPlanText: params.weeklyStructure.optimalPlanText,

@@ -24,6 +24,9 @@ import type {
 import type {
   TrainingGap,
 } from "@/lib/planning/training-gap";
+import type {
+  GoalFeedback,
+} from "@/lib/planning/goal-feedback";
 
 export type AiDebugExportType = "quick" | "full";
 
@@ -314,6 +317,7 @@ export type AiDebugCurrentPlanSnapshot = {
   patternPreferredFocus: WorkoutFocus | null;
   reasonForSelectedFocus: string | null;
   coachDecision: CoachDecision;
+  goalFeedback: GoalFeedback;
   goalTrajectory: GoalTrajectory;
   trainingGap: TrainingGap;
   optimalPlanText: string;

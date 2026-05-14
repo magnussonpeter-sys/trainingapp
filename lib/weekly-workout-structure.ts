@@ -15,6 +15,10 @@ import {
   type TrainingGap,
 } from "@/lib/planning/training-gap";
 import {
+  buildGoalFeedback,
+  type GoalFeedback,
+} from "@/lib/planning/goal-feedback";
+import {
   buildCoachDecision,
   type CoachDecision,
 } from "@/lib/planning/coach-decision";
@@ -60,6 +64,7 @@ export type WeeklyWorkoutStructure = {
   confidenceScore: ConfidenceScore;
   configuredPriorityMuscles: MuscleBudgetGroup[];
   currentWeekFocuses: WorkoutFocus[];
+  goalFeedback: GoalFeedback;
   goalTrajectory: GoalTrajectory;
   muscleBudget: MuscleBudgetEntry[];
   nextFocus: WorkoutFocus;
@@ -843,6 +848,16 @@ export function buildWeeklyWorkoutStructure(params: {
     targetMinutesPerWeek: goalTrajectory.weeklyFrequencyTarget * 30,
     now,
   });
+  const goalFeedback = buildGoalFeedback({
+    logs: analysisLogs,
+    goal,
+    experienceLevel: params.settings?.experience_level ?? null,
+    sportFocus: params.settings?.sport_focus ?? null,
+    trainingGap,
+    goalTrajectory,
+    muscleBudget,
+    now,
+  });
   const nextPatternIndex = recentCompletedLogs.length % pattern.length;
   const patternPreferredFocus = pattern[nextPatternIndex] ?? pattern[0] ?? "full_body";
   const adaptiveFocusScores = (
@@ -1155,6 +1170,7 @@ export function buildWeeklyWorkoutStructure(params: {
     confidenceScore,
     configuredPriorityMuscles,
     currentWeekFocuses,
+    goalFeedback,
     goalTrajectory,
     muscleBudget,
     nextFocus: effectiveFocus,
