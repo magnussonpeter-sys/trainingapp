@@ -50,13 +50,19 @@ export function attachWorkoutGenerationDebug(params: {
                 optionalSlots: params.slotDebug.optionalSlots,
                 candidatesPerSlot: params.slotDebug.candidatesPerSlot,
                 selectedPerSlot: params.slotDebug.selectedExercisePerSlot,
+                selectedBeforeNormalization:
+                  params.slotDebug.selectedExercisePerSlot,
                 selectedScorePerSlot: params.slotDebug.selectedScorePerSlot,
                 selectedScoreBreakdown: params.slotDebug.selectedScoreBreakdown,
+                candidateExercisesBySlot: params.slotDebug.candidatesPerSlot,
+                rejectedCandidatesWithReason:
+                  params.slotDebug.rejectedCandidates,
                 rejectedCandidatesTopReasons:
                   params.slotDebug.rejectedCandidatesTopReasons,
                 contractViolations: params.slotDebug.contractViolations,
                 contractFailureStage: params.slotDebug.contractFailureStage,
                 failedSlots: params.slotDebug.failedSlots,
+                missingSlot: params.slotDebug.missingRequiredSlots[0] ?? null,
                 failedRoleFamilies: params.slotDebug.failedRoleFamilies,
                 candidatesPerFailedSlot: params.slotDebug.candidatesPerFailedSlot,
                 rejectedCandidatesPerFailedSlot:
@@ -95,6 +101,8 @@ export function attachWorkoutGenerationDebug(params: {
                 repeatedVariantGroups: params.slotDebug.repeatedVariantGroups,
                 variationPenaltyApplied:
                   params.slotDebug.variationPenaltyApplied,
+                normalizationRemovedExercisesWithReason:
+                  params.slotDebug.slotFailureReasons,
               },
             }
           : {}),

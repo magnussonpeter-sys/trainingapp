@@ -47,6 +47,15 @@ export type TrainingDoseAdjustment = {
   globalUndertrainedMuscles: MuscleBudgetGroup[];
   deferredMuscles: MuscleBudgetGroup[];
   reason: string;
+  debugReasonCode:
+    | "insufficient_history_no_adjustment"
+    | "on_track"
+    | "single_missed_small_adjustment"
+    | "moderate_gap_controlled_adjustment"
+    | "low_adherence_reduce_ambition"
+    | "recovery_first_local_high_risk"
+    | "recovery_first_total_dose_high"
+    | "no_safe_adjustment";
 };
 
 type BuildTrainingDoseAdjustmentParams = {
@@ -76,6 +85,13 @@ type AdherenceWindow = {
   missedSessions: number;
   minuteCompletionRatio: number;
   sessionCompletionRatio: number;
+};
+
+export type TrainingDoseDurationAdjustmentResult = {
+  baseRecommendedDuration: number;
+  adjustedRecommendedDuration: number;
+  recommendedDurationCapMinutes?: number;
+  durationAdjustmentReason: string | null;
 };
 
 const FOCUS_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
@@ -322,8 +338,11 @@ function getBaseDurationMinutes(params: BuildTrainingDoseAdjustmentParams) {
 
 function hasRecoveryFirstSignal(params: {
   goalTrajectory: GoalTrajectory;
+  trainingGap: TrainingGap;
   muscleBudget: MuscleBudgetEntry[];
   nextFocus: WorkoutFocus;
+  adherence14d: number;
+  thirtyDayMinuteCompletionRatio: number;
   selectedPlanMode?: TrainingDoseAdjustmentPlanMode | null;
   recoveryOverrideApplied?: boolean;
 }) {
@@ -334,13 +353,54 @@ function hasRecoveryFirstSignal(params: {
       (entry.loadStatus === "high_risk" || entry.loadStatus === "over"),
   ).length;
 
-  return (
-    params.goalTrajectory.status === "too_aggressive" ||
+  const totalDoseClearlyLow =
+    params.thirtyDayMinuteCompletionRatio < 0.5 || params.adherence14d < 0.45;
+  const localHighRisk = focusHighRiskCount >= 2;
+
+  if (
     params.recoveryOverrideApplied === true ||
     params.selectedPlanMode === "recovery" ||
-    params.selectedPlanMode === "recovery_mobility" ||
-    focusHighRiskCount >= 2
-  );
+    params.selectedPlanMode === "recovery_mobility"
+  ) {
+    return {
+      active: true,
+      debugReasonCode: "recovery_first_local_high_risk" as const,
+    };
+  }
+
+  // Vid låg total dos ska recovery-first bara vinna om risken är tydligt lokal.
+  if (totalDoseClearlyLow) {
+    if (localHighRisk) {
+      return {
+        active: true,
+        debugReasonCode: "recovery_first_local_high_risk" as const,
+      };
+    }
+
+    return {
+      active: false,
+      debugReasonCode: null,
+    };
+  }
+
+  if (params.goalTrajectory.status === "too_aggressive") {
+    return {
+      active: true,
+      debugReasonCode: "recovery_first_total_dose_high" as const,
+    };
+  }
+
+  if (localHighRisk) {
+    return {
+      active: true,
+      debugReasonCode: "recovery_first_local_high_risk" as const,
+    };
+  }
+
+  return {
+    active: false,
+    debugReasonCode: null,
+  };
 }
 
 function buildAdjustmentReason(params: {
@@ -350,12 +410,22 @@ function buildAdjustmentReason(params: {
   missedSessions14d: number;
   plannedMinutes14d: number;
   completedMinutes14d: number;
+  insufficientHistory: boolean;
+  totalDoseClearlyLow: boolean;
 }) {
   if (params.compensationMode === "recovery_first") {
+    if (params.totalDoseClearlyLow) {
+      return "Total träningsdos är låg, men några muskler är nyligen belastade. Vi håller därför nästa pass kort och fokuserat i stället för att försöka kompensera brett.";
+    }
+
     return "Återhämtning väger tyngre än kompensation just nu, så nästa pass ska inte växa för att ta igen missad träning.";
   }
 
   if (params.compensationMode === "reduce_ambition") {
+    if (params.insufficientHistory && params.missedSessions14d === 0) {
+      return "Vi har ännu för lite historik för att justera träningsdosen aggressivt. Vi behåller därför en försiktig rekommendation tills vi har mer data.";
+    }
+
     return `De senaste två veckorna har följsamheten varit låg (${Math.round(
       params.adherence14d * 100,
     )} %) och ${params.missedSessions14d} planerade pass bedöms ha uteblivit. Vi sänker därför rekommenderad längd och fokuserar på ett mer genomförbart pass.`;
@@ -376,12 +446,12 @@ function buildAdjustmentReason(params: {
   return "Ingen säker dosjustering behövs just nu.";
 }
 
-export function applyTrainingDoseAdjustmentToDuration(params: {
+export function buildTrainingDoseDurationAdjustment(params: {
   baseDurationMinutes: number;
   adjustment: TrainingDoseAdjustment;
   minDurationMinutes: number;
   maxDurationMinutes: number;
-}) {
+}): TrainingDoseDurationAdjustmentResult {
   const maxExtraMinutes = Math.round(
     params.baseDurationMinutes * (params.adjustment.maxExtraDosePercent / 100),
   );
@@ -399,10 +469,27 @@ export function applyTrainingDoseAdjustmentToDuration(params: {
     );
   }
 
-  return Math.min(
+  adjustedDuration = Math.min(
     params.maxDurationMinutes,
     Math.max(params.minDurationMinutes, adjustedDuration),
   );
+
+  return {
+    baseRecommendedDuration: Math.round(params.baseDurationMinutes),
+    adjustedRecommendedDuration: Math.round(adjustedDuration),
+    recommendedDurationCapMinutes:
+      params.adjustment.recommendedDurationCapMinutes,
+    durationAdjustmentReason: params.adjustment.reason,
+  };
+}
+
+export function applyTrainingDoseAdjustmentToDuration(params: {
+  baseDurationMinutes: number;
+  adjustment: TrainingDoseAdjustment;
+  minDurationMinutes: number;
+  maxDurationMinutes: number;
+}) {
+  return buildTrainingDoseDurationAdjustment(params).adjustedRecommendedDuration;
 }
 
 export function buildTrainingDoseAdjustment(
@@ -444,6 +531,29 @@ export function buildTrainingDoseAdjustment(
     plannedSessionsPerWeek: params.goalTrajectory.weeklyFrequencyTarget,
     plannedMinutesPerWeek: targetMinutesPerWeek,
   });
+  const thirtyDayEffect = params.trainingGap.thirtyDayEffect;
+  const thirtyDayConfidence = thirtyDayEffect?.confidence ?? "low";
+  const plannedMinutes30d =
+    thirtyDayEffect?.plannedMinutes ?? adherence30d.plannedMinutes;
+  const completedMinutes30d =
+    thirtyDayEffect?.completedMinutes ?? adherence30d.completedMinutes;
+  const plannedSessions30d =
+    thirtyDayEffect?.plannedSessions ?? adherence30d.plannedSessions;
+  const completedSessions30d =
+    thirtyDayEffect?.completedSessions ?? adherence30d.completedSessions;
+  const missedSessions30d = countMissedPlannedSessions({
+    plannedSessions: plannedSessions30d,
+    completedSessions: completedSessions30d,
+    explicitMissedSessions: params.missedPlannedSessionsCount ?? 0,
+  });
+  const adherence30dValue = clamp(
+    Math.min(
+      thirtyDayEffect?.sessionCompletionRatio ?? adherence30d.sessionCompletionRatio,
+      thirtyDayEffect?.minuteCompletionRatio ?? adherence30d.minuteCompletionRatio,
+    ),
+    0,
+    1.25,
+  );
   const typicalCompletedDurationMinutes = getTypicalCompletedDuration({
     logs: params.logs,
     now: params.now,
@@ -459,30 +569,49 @@ export function buildTrainingDoseAdjustment(
   let suggestedDurationDelta = 0;
   let maxExtraDosePercent = 0;
   let recommendedDurationCapMinutes: number | undefined;
+  let debugReasonCode: TrainingDoseAdjustment["debugReasonCode"] = "on_track";
 
   const hasMultipleMissesInRow =
     adherence7d.missedSessions >= 2 ||
     (adherence7d.completedSessions === 0 && adherence14d.missedSessions >= 2);
+  const insufficientHistory =
+    params.logs.filter((log) => log.status === "completed").length < 2 &&
+    thirtyDayConfidence === "low";
+  const totalDoseClearlyLow =
+    (thirtyDayEffect?.minuteCompletionRatio ?? adherence30d.minuteCompletionRatio) < 0.5 ||
+    adherence14d.adherence < 0.45;
+  const recoverySignal = hasRecoveryFirstSignal({
+    goalTrajectory: params.goalTrajectory,
+    trainingGap: params.trainingGap,
+    muscleBudget: params.muscleBudget,
+    nextFocus: params.nextFocus,
+    adherence14d: adherence14d.adherence,
+    thirtyDayMinuteCompletionRatio:
+      thirtyDayEffect?.minuteCompletionRatio ?? adherence30d.minuteCompletionRatio,
+    selectedPlanMode: params.selectedPlanMode,
+    recoveryOverrideApplied: params.recoveryOverrideApplied,
+  });
 
-  if (
-    hasRecoveryFirstSignal({
-      goalTrajectory: params.goalTrajectory,
-      muscleBudget: params.muscleBudget,
-      nextFocus: params.nextFocus,
-      selectedPlanMode: params.selectedPlanMode,
-      recoveryOverrideApplied: params.recoveryOverrideApplied,
-    })
-  ) {
+  if (insufficientHistory && adherence14d.missedSessions === 0) {
+    compensationMode = "none";
+    suggestedDurationDelta = 0;
+    maxExtraDosePercent = 0;
+    debugReasonCode = "insufficient_history_no_adjustment";
+  } else if (recoverySignal.active) {
     compensationMode = "recovery_first";
     suggestedDurationDelta = 0;
     maxExtraDosePercent = 0;
+    debugReasonCode =
+      recoverySignal.debugReasonCode ?? "recovery_first_local_high_risk";
   } else if (
     adherence14d.adherence < 0.45 ||
     adherence14d.missedSessions >= 3 ||
-    adherence14d.minuteCompletionRatio < 0.5 ||
+    ((thirtyDayEffect?.minuteCompletionRatio ?? adherence14d.minuteCompletionRatio) < 0.5 &&
+      thirtyDayConfidence !== "low") ||
     hasMultipleMissesInRow
   ) {
     compensationMode = "reduce_ambition";
+    debugReasonCode = "low_adherence_reduce_ambition";
     suggestedDurationDelta =
       baseDurationMinutes >= 40 || adherence14d.adherence < 0.3 ? -10 : -5;
     maxExtraDosePercent = 0;
@@ -501,6 +630,7 @@ export function buildTrainingDoseAdjustment(
     adherence14d.adherence <= 0.75
   ) {
     compensationMode = "moderate";
+    debugReasonCode = "moderate_gap_controlled_adjustment";
     suggestedDurationDelta =
       params.goal === "hypertrophy" && adherence14d.adherence >= 0.55 ? 10 : 5;
     if (params.goal === "strength") {
@@ -512,8 +642,24 @@ export function buildTrainingDoseAdjustment(
     adherence14d.adherence >= 0.65
   ) {
     compensationMode = "small";
+    debugReasonCode = "single_missed_small_adjustment";
     suggestedDurationDelta = 5;
     maxExtraDosePercent = 10;
+  }
+
+  if (compensationMode === "none" && debugReasonCode === "on_track" && insufficientHistory) {
+    debugReasonCode = "insufficient_history_no_adjustment";
+  }
+
+  if (compensationMode === "none" && debugReasonCode === "on_track") {
+    debugReasonCode = "on_track";
+  }
+
+  if (
+    compensationMode === "reduce_ambition" &&
+    typeof recommendedDurationCapMinutes !== "number"
+  ) {
+    debugReasonCode = "no_safe_adjustment";
   }
 
   const reason = buildAdjustmentReason({
@@ -523,22 +669,24 @@ export function buildTrainingDoseAdjustment(
     missedSessions14d: adherence14d.missedSessions,
     plannedMinutes14d: adherence14d.plannedMinutes,
     completedMinutes14d: adherence14d.completedMinutes,
+    insufficientHistory,
+    totalDoseClearlyLow,
   });
 
   return {
     compensationMode,
     adherence7d: adherence7d.adherence,
     adherence14d: adherence14d.adherence,
-    adherence30d: adherence30d.adherence,
+    adherence30d: adherence30dValue,
     plannedMinutes7d: adherence7d.plannedMinutes,
     completedMinutes7d: adherence7d.completedMinutes,
     plannedMinutes14d: adherence14d.plannedMinutes,
     completedMinutes14d: adherence14d.completedMinutes,
-    plannedMinutes30d: adherence30d.plannedMinutes,
-    completedMinutes30d: adherence30d.completedMinutes,
+    plannedMinutes30d,
+    completedMinutes30d,
     missedSessions7d: adherence7d.missedSessions,
     missedSessions14d: adherence14d.missedSessions,
-    missedSessions30d: adherence30d.missedSessions,
+    missedSessions30d,
     suggestedDurationDelta,
     recommendedDurationCapMinutes,
     maxExtraDosePercent: Math.min(maxExtraDosePercent, 20),
@@ -547,5 +695,6 @@ export function buildTrainingDoseAdjustment(
     globalUndertrainedMuscles: priorityBuckets.globalUndertrainedMuscles,
     deferredMuscles: priorityBuckets.deferredMuscles,
     reason,
+    debugReasonCode,
   };
 }

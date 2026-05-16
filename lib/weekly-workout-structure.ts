@@ -867,11 +867,15 @@ function appendTrainingDoseAdjustmentText(
   }
 
   if (adjustment.compensationMode === "reduce_ambition") {
-    return `${baseText} De senaste två veckorna har flera planerade pass inte blivit av. Vi sänker därför dagens rekommenderade längd och fokuserar på ett kortare pass som är lättare att genomföra.`;
+    if (goal === "strength") {
+      return `${baseText} ${adjustment.reason} Eftersom målet är styrka jagar vi inte missad volym, utan behåller huvudmönstren i ett kortare och mer genomförbart pass.`;
+    }
+
+    return `${baseText} ${adjustment.reason}`;
   }
 
   if (adjustment.compensationMode === "recovery_first") {
-    return `${baseText} Återhämtning går före kompensation just nu.`;
+    return `${baseText} ${adjustment.reason}`;
   }
 
   return baseText;

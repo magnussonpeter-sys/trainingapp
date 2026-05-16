@@ -82,6 +82,92 @@ import {
 } from "@/lib/workout-generation/types";
 import type { WorkoutFocus } from "@/types/workout";
 
+type FallbackValidationResult = {
+  generationStatus: "fallback_mock" | "failed_generation";
+  fallbackValidationPassed: boolean;
+  fallbackFailureReasons: string[];
+};
+
+const FALLBACK_ROLE_FAMILIES = {
+  squatOrLunge: new Set(["barbell_squat", "goblet_squat", "split_squat", "walking_lunge"]),
+  hinge: new Set(["deadlift", "romanian_deadlift", "barbell_hip_thrust"]),
+  push: new Set([
+    "bench_press",
+    "overhead_press",
+    "dumbbell_bench_press",
+    "dumbbell_shoulder_press",
+    "push_up",
+  ]),
+  pull: new Set(["barbell_row", "pull_up", "dumbbell_row", "lat_pulldown", "face_pull"]),
+};
+
+function validateSyntheticFallbackPlan(params: {
+  goal: SimulationUserProfile["goal"];
+  focus: WorkoutFocus | null;
+  targetDurationMin: number;
+  plannedExercises: Array<{ exerciseId: string }>;
+}): FallbackValidationResult {
+  if (
+    params.goal !== "strength" ||
+    params.focus !== "full_body" ||
+    params.targetDurationMin < 30
+  ) {
+    return {
+      generationStatus: "fallback_mock",
+      fallbackValidationPassed: true,
+      fallbackFailureReasons: [],
+    };
+  }
+
+  const hasSquatOrLunge = params.plannedExercises.some((exercise) =>
+    FALLBACK_ROLE_FAMILIES.squatOrLunge.has(exercise.exerciseId),
+  );
+  const hasHinge = params.plannedExercises.some((exercise) =>
+    FALLBACK_ROLE_FAMILIES.hinge.has(exercise.exerciseId),
+  );
+  const hasPush = params.plannedExercises.some((exercise) =>
+    FALLBACK_ROLE_FAMILIES.push.has(exercise.exerciseId),
+  );
+  const hasPull = params.plannedExercises.some((exercise) =>
+    FALLBACK_ROLE_FAMILIES.pull.has(exercise.exerciseId),
+  );
+  const coveredRoleCount = [hasSquatOrLunge, hasHinge, hasPush, hasPull].filter(Boolean).length;
+  const reasons: string[] = [];
+
+  if (!hasSquatOrLunge) {
+    reasons.push("missing_squat_or_lunge");
+  }
+  if (!hasHinge) {
+    reasons.push("missing_hinge");
+  }
+  if (!hasPush) {
+    reasons.push("missing_push");
+  }
+  if (!hasPull) {
+    reasons.push("missing_pull");
+  }
+  if (coveredRoleCount < 3) {
+    reasons.push("covers_fewer_than_three_primary_strength_roles");
+  }
+  if (!hasHinge && !hasPull) {
+    reasons.push("missing_both_hinge_and_pull");
+  }
+
+  if (reasons.length > 0) {
+    return {
+      generationStatus: "failed_generation",
+      fallbackValidationPassed: false,
+      fallbackFailureReasons: reasons,
+    };
+  }
+
+  return {
+    generationStatus: "fallback_mock",
+    fallbackValidationPassed: true,
+    fallbackFailureReasons: [],
+  };
+}
+
 function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
   const totalDays = Math.min(Math.max(Math.round(config?.totalDays ?? 14), 7), 28);
 
@@ -127,18 +213,33 @@ function getGenerationEngineDebug(workout: {
           contractSlots: (context as Record<string, unknown>).contractSlots,
           requiredSlots: (context as Record<string, unknown>).requiredSlots,
           protectedSlots: (context as Record<string, unknown>).protectedSlots,
+          selectedBeforeNormalization:
+            (context as Record<string, unknown>).selectedBeforeNormalization ??
+            (context as Record<string, unknown>).selectedExercisePerSlot,
+          selectedAfterNormalization:
+            (context as Record<string, unknown>).selectedAfterNormalization,
           selectedPerSlot:
             (context as Record<string, unknown>).selectedExercisePerSlot,
+          candidateExercisesBySlot:
+            (context as Record<string, unknown>).candidateExercisesBySlot ??
+            (context as Record<string, unknown>).candidatesPerSlot,
           selectedScorePerSlot:
             (context as Record<string, unknown>).selectedScorePerSlot,
+          rejectedCandidatesWithReason:
+            (context as Record<string, unknown>).rejectedCandidatesWithReason ??
+            (context as Record<string, unknown>).rejectedCandidates,
           rejectedCandidatesTopReasons:
             (context as Record<string, unknown>).rejectedCandidatesTopReasons,
           contractViolations:
             (context as Record<string, unknown>).contractViolations,
+          missingSlot: (context as Record<string, unknown>).missingSlot,
           contractGateTriggered:
             (context as Record<string, unknown>).contractGateTriggered,
           contractGateReason:
             (context as Record<string, unknown>).contractGateReason,
+          normalizationRemovedExercisesWithReason:
+            (context as Record<string, unknown>)
+              .normalizationRemovedExercisesWithReason,
           finalContractPassed:
             (context as Record<string, unknown>).finalContractPassed,
           fallbackMode: (context as Record<string, unknown>).fallbackMode,
@@ -216,12 +317,22 @@ function getSlotModelDebugFromWorkout(workout: {
     contractSlots: context.contractSlots,
     requiredSlots: context.requiredSlots,
     protectedSlots: context.protectedSlots,
+    selectedBeforeNormalization:
+      context.selectedBeforeNormalization ?? context.selectedExercisePerSlot,
+    selectedAfterNormalization: context.selectedAfterNormalization,
     selectedPerSlot: context.selectedExercisePerSlot,
+    candidateExercisesBySlot:
+      context.candidateExercisesBySlot ?? context.candidatesPerSlot,
     selectedScorePerSlot: context.selectedScorePerSlot,
+    rejectedCandidatesWithReason:
+      context.rejectedCandidatesWithReason ?? context.rejectedCandidates,
     rejectedCandidatesTopReasons: context.rejectedCandidatesTopReasons,
     contractViolations: context.contractViolations,
+    missingSlot: context.missingSlot,
     contractGateTriggered: context.contractGateTriggered,
     contractGateReason: context.contractGateReason,
+    normalizationRemovedExercisesWithReason:
+      context.normalizationRemovedExercisesWithReason,
     finalContractPassed: context.finalContractPassed,
     fallbackMode: context.fallbackMode,
     repairLog: context.repairLog,
@@ -1469,27 +1580,47 @@ export async function runFullAppChainSimulation(params?: {
               state: stateBefore,
               focusHint: aiWorkoutFocus,
             });
-            workoutResult = simulateWorkout({
-              dayPlan: plannerDayPlan,
+            const fallbackValidation = validateSyntheticFallbackPlan({
+              goal: effectiveSimulationProfile.goal,
+              focus: aiWorkoutFocus ?? null,
+              targetDurationMin: plannerDayPlan.targetDurationMin,
               plannedExercises,
-              profile: effectiveSimulationProfile,
-              random,
-              state: stateBefore,
             });
-            workoutResult = {
-              ...workoutResult,
-              workoutName: `Fallback ${formatSimulationFocusLabel(
-                weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
-              )}`,
-              actualDurationMin: adjustScenarioWorkoutDuration({
-                scenario: config.scenario ?? "normal",
-                plannedDurationMin: workoutResult.plannedDurationMin,
-                actualDurationMin: workoutResult.actualDurationMin,
+            if (!fallbackValidation.fallbackValidationPassed) {
+              workoutResult = buildMissedWorkoutResult({
+                dayPlan: plannerDayPlan,
+                profile: effectiveSimulationProfile,
+                skipReason: "random",
+              });
+              stateAfter = applyMissedWorkoutState(
+                stateBefore,
+                effectiveSimulationProfile,
+                config,
+              );
+              dayEvent = "missed_planned";
+            } else {
+              workoutResult = simulateWorkout({
+                dayPlan: plannerDayPlan,
+                plannedExercises,
+                profile: effectiveSimulationProfile,
                 random,
-              }),
-            };
-            stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
-            dayEvent = "planned_training";
+                state: stateBefore,
+              });
+              workoutResult = {
+                ...workoutResult,
+                workoutName: `Fallback ${formatSimulationFocusLabel(
+                  weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
+                )}`,
+                actualDurationMin: adjustScenarioWorkoutDuration({
+                  scenario: config.scenario ?? "normal",
+                  plannedDurationMin: workoutResult.plannedDurationMin,
+                  actualDurationMin: workoutResult.actualDurationMin,
+                  random,
+                }),
+              };
+              stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
+              dayEvent = "planned_training";
+            }
             generatedWorkoutSummary = {
               workoutId: workoutResult.workoutId,
               workoutName: workoutResult.workoutName,
@@ -1497,8 +1628,12 @@ export async function runFullAppChainSimulation(params?: {
               exerciseCount: workoutResult.exerciseResults.length,
               estimatedVolumeScore: workoutResult.estimatedLoadScore,
               plannerSource: "ai_fallback",
-              plannerNote: `AI-genereringen misslyckades och simulationen föll tillbaka till mockat pass: ${generatedWorkout.error}.`,
-              passGenerationMode: "fallback_mock",
+              plannerNote: fallbackValidation.fallbackValidationPassed
+                ? `AI-genereringen misslyckades och simulationen föll tillbaka till mockat pass: ${generatedWorkout.error}.`
+                : `AI-genereringen misslyckades och fallbackpasset underkändes: ${fallbackValidation.fallbackFailureReasons.join(", ")}.`,
+              passGenerationMode: fallbackValidation.generationStatus,
+              fallbackValidationPassed: fallbackValidation.fallbackValidationPassed,
+              fallbackFailureReasons: fallbackValidation.fallbackFailureReasons,
             };
 
             if (config.enablePlannerDebug) {
@@ -1541,7 +1676,11 @@ export async function runFullAppChainSimulation(params?: {
                     weeklyPlanContext.recoveryLimitedMuscles,
                   muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
                   trainingDoseAdjustment: weeklyStructure.trainingDoseAdjustment,
-                  passGenerationMode: "fallback_mock",
+                  passGenerationMode: fallbackValidation.generationStatus,
+                  fallbackValidationPassed:
+                    fallbackValidation.fallbackValidationPassed,
+                  fallbackFailureReasons:
+                    fallbackValidation.fallbackFailureReasons,
                   aiRequestUsed: true,
                   promptContextSummary,
                   generationFallbackReason: generatedWorkout.error,
@@ -1570,27 +1709,47 @@ export async function runFullAppChainSimulation(params?: {
             state: stateBefore,
             focusHint: aiWorkoutFocus,
           });
-          workoutResult = simulateWorkout({
-            dayPlan: plannerDayPlan,
+          const fallbackValidation = validateSyntheticFallbackPlan({
+            goal: effectiveSimulationProfile.goal,
+            focus: aiWorkoutFocus ?? null,
+            targetDurationMin: plannerDayPlan.targetDurationMin,
             plannedExercises,
-            profile: effectiveSimulationProfile,
-            random,
-            state: stateBefore,
           });
-          workoutResult = {
-            ...workoutResult,
-            workoutName: `Fallback ${formatSimulationFocusLabel(
-              weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
-            )}`,
-            actualDurationMin: adjustScenarioWorkoutDuration({
-              scenario: config.scenario ?? "normal",
-              plannedDurationMin: workoutResult.plannedDurationMin,
-              actualDurationMin: workoutResult.actualDurationMin,
+          if (!fallbackValidation.fallbackValidationPassed) {
+            workoutResult = buildMissedWorkoutResult({
+              dayPlan: plannerDayPlan,
+              profile: effectiveSimulationProfile,
+              skipReason: "random",
+            });
+            stateAfter = applyMissedWorkoutState(
+              stateBefore,
+              effectiveSimulationProfile,
+              config,
+            );
+            dayEvent = "missed_planned";
+          } else {
+            workoutResult = simulateWorkout({
+              dayPlan: plannerDayPlan,
+              plannedExercises,
+              profile: effectiveSimulationProfile,
               random,
-            }),
-          };
-          stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
-          dayEvent = "planned_training";
+              state: stateBefore,
+            });
+            workoutResult = {
+              ...workoutResult,
+              workoutName: `Fallback ${formatSimulationFocusLabel(
+                weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
+              )}`,
+              actualDurationMin: adjustScenarioWorkoutDuration({
+                scenario: config.scenario ?? "normal",
+                plannedDurationMin: workoutResult.plannedDurationMin,
+                actualDurationMin: workoutResult.actualDurationMin,
+                random,
+              }),
+            };
+            stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
+            dayEvent = "planned_training";
+          }
           generatedWorkoutSummary = {
             workoutId: workoutResult.workoutId,
             workoutName: workoutResult.workoutName,
@@ -1599,7 +1758,9 @@ export async function runFullAppChainSimulation(params?: {
             estimatedVolumeScore: workoutResult.estimatedLoadScore,
             plannerSource: "ai_fallback",
             plannerNote: `Maxgränsen för AI-pass (${config.maxAiGeneratedWorkouts}) nåddes. Resterande pass mockas syntetiskt.`,
-            passGenerationMode: "fallback_mock",
+            passGenerationMode: fallbackValidation.generationStatus,
+            fallbackValidationPassed: fallbackValidation.fallbackValidationPassed,
+            fallbackFailureReasons: fallbackValidation.fallbackFailureReasons,
           };
 
           if (config.enablePlannerDebug) {
@@ -1641,7 +1802,11 @@ export async function runFullAppChainSimulation(params?: {
                 recoveryLimitedMuscles: weeklyPlanContext.recoveryLimitedMuscles,
                 muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
                 trainingDoseAdjustment: weeklyStructure.trainingDoseAdjustment,
-                passGenerationMode: "fallback_mock",
+                passGenerationMode: fallbackValidation.generationStatus,
+                fallbackValidationPassed:
+                  fallbackValidation.fallbackValidationPassed,
+                fallbackFailureReasons:
+                  fallbackValidation.fallbackFailureReasons,
                 aiRequestUsed: false,
                 promptContextSummary,
               },

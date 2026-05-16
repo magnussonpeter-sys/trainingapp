@@ -219,7 +219,13 @@ export type SimulationDailySnapshot = {
       | "real_app_planner"
       | "full_app_chain";
     plannerNote?: string;
-    passGenerationMode?: "mock_synthetic" | "real_ai" | "fallback_mock";
+    passGenerationMode?:
+      | "mock_synthetic"
+      | "real_ai"
+      | "fallback_mock"
+      | "failed_generation";
+    fallbackValidationPassed?: boolean;
+    fallbackFailureReasons?: string[];
   };
   workoutResult?: SimulationWorkoutResult;
   stateAfter: SimulationUserState;
@@ -283,8 +289,15 @@ export type SimulationPlannerDebugEntry = {
       globalUndertrainedMuscles?: string[];
       deferredMuscles?: string[];
       reason: string;
+      debugReasonCode?: string;
     };
-    passGenerationMode: "mock_synthetic" | "real_ai" | "fallback_mock";
+    passGenerationMode:
+      | "mock_synthetic"
+      | "real_ai"
+      | "fallback_mock"
+      | "failed_generation";
+    fallbackValidationPassed?: boolean;
+    fallbackFailureReasons?: string[];
     aiRequestUsed?: boolean;
     promptContextSummary?: string;
     generationModeRequested?: WorkoutGenerationMode;

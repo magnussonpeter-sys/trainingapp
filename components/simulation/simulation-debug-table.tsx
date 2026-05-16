@@ -140,7 +140,7 @@ export default function SimulationDebugTable({
                       Prioritet: {entry.realAppPlanner.priorityMuscles.join(", ") || "inga"} · Begränsa: {entry.realAppPlanner.recoveryLimitedMuscles.join(", ") || "inga"}
                     </p>
                     <p className="mt-1 leading-5">
-                      Passgenerering: {entry.realAppPlanner.passGenerationMode === "real_ai" ? "riktig AI" : entry.realAppPlanner.passGenerationMode === "fallback_mock" ? "fallback/mock" : "mockad syntetisk"} · Goal reached: {entry.realAppPlanner.goalReached ? "ja" : "nej"}
+                      Passgenerering: {entry.realAppPlanner.passGenerationMode === "real_ai" ? "riktig AI" : entry.realAppPlanner.passGenerationMode === "fallback_mock" ? "fallback/mock" : entry.realAppPlanner.passGenerationMode === "failed_generation" ? "misslyckad generering" : "mockad syntetisk"} · Goal reached: {entry.realAppPlanner.goalReached ? "ja" : "nej"}
                     </p>
                     {entry.realAppPlanner.promptContextSummary ? (
                       <p className="mt-1 leading-5">
