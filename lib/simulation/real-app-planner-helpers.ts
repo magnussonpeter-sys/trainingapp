@@ -1,4 +1,8 @@
 import {
+  applyTrainingDoseAdjustmentToDuration as applyPlanningDoseAdjustmentToDuration,
+  type TrainingDoseAdjustment,
+} from "@/lib/planning/training-dose-adjustment";
+import {
   buildInitialWeeklyPlan,
   formatWeekdayLabel,
   type PlannedSessionFocus,
@@ -12,7 +16,6 @@ import type {
   SimulationScenario,
   SimulationUserProfile,
 } from "@/lib/simulation/types";
-import type { TrainingDoseAdjustment } from "@/lib/planning/training-dose-adjustment";
 
 const WEEKDAY_BY_INDEX: Record<number, Weekday> = {
   0: "sunday",
@@ -187,16 +190,5 @@ export function applyTrainingDoseAdjustmentToDuration(params: {
   minDurationMinutes: number;
   maxDurationMinutes: number;
 }) {
-  const maxExtraMinutes = Math.round(
-    params.baseDurationMinutes * (params.adjustment.maxExtraDosePercent / 100),
-  );
-  const boundedDelta =
-    params.adjustment.suggestedDurationDelta > 0
-      ? Math.min(params.adjustment.suggestedDurationDelta, maxExtraMinutes)
-      : params.adjustment.suggestedDurationDelta;
-
-  return Math.min(
-    params.maxDurationMinutes,
-    Math.max(params.minDurationMinutes, Math.round(params.baseDurationMinutes + boundedDelta)),
-  );
+  return applyPlanningDoseAdjustmentToDuration(params);
 }

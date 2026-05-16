@@ -1224,8 +1224,14 @@ export async function runFullAppChainSimulation(params?: {
           primary_priority_muscle: simulationPriorityMuscles[0] ?? null,
           secondary_priority_muscle: simulationPriorityMuscles[1] ?? null,
           tertiary_priority_muscle: simulationPriorityMuscles[2] ?? null,
+          preferred_session_duration_minutes: weeklySettings.defaultDurationMinutes,
+          min_session_duration_minutes: weeklySettings.minDurationMinutes,
+          max_session_duration_minutes: weeklySettings.maxDurationMinutes,
         },
         missedPlannedSessionsCount: weeklyPlanState.missedSessions.length,
+        preferredSessionDurationMinutes: weeklySettings.defaultDurationMinutes,
+        minSessionDurationMinutes: weeklySettings.minDurationMinutes,
+        maxSessionDurationMinutes: weeklySettings.maxDurationMinutes,
       });
       const adjustedSuggestedDurationMinutes = applyTrainingDoseAdjustmentToDuration({
         baseDurationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
@@ -1233,6 +1239,7 @@ export async function runFullAppChainSimulation(params?: {
         minDurationMinutes: weeklySettings.minDurationMinutes,
         maxDurationMinutes: weeklySettings.maxDurationMinutes,
       });
+      const plannerCoachText = weeklyStructure.optimalPlanText;
       const trainingHistoryContext = buildTrainingHistoryContext({
         workoutLogs,
         now: currentDate,
@@ -1308,7 +1315,7 @@ export async function runFullAppChainSimulation(params?: {
             weeklyBudget: buildWeeklyBudgetPromptItems(weeklyPlanState),
             weeklyPlan: buildWeeklyPlanPromptItems(plannedSessions),
             selectedPlanMode,
-            focusIntent: weeklyPlanContext.coachText,
+            focusIntent: plannerCoachText,
             targetMuscles: weeklyPlanContext.priorityMuscles,
             avoidMuscles: weeklyPlanContext.recoveryLimitedMuscles,
             limitedMuscles: [],
@@ -1409,7 +1416,13 @@ export async function runFullAppChainSimulation(params?: {
                     weeklyPlanStatus.suggestedNextWorkoutFocus,
                   suggestedNextDurationMinutes:
                     adjustedSuggestedDurationMinutes,
-                  coachText: weeklyPlanContext.coachText,
+                  actualRecommendedDurationBeforeAdjustment:
+                    weeklyPlanStatus.suggestedNextDurationMinutes,
+                  actualRecommendedDurationAfterAdjustment:
+                    adjustedSuggestedDurationMinutes,
+                  durationAdjustmentReason:
+                    weeklyStructure.trainingDoseAdjustment.reason,
+                  coachText: plannerCoachText,
                   goalReached: weeklyPlanStatus.goalReached,
                   priorityMuscles: weeklyPlanContext.priorityMuscles,
                   recoveryLimitedMuscles:
@@ -1515,7 +1528,13 @@ export async function runFullAppChainSimulation(params?: {
                     weeklyPlanStatus.suggestedNextWorkoutFocus,
                   suggestedNextDurationMinutes:
                     adjustedSuggestedDurationMinutes,
-                  coachText: weeklyPlanContext.coachText,
+                  actualRecommendedDurationBeforeAdjustment:
+                    weeklyPlanStatus.suggestedNextDurationMinutes,
+                  actualRecommendedDurationAfterAdjustment:
+                    adjustedSuggestedDurationMinutes,
+                  durationAdjustmentReason:
+                    weeklyStructure.trainingDoseAdjustment.reason,
+                  coachText: plannerCoachText,
                   goalReached: weeklyPlanStatus.goalReached,
                   priorityMuscles: weeklyPlanContext.priorityMuscles,
                   recoveryLimitedMuscles:
@@ -1610,7 +1629,13 @@ export async function runFullAppChainSimulation(params?: {
                   weeklyPlanStatus.suggestedNextWorkoutFocus,
                 suggestedNextDurationMinutes:
                   adjustedSuggestedDurationMinutes,
-                coachText: weeklyPlanContext.coachText,
+                actualRecommendedDurationBeforeAdjustment:
+                  weeklyPlanStatus.suggestedNextDurationMinutes,
+                actualRecommendedDurationAfterAdjustment:
+                  adjustedSuggestedDurationMinutes,
+                durationAdjustmentReason:
+                  weeklyStructure.trainingDoseAdjustment.reason,
+                coachText: plannerCoachText,
                 goalReached: weeklyPlanStatus.goalReached,
                 priorityMuscles: weeklyPlanContext.priorityMuscles,
                 recoveryLimitedMuscles: weeklyPlanContext.recoveryLimitedMuscles,

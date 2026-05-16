@@ -1841,9 +1841,6 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
       Math.max(0.75, completedSessions * 0.7) &&
     completedMinutes < targetMinutes * 0.7;
   const missedSessionsCount = planState.missedSessions.length;
-  const spontaneousSessionsCount = planState.spontaneousWorkoutLogIds.length;
-  // Coachtext ska bara prata om spontana pass när det faktiskt finns spontana loggar.
-  const spontaneousCoachCount = spontaneousSessionsCount;
   const completedPlannedSessions = planState.plannedSessions
     .filter((session) => session.status === "completed" || session.status === "replaced_by_spontaneous")
     .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate));
@@ -1864,7 +1861,15 @@ export function buildWeeklyPlanStatus(planState: WeeklyPlanState): WeeklyPlanSta
       ? session.plannedDate > lastCompletedPlannedSession.plannedDate
       : true,
   ).length;
-  const spontaneousSinceLastPlannedWorkout = planState.spontaneousWorkoutLogIds.length;
+  const spontaneousSinceLastPlannedWorkout = planState.plannedSessions.filter(
+    (session) => session.status === "replaced_by_spontaneous",
+  ).filter((session) =>
+    lastCompletedPlannedSession
+      ? session.plannedDate > lastCompletedPlannedSession.plannedDate
+      : true,
+  ).length;
+  // Coachtext ska bara prata om spontana pass när de faktiskt är relevanta i aktuell lookback.
+  const spontaneousCoachCount = spontaneousSinceLastPlannedWorkout;
   const missedSinceLastGeneratedWorkout = missedAfterLastCompleted.length > 0;
   const missedTextReason = missedSinceLastGeneratedWorkout
     ? `Missat planerat pass ${missedAfterLastCompleted[0]?.plannedDate ?? ""} efter senaste genomförda planerade pass.`

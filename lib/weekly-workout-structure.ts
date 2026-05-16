@@ -46,6 +46,9 @@ type WeeklyPlanningSettings = {
   primary_priority_muscle?: MuscleBudgetGroup | null;
   secondary_priority_muscle?: MuscleBudgetGroup | null;
   tertiary_priority_muscle?: MuscleBudgetGroup | null;
+  preferred_session_duration_minutes?: number | null;
+  min_session_duration_minutes?: number | null;
+  max_session_duration_minutes?: number | null;
 };
 
 export type WeeklyPlanDay = {
@@ -748,6 +751,7 @@ function buildFocusSummaryText(params: {
   nextFocusScore: AdaptiveFocusScore;
   patternPreferredFocus: WorkoutFocus;
   trainingDoseAdjustment: TrainingDoseAdjustment;
+  goal?: WeeklyPlanningGoal | null;
 }) {
   const recentSummary =
     params.currentWeekFocuses.length > 0
@@ -766,6 +770,7 @@ function buildFocusSummaryText(params: {
     return appendTrainingDoseAdjustmentText(
       baseText,
       params.trainingDoseAdjustment,
+      params.goal,
     );
   }
 
@@ -774,6 +779,7 @@ function buildFocusSummaryText(params: {
     params.nextFocus,
   ).toLowerCase()} eftersom ${params.nextFocusScore.reason}. ${params.goalTrajectory.message}`,
     params.trainingDoseAdjustment,
+    params.goal,
   );
 }
 
@@ -782,12 +788,14 @@ function buildOptimalPlanText(params: {
   goalTrajectory: GoalTrajectory;
   passCount: number;
   trainingDoseAdjustment: TrainingDoseAdjustment;
+  goal?: WeeklyPlanningGoal | null;
 }) {
   // Långsiktig riktning först, därefter konkret coachbeslut för denna vecka.
   if (params.goalTrajectory.status === "too_aggressive") {
     return appendTrainingDoseAdjustmentText(
       `${params.goalTrajectory.message} ${params.coachDecision.message}`,
       params.trainingDoseAdjustment,
+      params.goal,
     );
   }
 
@@ -795,6 +803,7 @@ function buildOptimalPlanText(params: {
     return appendTrainingDoseAdjustmentText(
       `${params.goalTrajectory.message} Sikta på ungefär ${params.goalTrajectory.suggestedWeeklySessions ?? params.passCount} pass den här veckan.`,
       params.trainingDoseAdjustment,
+      params.goal,
     );
   }
 
@@ -802,6 +811,7 @@ function buildOptimalPlanText(params: {
     return appendTrainingDoseAdjustmentText(
       `${params.goalTrajectory.message} ${params.coachDecision.message}`,
       params.trainingDoseAdjustment,
+      params.goal,
     );
   }
 
@@ -809,6 +819,7 @@ function buildOptimalPlanText(params: {
     return appendTrainingDoseAdjustmentText(
       `${params.goalTrajectory.message} Tills vidare är cirka ${params.passCount} träningsfönster en bra start.`,
       params.trainingDoseAdjustment,
+      params.goal,
     );
   }
 
@@ -816,6 +827,7 @@ function buildOptimalPlanText(params: {
     return appendTrainingDoseAdjustmentText(
       `${params.goalTrajectory.message} Veckan kan behöva ${params.passCount + 1} träningsfönster om energin finns.`,
       params.trainingDoseAdjustment,
+      params.goal,
     );
   }
 
@@ -823,18 +835,21 @@ function buildOptimalPlanText(params: {
     return appendTrainingDoseAdjustmentText(
       `${params.goalTrajectory.message} Håll nästa pass kortare eller lättare om du tränar idag.`,
       params.trainingDoseAdjustment,
+      params.goal,
     );
   }
 
   return appendTrainingDoseAdjustmentText(
     `${params.goalTrajectory.message} ${params.coachDecision.message}`,
     params.trainingDoseAdjustment,
+    params.goal,
   );
 }
 
 function appendTrainingDoseAdjustmentText(
   baseText: string,
   adjustment: TrainingDoseAdjustment,
+  goal?: WeeklyPlanningGoal | null,
 ) {
   if (adjustment.compensationMode === "small" || adjustment.compensationMode === "moderate") {
     const focusText =
@@ -843,11 +858,16 @@ function appendTrainingDoseAdjustmentText(
             .map((group) => MUSCLE_LABELS[group].toLowerCase())
             .join("/")}`
         : "";
-    return `${baseText} Du missade ett planerat pass, så nästa pass får${focusText} – men vi håller ökningen liten för att inte göra passet orimligt.`;
+
+    if (goal === "strength") {
+      return `${baseText} Eftersom målet är styrka jagar vi inte missad volym. Vi behåller huvudmönstren${focusText} och gör bara en liten justering.`;
+    }
+
+    return `${baseText} Du ligger efter planerad träningsdos, så nästa pass får${focusText} – men ökningen hålls liten för att inte bli ett straffpass.`;
   }
 
   if (adjustment.compensationMode === "reduce_ambition") {
-    return `${baseText} Du har haft svårt att få in den planerade träningsdosen, så vi prioriterar kortare och mer genomförbara pass just nu.`;
+    return `${baseText} De senaste två veckorna har flera planerade pass inte blivit av. Vi sänker därför dagens rekommenderade längd och fokuserar på ett kortare pass som är lättare att genomföra.`;
   }
 
   if (adjustment.compensationMode === "recovery_first") {
@@ -862,6 +882,9 @@ export function buildWeeklyWorkoutStructure(params: {
   now?: Date;
   settings?: WeeklyPlanningSettings | null;
   missedPlannedSessionsCount?: number | null;
+  preferredSessionDurationMinutes?: number | null;
+  minSessionDurationMinutes?: number | null;
+  maxSessionDurationMinutes?: number | null;
 }): WeeklyWorkoutStructure {
   const now = params.now ?? new Date();
   const goal = params.settings?.training_goal ?? null;
@@ -907,7 +930,17 @@ export function buildWeeklyWorkoutStructure(params: {
     goal,
     experienceLevel: params.settings?.experience_level ?? null,
     targetSessionsPerWeek: goalTrajectory.weeklyFrequencyTarget,
-    targetMinutesPerWeek: goalTrajectory.weeklyFrequencyTarget * 30,
+    // Veckomålets minuter ska följa den faktiska planambitionen, inte ett hårdkodat 30-minutersantagande.
+    targetMinutesPerWeek:
+      goalTrajectory.weeklyFrequencyTarget *
+      Math.max(
+        20,
+        Math.round(
+          params.preferredSessionDurationMinutes ??
+            params.settings?.preferred_session_duration_minutes ??
+            30,
+        ),
+      ),
     now,
   });
   const goalFeedback = buildGoalFeedback({
@@ -1072,12 +1105,30 @@ export function buildWeeklyWorkoutStructure(params: {
       ? getPlanModeFocusTarget(targetMuscles, nextFocus)
       : nextFocus;
   const trainingDoseAdjustment = buildTrainingDoseAdjustment({
+    logs: analysisLogs,
+    now,
     trainingGap,
     goalTrajectory,
     muscleBudget,
     nextFocus: effectiveFocus,
+    goal,
+    experienceLevel: params.settings?.experience_level ?? null,
     configuredPriorityMuscles,
     missedPlannedSessionsCount: params.missedPlannedSessionsCount ?? 0,
+    selectedPlanMode,
+    recoveryOverrideApplied,
+    preferredSessionDurationMinutes:
+      params.preferredSessionDurationMinutes ??
+      params.settings?.preferred_session_duration_minutes ??
+      30,
+    minSessionDurationMinutes:
+      params.minSessionDurationMinutes ??
+      params.settings?.min_session_duration_minutes ??
+      20,
+    maxSessionDurationMinutes:
+      params.maxSessionDurationMinutes ??
+      params.settings?.max_session_duration_minutes ??
+      60,
   });
   // Dosjustering får styra lite extra fokus, men ska aldrig bryta recovery- eller riskfilter.
   if (
@@ -1226,12 +1277,14 @@ export function buildWeeklyWorkoutStructure(params: {
     nextFocusScore: effectiveFocusScore,
     patternPreferredFocus,
     trainingDoseAdjustment,
+    goal,
   });
   const defaultOptimalPlanText = buildOptimalPlanText({
     coachDecision,
     goalTrajectory,
     passCount,
     trainingDoseAdjustment,
+    goal,
   });
   const summaryOverride =
     selectedPlanMode === "recovery_mobility"

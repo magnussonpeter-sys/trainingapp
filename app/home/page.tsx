@@ -19,6 +19,10 @@ import {
   isDraftForWorkout,
 } from "@/lib/active-workout-session-storage";
 import {
+  applyTrainingDoseAdjustmentToDuration,
+  type TrainingDoseAdjustment,
+} from "@/lib/planning/training-dose-adjustment";
+import {
   buildWeeklyWorkoutStructure,
   detectWorkoutFocus,
   formatWorkoutFocus,
@@ -197,17 +201,19 @@ function buildHomeWorkoutRecommendation(params: {
   weeklyPlanContext: WeeklyPlanContext | null;
   weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
   fallbackDurationMinutes: number;
+  weeklyPlanSettings: WeeklyPlanSettings | null;
 }) {
-  const applyTrainingDoseAdjustment = (baseDuration: number) => {
-    const adjustment = params.weeklyStructure.trainingDoseAdjustment;
-    const maxExtraMinutes = Math.round(baseDuration * (adjustment.maxExtraDosePercent / 100));
-    const boundedDelta =
-      adjustment.suggestedDurationDelta > 0
-        ? Math.min(adjustment.suggestedDurationDelta, maxExtraMinutes)
-        : adjustment.suggestedDurationDelta;
-
-    return clampDuration(baseDuration + boundedDelta);
-  };
+  const applyDurationAdjustment = (baseDuration: number, adjustment: TrainingDoseAdjustment) =>
+    clampDuration(
+      applyTrainingDoseAdjustmentToDuration({
+        baseDurationMinutes: baseDuration,
+        adjustment,
+        minDurationMinutes: params.weeklyPlanSettings?.minDurationMinutes ?? 15,
+        maxDurationMinutes:
+          params.weeklyPlanSettings?.maxDurationMinutes ??
+          Math.max(60, clampDuration(baseDuration)),
+      }),
+    );
 
   if (params.weeklyPlanState && params.weeklyPlanContext) {
     const weeklyPlanContext = params.weeklyPlanContext;
@@ -247,8 +253,9 @@ function buildHomeWorkoutRecommendation(params: {
     return {
       focus,
       plannedFocus,
-      durationMinutes: applyTrainingDoseAdjustment(
+      durationMinutes: applyDurationAdjustment(
         weeklyPlanStatus.suggestedNextDurationMinutes,
+        params.weeklyStructure.trainingDoseAdjustment,
       ),
       muscleGroups,
       // Weekly plan ska vara primär synlig rekommendation när status finns.
@@ -259,7 +266,10 @@ function buildHomeWorkoutRecommendation(params: {
   return {
     focus: params.weeklyStructure.nextFocus,
     plannedFocus: params.weeklyStructure.nextFocus,
-    durationMinutes: applyTrainingDoseAdjustment(params.fallbackDurationMinutes),
+    durationMinutes: applyDurationAdjustment(
+      params.fallbackDurationMinutes,
+      params.weeklyStructure.trainingDoseAdjustment,
+    ),
     muscleGroups: Array.from(
       new Set([
         ...(params.weeklyStructure.trainingDoseAdjustment.priorityMuscles ?? []),
@@ -292,7 +302,8 @@ function buildHomeAiCoachContext(params: {
         params.weeklyPlanStatus?.suggestedNextWorkoutFocus === "recovery_strength"
           ? "light_accessory"
           : null,
-      focusIntent: params.weeklyPlanContext?.coachText ?? null,
+      // Home ska visa den justerade coachriktningen, inte äldre standardtext från weekly-plan.
+      focusIntent: params.weeklyStructure.optimalPlanText,
       targetMuscles: params.homeRecommendation.muscleGroups,
       avoidMuscles: Array.from(
         new Set([
@@ -1522,8 +1533,19 @@ export default function HomePage() {
       logs: workoutLogs,
       settings,
       missedPlannedSessionsCount: effectiveMissedPlannedSessionsCount,
+      preferredSessionDurationMinutes: weeklyPlanSettings?.defaultDurationMinutes ?? durationMinutes,
+      minSessionDurationMinutes: weeklyPlanSettings?.minDurationMinutes ?? 15,
+      maxSessionDurationMinutes: weeklyPlanSettings?.maxDurationMinutes ?? 60,
     });
-  }, [effectiveMissedPlannedSessionsCount, settings, workoutLogs]);
+  }, [
+    durationMinutes,
+    effectiveMissedPlannedSessionsCount,
+    settings,
+    weeklyPlanSettings?.defaultDurationMinutes,
+    weeklyPlanSettings?.maxDurationMinutes,
+    weeklyPlanSettings?.minDurationMinutes,
+    workoutLogs,
+  ]);
   const weeklyPlanState = serverWeeklyPlanState ?? fallbackWeeklyPlanState;
   const weeklyPlanContext = useMemo(
     () => serverWeeklyPlanContext ?? (weeklyPlanState ? buildWeeklyPlanContext(weeklyPlanState) : null),
@@ -1539,8 +1561,9 @@ export default function HomePage() {
       weeklyPlanContext,
       weeklyStructure,
       fallbackDurationMinutes: durationMinutes,
+      weeklyPlanSettings,
     });
-  }, [durationMinutes, weeklyPlanContext, weeklyPlanState, weeklyStructure]);
+  }, [durationMinutes, weeklyPlanContext, weeklyPlanSettings, weeklyPlanState, weeklyStructure]);
   const weeklyPlanDays = useMemo(() => {
     return buildWeeklyPlanDisplayDays({
       now: new Date(),

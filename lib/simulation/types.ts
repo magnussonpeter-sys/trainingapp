@@ -253,6 +253,9 @@ export type SimulationPlannerDebugEntry = {
     suggestedNextFocus: string;
     suggestedNextWorkoutFocus: string;
     suggestedNextDurationMinutes: number;
+    actualRecommendedDurationBeforeAdjustment?: number;
+    actualRecommendedDurationAfterAdjustment?: number;
+    durationAdjustmentReason?: string | null;
     coachText: string;
     goalReached: boolean;
     priorityMuscles: string[];
@@ -260,9 +263,25 @@ export type SimulationPlannerDebugEntry = {
     muscleSetDeficits: Record<string, number>;
     trainingDoseAdjustment?: {
       compensationMode: string;
+      adherence7d: number;
+      adherence14d: number;
+      adherence30d: number;
+      plannedMinutes7d: number;
+      completedMinutes7d: number;
+      plannedMinutes14d: number;
+      completedMinutes14d: number;
+      plannedMinutes30d: number;
+      completedMinutes30d: number;
+      missedSessions7d: number;
+      missedSessions14d: number;
+      missedSessions30d: number;
       suggestedDurationDelta: number;
+      recommendedDurationCapMinutes?: number;
       maxExtraDosePercent: number;
       priorityMuscles: string[];
+      focusCompatiblePriorityMuscles?: string[];
+      globalUndertrainedMuscles?: string[];
+      deferredMuscles?: string[];
       reason: string;
     };
     passGenerationMode: "mock_synthetic" | "real_ai" | "fallback_mock";

@@ -1,7 +1,24 @@
 import type { GoalTrajectory } from "@/lib/planning/goal-trajectory";
 import type { MuscleBudgetEntry, MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
 import type { TrainingGap } from "@/lib/planning/training-gap";
+import {
+  isWorkoutLogExcludedFromAnalysis,
+  type WorkoutLog,
+} from "@/lib/workout-log-storage";
 import type { WorkoutFocus } from "@/types/workout";
+
+type PlanningGoal =
+  | "strength"
+  | "hypertrophy"
+  | "health"
+  | "body_composition";
+
+type TrainingDoseAdjustmentPlanMode =
+  | "normal_training"
+  | "recovery"
+  | "recovery_mobility"
+  | "light_accessory"
+  | "selective_priority_accessory";
 
 export type TrainingDoseAdjustment = {
   compensationMode:
@@ -10,19 +27,55 @@ export type TrainingDoseAdjustment = {
     | "moderate"
     | "reduce_ambition"
     | "recovery_first";
+  adherence7d: number;
+  adherence14d: number;
+  adherence30d: number;
+  plannedMinutes7d: number;
+  completedMinutes7d: number;
+  plannedMinutes14d: number;
+  completedMinutes14d: number;
+  plannedMinutes30d: number;
+  completedMinutes30d: number;
+  missedSessions7d: number;
+  missedSessions14d: number;
+  missedSessions30d: number;
   suggestedDurationDelta: number;
+  recommendedDurationCapMinutes?: number;
   maxExtraDosePercent: number;
   priorityMuscles: MuscleBudgetGroup[];
+  focusCompatiblePriorityMuscles: MuscleBudgetGroup[];
+  globalUndertrainedMuscles: MuscleBudgetGroup[];
+  deferredMuscles: MuscleBudgetGroup[];
   reason: string;
 };
 
 type BuildTrainingDoseAdjustmentParams = {
+  logs: WorkoutLog[];
+  now: Date;
   trainingGap: TrainingGap;
   goalTrajectory: GoalTrajectory;
   muscleBudget: MuscleBudgetEntry[];
   nextFocus: WorkoutFocus;
+  goal?: PlanningGoal | null;
+  experienceLevel?: string | null;
   configuredPriorityMuscles?: MuscleBudgetGroup[];
   missedPlannedSessionsCount?: number | null;
+  selectedPlanMode?: TrainingDoseAdjustmentPlanMode | null;
+  recoveryOverrideApplied?: boolean;
+  preferredSessionDurationMinutes?: number | null;
+  minSessionDurationMinutes?: number | null;
+  maxSessionDurationMinutes?: number | null;
+};
+
+type AdherenceWindow = {
+  adherence: number;
+  plannedMinutes: number;
+  completedMinutes: number;
+  plannedSessions: number;
+  completedSessions: number;
+  missedSessions: number;
+  minuteCompletionRatio: number;
+  sessionCompletionRatio: number;
 };
 
 const FOCUS_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
@@ -32,27 +85,170 @@ const FOCUS_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
   core: ["core", "glutes"],
 };
 
-function getCompletionRatio(trainingGap: TrainingGap) {
-  if (trainingGap.completionRatio > 0) {
-    return trainingGap.completionRatio;
-  }
+const STRENGTH_PRIMARY_GROUPS = new Set<MuscleBudgetGroup>([
+  "quads",
+  "hamstrings",
+  "glutes",
+  "back",
+  "chest",
+  "shoulders",
+  "core",
+]);
 
-  if (trainingGap.plannedMinutes > 0) {
-    return trainingGap.completedMinutes / trainingGap.plannedMinutes;
-  }
-
-  if (trainingGap.plannedSessions > 0) {
-    return trainingGap.completedSessions / trainingGap.plannedSessions;
-  }
-
-  return 1;
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function getThirtyDayAdherence(trainingGap: TrainingGap) {
-  return Math.min(
-    trainingGap.thirtyDayEffect?.sessionCompletionRatio ?? 1,
-    trainingGap.thirtyDayEffect?.minuteCompletionRatio ?? 1,
+function roundToFive(value: number) {
+  return Math.round(value / 5) * 5;
+}
+
+function roundToSingleDecimal(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function getLogDurationMinutes(log: WorkoutLog) {
+  return Math.max(0, Math.round((log.durationSeconds ?? 0) / 60));
+}
+
+function getCompletedLogsWithinDays(logs: WorkoutLog[], now: Date, days: number) {
+  const thresholdMs = days * 24 * 60 * 60 * 1000;
+
+  return logs.filter((log) => {
+    if (log.status !== "completed" || isWorkoutLogExcludedFromAnalysis(log)) {
+      return false;
+    }
+
+    const completedAtMs = new Date(log.completedAt).getTime();
+    return Number.isFinite(completedAtMs) && now.getTime() - completedAtMs <= thresholdMs;
+  });
+}
+
+export function countMissedPlannedSessions(params: {
+  plannedSessions: number;
+  completedSessions: number;
+  explicitMissedSessions?: number | null;
+}) {
+  const estimatedMissed = Math.max(0, Math.round(params.plannedSessions) - params.completedSessions);
+  return Math.max(estimatedMissed, params.explicitMissedSessions ?? 0);
+}
+
+export function calculateAdherenceWindow(params: {
+  logs: WorkoutLog[];
+  now: Date;
+  days: number;
+  plannedSessionsPerWeek: number;
+  plannedMinutesPerWeek: number;
+  explicitMissedSessions?: number | null;
+}) {
+  const completedLogs = getCompletedLogsWithinDays(params.logs, params.now, params.days);
+  const completedSessions = completedLogs.length;
+  const completedMinutes = completedLogs.reduce(
+    (sum, log) => sum + getLogDurationMinutes(log),
+    0,
   );
+  const plannedSessions = roundToSingleDecimal(
+    params.plannedSessionsPerWeek * (params.days / 7),
+  );
+  const plannedMinutes = Math.max(
+    0,
+    Math.round(params.plannedMinutesPerWeek * (params.days / 7)),
+  );
+  const sessionCompletionRatio =
+    plannedSessions > 0 ? completedSessions / plannedSessions : 1;
+  const minuteCompletionRatio =
+    plannedMinutes > 0 ? completedMinutes / plannedMinutes : 1;
+  const adherence = clamp(
+    Math.min(sessionCompletionRatio, minuteCompletionRatio),
+    0,
+    1.25,
+  );
+
+  return {
+    adherence,
+    plannedMinutes,
+    completedMinutes,
+    plannedSessions,
+    completedSessions,
+    missedSessions: countMissedPlannedSessions({
+      plannedSessions,
+      completedSessions,
+      explicitMissedSessions: params.explicitMissedSessions,
+    }),
+    minuteCompletionRatio,
+    sessionCompletionRatio,
+  } satisfies AdherenceWindow;
+}
+
+export function getTypicalCompletedDuration(params: {
+  logs: WorkoutLog[];
+  now: Date;
+  days?: number;
+}) {
+  const completedLogs = getCompletedLogsWithinDays(
+    params.logs,
+    params.now,
+    params.days ?? 30,
+  )
+    .sort(
+      (left, right) =>
+        new Date(right.completedAt).getTime() - new Date(left.completedAt).getTime(),
+    )
+    .slice(0, 6);
+
+  if (completedLogs.length === 0) {
+    return null;
+  }
+
+  const minutes = completedLogs
+    .map(getLogDurationMinutes)
+    .filter((value) => value > 0)
+    .sort((left, right) => left - right);
+
+  if (minutes.length === 0) {
+    return null;
+  }
+
+  return minutes[Math.floor(minutes.length / 2)] ?? null;
+}
+
+export function getRecommendedDurationCap(params: {
+  compensationMode: TrainingDoseAdjustment["compensationMode"];
+  baseDurationMinutes: number;
+  typicalCompletedDurationMinutes: number | null;
+  minDurationMinutes: number;
+  maxDurationMinutes: number;
+  goal?: PlanningGoal | null;
+}) {
+  if (params.compensationMode !== "reduce_ambition") {
+    return undefined;
+  }
+
+  const fallbackCap = roundToFive(
+    clamp(
+      Math.max(params.minDurationMinutes, params.baseDurationMinutes * 0.75),
+      params.minDurationMinutes,
+      params.maxDurationMinutes,
+    ),
+  );
+
+  if (!params.typicalCompletedDurationMinutes) {
+    return fallbackCap;
+  }
+
+  const realisticBuffer = params.goal === "strength" ? 8 : 10;
+  const cappedDuration = roundToFive(
+    clamp(
+      Math.max(
+        params.typicalCompletedDurationMinutes + realisticBuffer,
+        params.typicalCompletedDurationMinutes * 1.35,
+      ),
+      params.minDurationMinutes,
+      params.baseDurationMinutes,
+    ),
+  );
+
+  return Math.min(params.maxDurationMinutes, Math.max(params.minDurationMinutes, cappedDuration));
 }
 
 function getPriorityRank(priorityMuscles: MuscleBudgetGroup[], group: MuscleBudgetGroup) {
@@ -60,140 +256,296 @@ function getPriorityRank(priorityMuscles: MuscleBudgetGroup[], group: MuscleBudg
   return index >= 0 ? index : Number.POSITIVE_INFINITY;
 }
 
-function buildPriorityMuscles(params: {
+function buildPriorityMuscleBuckets(params: {
   muscleBudget: MuscleBudgetEntry[];
-  missingMuscles: MuscleBudgetGroup[];
   nextFocus: WorkoutFocus;
   configuredPriorityMuscles: MuscleBudgetGroup[];
+  goal?: PlanningGoal | null;
 }) {
   const allowedGroups = new Set(FOCUS_GROUPS[params.nextFocus]);
-  const missingGroups = new Set(params.missingMuscles);
-
-  return [...params.muscleBudget]
-    .filter((entry) => allowedGroups.has(entry.group))
+  const sortableEntries = [...params.muscleBudget]
     .filter((entry) => entry.remainingSets > 0)
     .filter((entry) => entry.loadStatus !== "high_risk" && entry.loadStatus !== "over")
     .sort((left, right) => {
-      const leftMissingBonus = missingGroups.has(left.group) ? 1 : 0;
-      const rightMissingBonus = missingGroups.has(right.group) ? 1 : 0;
-
-      if (leftMissingBonus !== rightMissingBonus) {
-        return rightMissingBonus - leftMissingBonus;
-      }
-
       const leftPriorityRank = getPriorityRank(params.configuredPriorityMuscles, left.group);
       const rightPriorityRank = getPriorityRank(params.configuredPriorityMuscles, right.group);
+
       if (leftPriorityRank !== rightPriorityRank) {
         return leftPriorityRank - rightPriorityRank;
       }
 
-      return right.remainingSets - left.remainingSets;
-    })
+      if (right.remainingSets !== left.remainingSets) {
+        return right.remainingSets - left.remainingSets;
+      }
+
+      return left.group.localeCompare(right.group);
+    });
+
+  const globalUndertrainedMuscles = sortableEntries.map((entry) => entry.group);
+  const focusCompatiblePriorityMuscles = sortableEntries
+    .filter((entry) => allowedGroups.has(entry.group))
+    .filter((entry) =>
+      params.goal === "strength"
+        ? STRENGTH_PRIMARY_GROUPS.has(entry.group)
+        : true,
+    )
     .map((entry) => entry.group)
-    .slice(0, 3);
+    .slice(0, params.goal === "strength" ? 2 : 3);
+  const deferredMuscles = globalUndertrainedMuscles
+    .filter((group) => !focusCompatiblePriorityMuscles.includes(group))
+    .slice(0, 4);
+
+  return {
+    priorityMuscles: focusCompatiblePriorityMuscles,
+    focusCompatiblePriorityMuscles,
+    globalUndertrainedMuscles,
+    deferredMuscles,
+  };
+}
+
+function getBaseDurationMinutes(params: BuildTrainingDoseAdjustmentParams) {
+  const fromPreferred = params.preferredSessionDurationMinutes ?? null;
+
+  if (typeof fromPreferred === "number" && Number.isFinite(fromPreferred) && fromPreferred > 0) {
+    return Math.round(fromPreferred);
+  }
+
+  if (params.trainingGap.plannedSessions > 0 && params.trainingGap.plannedMinutes > 0) {
+    return Math.max(
+      20,
+      Math.round(params.trainingGap.plannedMinutes / params.trainingGap.plannedSessions),
+    );
+  }
+
+  return 30;
+}
+
+function hasRecoveryFirstSignal(params: {
+  goalTrajectory: GoalTrajectory;
+  muscleBudget: MuscleBudgetEntry[];
+  nextFocus: WorkoutFocus;
+  selectedPlanMode?: TrainingDoseAdjustmentPlanMode | null;
+  recoveryOverrideApplied?: boolean;
+}) {
+  const focusGroups = new Set(FOCUS_GROUPS[params.nextFocus]);
+  const focusHighRiskCount = params.muscleBudget.filter(
+    (entry) =>
+      focusGroups.has(entry.group) &&
+      (entry.loadStatus === "high_risk" || entry.loadStatus === "over"),
+  ).length;
+
+  return (
+    params.goalTrajectory.status === "too_aggressive" ||
+    params.recoveryOverrideApplied === true ||
+    params.selectedPlanMode === "recovery" ||
+    params.selectedPlanMode === "recovery_mobility" ||
+    focusHighRiskCount >= 2
+  );
+}
+
+function buildAdjustmentReason(params: {
+  compensationMode: TrainingDoseAdjustment["compensationMode"];
+  goal?: PlanningGoal | null;
+  adherence14d: number;
+  missedSessions14d: number;
+  plannedMinutes14d: number;
+  completedMinutes14d: number;
+}) {
+  if (params.compensationMode === "recovery_first") {
+    return "Återhämtning väger tyngre än kompensation just nu, så nästa pass ska inte växa för att ta igen missad träning.";
+  }
+
+  if (params.compensationMode === "reduce_ambition") {
+    return `De senaste två veckorna har följsamheten varit låg (${Math.round(
+      params.adherence14d * 100,
+    )} %) och ${params.missedSessions14d} planerade pass bedöms ha uteblivit. Vi sänker därför rekommenderad längd och fokuserar på ett mer genomförbart pass.`;
+  }
+
+  if (params.compensationMode === "moderate") {
+    if (params.goal === "strength") {
+      return "Det finns ett tydligt träningsgap, men eftersom målet är styrka gör vi bara en liten justering och behåller huvudmönstren.";
+    }
+
+    return `Du ligger efter planerad träningsdos (${params.completedMinutes14d}/${params.plannedMinutes14d} min senaste 14 dagarna), men följsamheten är fortfarande tillräcklig för en liten kontrollerad kompensation.`;
+  }
+
+  if (params.compensationMode === "small") {
+    return "Ett planerat pass verkar ha glidit. Nästa pass kan bli lite längre eller mer fokuserat, men ökningen hålls liten.";
+  }
+
+  return "Ingen säker dosjustering behövs just nu.";
+}
+
+export function applyTrainingDoseAdjustmentToDuration(params: {
+  baseDurationMinutes: number;
+  adjustment: TrainingDoseAdjustment;
+  minDurationMinutes: number;
+  maxDurationMinutes: number;
+}) {
+  const maxExtraMinutes = Math.round(
+    params.baseDurationMinutes * (params.adjustment.maxExtraDosePercent / 100),
+  );
+  const boundedDelta =
+    params.adjustment.suggestedDurationDelta > 0
+      ? Math.min(params.adjustment.suggestedDurationDelta, maxExtraMinutes)
+      : params.adjustment.suggestedDurationDelta;
+  let adjustedDuration = Math.round(params.baseDurationMinutes + boundedDelta);
+
+  // Cap används främst när planen behöver bli mer realistisk efter återkommande missade pass.
+  if (typeof params.adjustment.recommendedDurationCapMinutes === "number") {
+    adjustedDuration = Math.min(
+      adjustedDuration,
+      params.adjustment.recommendedDurationCapMinutes,
+    );
+  }
+
+  return Math.min(
+    params.maxDurationMinutes,
+    Math.max(params.minDurationMinutes, adjustedDuration),
+  );
 }
 
 export function buildTrainingDoseAdjustment(
   params: BuildTrainingDoseAdjustmentParams,
 ): TrainingDoseAdjustment {
   const configuredPriorityMuscles = params.configuredPriorityMuscles ?? [];
-  const missedPlannedSessionsCount = params.missedPlannedSessionsCount ?? 0;
-  const completionRatio = getCompletionRatio(params.trainingGap);
-  const thirtyDayAdherence = getThirtyDayAdherence(params.trainingGap);
-  const hasHighRisk = params.muscleBudget.some(
-    (entry) => entry.loadStatus === "high_risk" || entry.loadStatus === "over",
+  const baseDurationMinutes = getBaseDurationMinutes(params);
+  const minDurationMinutes = Math.max(
+    15,
+    Math.round(params.minSessionDurationMinutes ?? Math.max(20, baseDurationMinutes * 0.6)),
   );
-  const priorityMuscles = buildPriorityMuscles({
+  const maxDurationMinutes = Math.max(
+    minDurationMinutes,
+    Math.round(params.maxSessionDurationMinutes ?? Math.max(baseDurationMinutes, 60)),
+  );
+  const targetMinutesPerWeek = Math.max(
+    params.trainingGap.plannedMinutes,
+    params.goalTrajectory.weeklyFrequencyTarget * baseDurationMinutes,
+  );
+  const adherence7d = calculateAdherenceWindow({
+    logs: params.logs,
+    now: params.now,
+    days: 7,
+    plannedSessionsPerWeek: params.goalTrajectory.weeklyFrequencyTarget,
+    plannedMinutesPerWeek: targetMinutesPerWeek,
+    explicitMissedSessions: params.missedPlannedSessionsCount ?? 0,
+  });
+  const adherence14d = calculateAdherenceWindow({
+    logs: params.logs,
+    now: params.now,
+    days: 14,
+    plannedSessionsPerWeek: params.goalTrajectory.weeklyFrequencyTarget,
+    plannedMinutesPerWeek: targetMinutesPerWeek,
+  });
+  const adherence30d = calculateAdherenceWindow({
+    logs: params.logs,
+    now: params.now,
+    days: 30,
+    plannedSessionsPerWeek: params.goalTrajectory.weeklyFrequencyTarget,
+    plannedMinutesPerWeek: targetMinutesPerWeek,
+  });
+  const typicalCompletedDurationMinutes = getTypicalCompletedDuration({
+    logs: params.logs,
+    now: params.now,
+  });
+  const priorityBuckets = buildPriorityMuscleBuckets({
     muscleBudget: params.muscleBudget,
-    missingMuscles: params.trainingGap.missingMuscles,
     nextFocus: params.nextFocus,
     configuredPriorityMuscles,
+    goal: params.goal,
   });
 
-  if (
-    params.trainingGap.status === "recovery_first" ||
-    params.goalTrajectory.status === "too_aggressive" ||
-    hasHighRisk
-  ) {
-    return {
-      compensationMode: "recovery_first",
-      suggestedDurationDelta: 0,
-      maxExtraDosePercent: 0,
-      priorityMuscles: [],
-      reason:
-        "Återhämtning väger tyngre än kompensation just nu. Nästa pass ska inte växa för att ta igen missad träning.",
-    };
-  }
+  let compensationMode: TrainingDoseAdjustment["compensationMode"] = "none";
+  let suggestedDurationDelta = 0;
+  let maxExtraDosePercent = 0;
+  let recommendedDurationCapMinutes: number | undefined;
+
+  const hasMultipleMissesInRow =
+    adherence7d.missedSessions >= 2 ||
+    (adherence7d.completedSessions === 0 && adherence14d.missedSessions >= 2);
 
   if (
-    params.goalTrajectory.status === "behind" &&
-    (thirtyDayAdherence < 0.6 || missedPlannedSessionsCount >= 3)
+    hasRecoveryFirstSignal({
+      goalTrajectory: params.goalTrajectory,
+      muscleBudget: params.muscleBudget,
+      nextFocus: params.nextFocus,
+      selectedPlanMode: params.selectedPlanMode,
+      recoveryOverrideApplied: params.recoveryOverrideApplied,
+    })
   ) {
-    return {
-      compensationMode: "reduce_ambition",
-      suggestedDurationDelta: -5,
-      maxExtraDosePercent: 0,
-      priorityMuscles,
-      reason:
-        "Träningsmängden har varit svår att hålla över flera veckor. Sänk ambitionsnivån något och gör nästa pass mer genomförbart.",
-    };
-  }
-
-  if (completionRatio >= 0.95 || params.trainingGap.status === "on_track") {
-    if (missedPlannedSessionsCount >= 1 && thirtyDayAdherence >= 0.6) {
-      return {
-        compensationMode: "small",
-        suggestedDurationDelta: 5,
-        maxExtraDosePercent: 10,
-        priorityMuscles,
-        reason:
-          "Ett planerat pass missades nyligen. Nästa pass kan få en liten, kontrollerad dosökning utan att bli orimligt.",
-      };
+    compensationMode = "recovery_first";
+    suggestedDurationDelta = 0;
+    maxExtraDosePercent = 0;
+  } else if (
+    adherence14d.adherence < 0.45 ||
+    adherence14d.missedSessions >= 3 ||
+    adherence14d.minuteCompletionRatio < 0.5 ||
+    hasMultipleMissesInRow
+  ) {
+    compensationMode = "reduce_ambition";
+    suggestedDurationDelta =
+      baseDurationMinutes >= 40 || adherence14d.adherence < 0.3 ? -10 : -5;
+    maxExtraDosePercent = 0;
+    recommendedDurationCapMinutes = getRecommendedDurationCap({
+      compensationMode,
+      baseDurationMinutes,
+      typicalCompletedDurationMinutes,
+      minDurationMinutes,
+      maxDurationMinutes,
+      goal: params.goal,
+    });
+  } else if (
+    (params.goalTrajectory.status === "behind" ||
+      params.trainingGap.status === "major_gap") &&
+    adherence14d.adherence >= 0.45 &&
+    adherence14d.adherence <= 0.75
+  ) {
+    compensationMode = "moderate";
+    suggestedDurationDelta =
+      params.goal === "hypertrophy" && adherence14d.adherence >= 0.55 ? 10 : 5;
+    if (params.goal === "strength") {
+      suggestedDurationDelta = 5;
     }
-
-    return {
-      compensationMode: "none",
-      suggestedDurationDelta: 0,
-      maxExtraDosePercent: 0,
-      priorityMuscles: [],
-      reason: "Veckan ligger nära planen, så ingen extra kompensation behövs.",
-    };
-  }
-
-  if (
-    params.trainingGap.status === "minor_gap" ||
-    missedPlannedSessionsCount === 1 ||
-    (completionRatio >= 0.75 && params.trainingGap.missingMinutes <= 30)
+    maxExtraDosePercent = 20;
+  } else if (
+    (adherence7d.missedSessions >= 1 || (params.missedPlannedSessionsCount ?? 0) >= 1) &&
+    adherence14d.adherence >= 0.65
   ) {
-    return {
-      compensationMode: "small",
-      suggestedDurationDelta: 5,
-      maxExtraDosePercent: 10,
-      priorityMuscles,
-      reason:
-        "Ett planerat pass verkar ha glidit. Nästa pass kan få en liten dosökning utan att bli ett straffpass.",
-    };
+    compensationMode = "small";
+    suggestedDurationDelta = 5;
+    maxExtraDosePercent = 10;
   }
 
-  if (
-    (params.trainingGap.status === "major_gap" || missedPlannedSessionsCount >= 2) &&
-    thirtyDayAdherence >= 0.6
-  ) {
-    return {
-      compensationMode: "moderate",
-      suggestedDurationDelta: completionRatio < 0.5 ? 10 : 5,
-      maxExtraDosePercent: 20,
-      priorityMuscles,
-      reason:
-        "Det finns ett tydligt träningsgap, men adherencen är fortfarande tillräcklig för en liten kontrollerad kompensation i nästa pass.",
-    };
-  }
+  const reason = buildAdjustmentReason({
+    compensationMode,
+    goal: params.goal,
+    adherence14d: adherence14d.adherence,
+    missedSessions14d: adherence14d.missedSessions,
+    plannedMinutes14d: adherence14d.plannedMinutes,
+    completedMinutes14d: adherence14d.completedMinutes,
+  });
 
   return {
-    compensationMode: "none",
-    suggestedDurationDelta: 0,
-    maxExtraDosePercent: 0,
-    priorityMuscles,
-    reason: "Ingen säker dosjustering behövs just nu.",
+    compensationMode,
+    adherence7d: adherence7d.adherence,
+    adherence14d: adherence14d.adherence,
+    adherence30d: adherence30d.adherence,
+    plannedMinutes7d: adherence7d.plannedMinutes,
+    completedMinutes7d: adherence7d.completedMinutes,
+    plannedMinutes14d: adherence14d.plannedMinutes,
+    completedMinutes14d: adherence14d.completedMinutes,
+    plannedMinutes30d: adherence30d.plannedMinutes,
+    completedMinutes30d: adherence30d.completedMinutes,
+    missedSessions7d: adherence7d.missedSessions,
+    missedSessions14d: adherence14d.missedSessions,
+    missedSessions30d: adherence30d.missedSessions,
+    suggestedDurationDelta,
+    recommendedDurationCapMinutes,
+    maxExtraDosePercent: Math.min(maxExtraDosePercent, 20),
+    priorityMuscles: priorityBuckets.priorityMuscles,
+    focusCompatiblePriorityMuscles: priorityBuckets.focusCompatiblePriorityMuscles,
+    globalUndertrainedMuscles: priorityBuckets.globalUndertrainedMuscles,
+    deferredMuscles: priorityBuckets.deferredMuscles,
+    reason,
   };
 }

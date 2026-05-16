@@ -31,12 +31,14 @@ import {
   saveLocalWeeklyPlanSettings,
 } from "@/lib/planning/weekly-plan-local-store";
 import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
+import { applyTrainingDoseAdjustmentToDuration } from "@/lib/planning/training-dose-adjustment";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
 import { uiCardClasses } from "@/lib/ui/card-classes";
 import { uiPageShellClasses } from "@/lib/ui/page-shell-classes";
 import { saveWorkoutDraft } from "@/lib/workout-flow/workout-draft-store";
 import { saveGeneratedWorkout } from "@/lib/workout-storage";
 import { generateWorkout } from "@/lib/workout-generator";
+import { buildWeeklyWorkoutStructure } from "@/lib/weekly-workout-structure";
 
 const WEEKDAY_OPTIONS: Array<{ value: Weekday; label: string }> = [
   { value: "monday", label: "Mån" },
@@ -273,6 +275,28 @@ export default function WeeklyPlanPage() {
   const weeklyPlanContext = useMemo(() => {
     return serverPlanContext ?? (derivedPlanState ? buildWeeklyPlanContext(derivedPlanState) : null);
   }, [derivedPlanState, serverPlanContext]);
+  const weeklyStructure = useMemo(() => {
+    return buildWeeklyWorkoutStructure({
+      logs: workoutLogs,
+      settings,
+      missedPlannedSessionsCount: derivedPlanState?.missedSessions.length ?? 0,
+      preferredSessionDurationMinutes: planSettings?.defaultDurationMinutes ?? null,
+      minSessionDurationMinutes: planSettings?.minDurationMinutes ?? null,
+      maxSessionDurationMinutes: planSettings?.maxDurationMinutes ?? null,
+    });
+  }, [derivedPlanState?.missedSessions.length, planSettings, settings, workoutLogs]);
+  const adjustedSuggestedDurationMinutes = useMemo(() => {
+    if (!weeklyPlanStatus || !planSettings) {
+      return null;
+    }
+
+    return applyTrainingDoseAdjustmentToDuration({
+      baseDurationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
+      adjustment: weeklyStructure.trainingDoseAdjustment,
+      minDurationMinutes: planSettings.minDurationMinutes,
+      maxDurationMinutes: planSettings.maxDurationMinutes,
+    });
+  }, [planSettings, weeklyPlanStatus, weeklyStructure.trainingDoseAdjustment]);
 
   const nextPlannedSessions = useMemo(() => {
     if (!derivedPlanState) {
@@ -418,7 +442,8 @@ export default function WeeklyPlanPage() {
       const { workout } = await generateWorkout({
         userId,
         goal,
-        durationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
+        durationMinutes:
+          adjustedSuggestedDurationMinutes ?? weeklyPlanStatus.suggestedNextDurationMinutes,
         equipment,
         gym: gymId,
         gymLabel,
@@ -431,7 +456,8 @@ export default function WeeklyPlanPage() {
 
       saveWorkoutDraft(userId, {
         ...workout,
-        duration: weeklyPlanStatus.suggestedNextDurationMinutes,
+        duration:
+          adjustedSuggestedDurationMinutes ?? weeklyPlanStatus.suggestedNextDurationMinutes,
         gym: gymId,
         gymLabel,
         availableEquipment: equipment,
@@ -439,7 +465,8 @@ export default function WeeklyPlanPage() {
       });
       saveGeneratedWorkout(userId, {
         ...workout,
-        duration: weeklyPlanStatus.suggestedNextDurationMinutes,
+        duration:
+          adjustedSuggestedDurationMinutes ?? weeklyPlanStatus.suggestedNextDurationMinutes,
         gym: gymId,
         gymLabel,
         availableEquipment: equipment,
@@ -753,7 +780,10 @@ export default function WeeklyPlanPage() {
               {formatFocusLabel(weeklyPlanStatus.suggestedNextWorkoutFocus)}
             </h3>
             <p className="mt-2 text-base leading-7 text-slate-700">
-              Ungefär {formatSuggestedRange(weeklyPlanStatus.suggestedNextDurationMinutes, planSettings)}.
+              Ungefär {formatSuggestedRange(
+                adjustedSuggestedDurationMinutes ?? weeklyPlanStatus.suggestedNextDurationMinutes,
+                planSettings,
+              )}.
             </p>
             <button
               type="button"
