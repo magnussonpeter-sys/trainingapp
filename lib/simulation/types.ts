@@ -303,6 +303,14 @@ export type SimulationPlannerDebugEntry = {
       focusCompatiblePriorityMuscles?: string[];
       globalUndertrainedMuscles?: string[];
       deferredMuscles?: string[];
+      durationReductionReason?: string | null;
+      reductionTriggeredByTrend?: boolean;
+      singleMissIgnoredForDuration?: boolean;
+      spontaneousSessionsOffsetMissed?: boolean;
+      previousRecommendedDuration?: number;
+      adjustedRecommendedDuration?: number;
+      durationDelta?: number;
+      minDurationApplied?: boolean;
       reason: string;
       debugReasonCode?: string;
     };

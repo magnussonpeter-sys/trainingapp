@@ -46,6 +46,14 @@ export type TrainingDoseAdjustment = {
   focusCompatiblePriorityMuscles: MuscleBudgetGroup[];
   globalUndertrainedMuscles: MuscleBudgetGroup[];
   deferredMuscles: MuscleBudgetGroup[];
+  durationReductionReason?: string | null;
+  reductionTriggeredByTrend: boolean;
+  singleMissIgnoredForDuration: boolean;
+  spontaneousSessionsOffsetMissed: boolean;
+  previousRecommendedDuration: number;
+  adjustedRecommendedDuration: number;
+  durationDelta: number;
+  minDurationApplied: boolean;
   reason: string;
   debugReasonCode:
     | "insufficient_history_no_adjustment"
@@ -83,6 +91,7 @@ type AdherenceWindow = {
   plannedSessions: number;
   completedSessions: number;
   missedSessions: number;
+  spontaneousCompletedSessions: number;
   minuteCompletionRatio: number;
   sessionCompletionRatio: number;
 };
@@ -92,7 +101,11 @@ export type TrainingDoseDurationAdjustmentResult = {
   adjustedRecommendedDuration: number;
   recommendedDurationCapMinutes?: number;
   durationAdjustmentReason: string | null;
+  durationDelta: number;
+  minDurationApplied: boolean;
 };
+
+const MIN_RECOMMENDED_DURATION_MINUTES = 15;
 
 const FOCUS_GROUPS: Record<WorkoutFocus, MuscleBudgetGroup[]> = {
   full_body: ["quads", "hamstrings", "glutes", "back", "chest", "core"],
@@ -123,6 +136,57 @@ function roundToSingleDecimal(value: number) {
   return Math.round(value * 10) / 10;
 }
 
+function computeAdjustedDuration(params: {
+  baseDurationMinutes: number;
+  suggestedDurationDelta: number;
+  recommendedDurationCapMinutes?: number;
+  minDurationMinutes: number;
+  maxDurationMinutes: number;
+  maxExtraDosePercent: number;
+}) {
+  const maxExtraMinutes = Math.round(
+    params.baseDurationMinutes * (params.maxExtraDosePercent / 100),
+  );
+  const boundedDelta =
+    params.suggestedDurationDelta > 0
+      ? Math.min(params.suggestedDurationDelta, maxExtraMinutes)
+      : params.suggestedDurationDelta;
+  let adjustedDuration = Math.round(params.baseDurationMinutes + boundedDelta);
+
+  if (typeof params.recommendedDurationCapMinutes === "number") {
+    adjustedDuration = Math.min(
+      adjustedDuration,
+      params.recommendedDurationCapMinutes,
+    );
+  }
+
+  // Sänk gradvis så att ett enskilt steg inte gör stora hopp i rekommenderad längd.
+  adjustedDuration = Math.max(
+    adjustedDuration,
+    params.baseDurationMinutes - 10,
+  );
+  adjustedDuration = Math.min(
+    params.maxDurationMinutes,
+    Math.max(
+      Math.max(MIN_RECOMMENDED_DURATION_MINUTES, params.minDurationMinutes),
+      adjustedDuration,
+    ),
+  );
+
+  const minDurationApplied =
+    adjustedDuration ===
+    Math.max(
+      MIN_RECOMMENDED_DURATION_MINUTES,
+      params.minDurationMinutes,
+    );
+
+  return {
+    adjustedRecommendedDuration: Math.round(adjustedDuration),
+    durationDelta: Math.round(adjustedDuration - params.baseDurationMinutes),
+    minDurationApplied,
+  };
+}
+
 function getLogDurationMinutes(log: WorkoutLog) {
   return Math.max(0, Math.round((log.durationSeconds ?? 0) / 60));
 }
@@ -140,11 +204,22 @@ function getCompletedLogsWithinDays(logs: WorkoutLog[], now: Date, days: number)
   });
 }
 
+function countCompletedSpontaneousSessions(params: {
+  logs: WorkoutLog[];
+  now: Date;
+  days: number;
+}) {
+  return getCompletedLogsWithinDays(params.logs, params.now, params.days).filter(
+    (log) => log.metadata?.dayEvent === "spontaneous_training",
+  ).length;
+}
+
 export function countMissedPlannedSessions(params: {
   plannedSessions: number;
   completedSessions: number;
   explicitMissedSessions?: number | null;
   estimateFromCadence?: boolean;
+  spontaneousCompletedSessions?: number;
 }) {
   const explicitMissed = Math.max(0, params.explicitMissedSessions ?? 0);
 
@@ -156,7 +231,10 @@ export function countMissedPlannedSessions(params: {
     0,
     Math.round(params.plannedSessions) - params.completedSessions,
   );
-  return Math.max(estimatedMissed, explicitMissed);
+  const rawMissed = Math.max(estimatedMissed, explicitMissed);
+
+  // Spontana pass kan delvis kompensera missade planfönster när totaldosen ändå kom in.
+  return Math.max(0, rawMissed - Math.max(0, params.spontaneousCompletedSessions ?? 0));
 }
 
 export function calculateAdherenceWindow(params: {
@@ -169,6 +247,11 @@ export function calculateAdherenceWindow(params: {
   estimateMissedFromCadence?: boolean;
 }) {
   const completedLogs = getCompletedLogsWithinDays(params.logs, params.now, params.days);
+  const spontaneousCompletedSessions = countCompletedSpontaneousSessions({
+    logs: params.logs,
+    now: params.now,
+    days: params.days,
+  });
   const completedSessions = completedLogs.length;
   const completedMinutes = completedLogs.reduce(
     (sum, log) => sum + getLogDurationMinutes(log),
@@ -202,7 +285,9 @@ export function calculateAdherenceWindow(params: {
       completedSessions,
       explicitMissedSessions: params.explicitMissedSessions,
       estimateFromCadence: params.estimateMissedFromCadence,
+      spontaneousCompletedSessions,
     }),
+    spontaneousCompletedSessions,
     minuteCompletionRatio,
     sessionCompletionRatio,
   } satisfies AdherenceWindow;
@@ -247,14 +332,27 @@ export function getRecommendedDurationCap(params: {
   minDurationMinutes: number;
   maxDurationMinutes: number;
   goal?: PlanningGoal | null;
+  adherence14d?: number;
+  minuteCompletionRatio30d?: number;
 }) {
   if (params.compensationMode !== "reduce_ambition") {
     return undefined;
   }
 
+  const veryLowAdherence =
+    (params.adherence14d ?? 1) < 0.45 ||
+    (params.minuteCompletionRatio30d ?? 1) < 0.5;
+  const severeLowAdherence =
+    (params.adherence14d ?? 1) < 0.35 ||
+    (params.minuteCompletionRatio30d ?? 1) < 0.35;
   const fallbackCap = roundToFive(
     clamp(
-      Math.max(params.minDurationMinutes, params.baseDurationMinutes * 0.75),
+      params.goal === "strength" && veryLowAdherence
+        ? Math.min(
+            severeLowAdherence ? 35 : 40,
+            Math.max(params.minDurationMinutes, params.baseDurationMinutes * 0.85),
+          )
+        : Math.max(params.minDurationMinutes, params.baseDurationMinutes * 0.75),
       params.minDurationMinutes,
       params.maxDurationMinutes,
     ),
@@ -276,7 +374,30 @@ export function getRecommendedDurationCap(params: {
     ),
   );
 
-  return Math.min(params.maxDurationMinutes, Math.max(params.minDurationMinutes, cappedDuration));
+  if (params.goal === "strength" && veryLowAdherence) {
+    const shortStrengthCap =
+      severeLowAdherence
+        ? params.typicalCompletedDurationMinutes <= 15
+          ? 25
+          : params.typicalCompletedDurationMinutes <= 22
+            ? 30
+            : 35
+        : params.typicalCompletedDurationMinutes <= 15
+          ? 30
+          : params.typicalCompletedDurationMinutes <= 22
+            ? 35
+            : 40;
+
+    return Math.min(
+      params.maxDurationMinutes,
+      Math.max(params.minDurationMinutes, Math.min(cappedDuration, shortStrengthCap)),
+    );
+  }
+
+  return Math.min(
+    params.maxDurationMinutes,
+    Math.max(params.minDurationMinutes, cappedDuration),
+  );
 }
 
 function getPriorityRank(priorityMuscles: MuscleBudgetGroup[], group: MuscleBudgetGroup) {
@@ -424,6 +545,8 @@ function buildAdjustmentReason(params: {
   completedMinutes14d: number;
   insufficientHistory: boolean;
   totalDoseClearlyLow: boolean;
+  spontaneousSessionsOffsetMissed: boolean;
+  singleMissIgnoredForDuration: boolean;
 }) {
   if (params.compensationMode === "recovery_first") {
     if (params.totalDoseClearlyLow) {
@@ -436,6 +559,12 @@ function buildAdjustmentReason(params: {
   if (params.compensationMode === "reduce_ambition") {
     if (params.insufficientHistory && params.missedSessions14d === 0) {
       return "Vi har ännu för lite historik för att justera träningsdosen aggressivt. Vi behåller därför en försiktig rekommendation tills vi har mer data.";
+    }
+
+    if (params.goal === "strength") {
+      return `De senaste två veckorna har följsamheten varit låg (${Math.round(
+        params.adherence14d * 100,
+      )} %). Eftersom målet är styrka jagar vi inte missad volym, utan sänker dagens rekommenderade längd till ett kortare och mer genomförbart pass med tydliga huvudmönster.`;
     }
 
     return `De senaste två veckorna har följsamheten varit låg (${Math.round(
@@ -452,7 +581,15 @@ function buildAdjustmentReason(params: {
   }
 
   if (params.compensationMode === "small") {
+    if (params.singleMissIgnoredForDuration) {
+      return "Du missade ett pass, men det räcker att hålla planen stabil. Vi ändrar inte passlängden än.";
+    }
+
     return "Ett planerat pass verkar ha glidit. Nästa pass kan bli lite längre eller mer fokuserat, men ökningen hålls liten.";
+  }
+
+  if (params.spontaneousSessionsOffsetMissed) {
+    return "Du missade ett planerat pass men fick in ett spontant pass. Jag räknar in det och justerar fokus snarare än att korta ner kommande pass.";
   }
 
   if (params.insufficientHistory) {
@@ -472,34 +609,24 @@ export function buildTrainingDoseDurationAdjustment(params: {
   minDurationMinutes: number;
   maxDurationMinutes: number;
 }): TrainingDoseDurationAdjustmentResult {
-  const maxExtraMinutes = Math.round(
-    params.baseDurationMinutes * (params.adjustment.maxExtraDosePercent / 100),
-  );
-  const boundedDelta =
-    params.adjustment.suggestedDurationDelta > 0
-      ? Math.min(params.adjustment.suggestedDurationDelta, maxExtraMinutes)
-      : params.adjustment.suggestedDurationDelta;
-  let adjustedDuration = Math.round(params.baseDurationMinutes + boundedDelta);
-
-  // Cap används främst när planen behöver bli mer realistisk efter återkommande missade pass.
-  if (typeof params.adjustment.recommendedDurationCapMinutes === "number") {
-    adjustedDuration = Math.min(
-      adjustedDuration,
+  const computed = computeAdjustedDuration({
+    baseDurationMinutes: params.baseDurationMinutes,
+    suggestedDurationDelta: params.adjustment.suggestedDurationDelta,
+    recommendedDurationCapMinutes:
       params.adjustment.recommendedDurationCapMinutes,
-    );
-  }
-
-  adjustedDuration = Math.min(
-    params.maxDurationMinutes,
-    Math.max(params.minDurationMinutes, adjustedDuration),
-  );
+    minDurationMinutes: params.minDurationMinutes,
+    maxDurationMinutes: params.maxDurationMinutes,
+    maxExtraDosePercent: params.adjustment.maxExtraDosePercent,
+  });
 
   return {
     baseRecommendedDuration: Math.round(params.baseDurationMinutes),
-    adjustedRecommendedDuration: Math.round(adjustedDuration),
+    adjustedRecommendedDuration: computed.adjustedRecommendedDuration,
     recommendedDurationCapMinutes:
       params.adjustment.recommendedDurationCapMinutes,
     durationAdjustmentReason: params.adjustment.reason,
+    durationDelta: computed.durationDelta,
+    minDurationApplied: computed.minDurationApplied,
   };
 }
 
@@ -600,6 +727,8 @@ export function buildTrainingDoseAdjustment(
   let maxExtraDosePercent = 0;
   let recommendedDurationCapMinutes: number | undefined;
   let debugReasonCode: TrainingDoseAdjustment["debugReasonCode"] = "on_track";
+  let reductionTriggeredByTrend = false;
+  let singleMissIgnoredForDuration = false;
 
   const hasMultipleMissesInRow =
     adherence7d.missedSessions >= 2 ||
@@ -609,6 +738,9 @@ export function buildTrainingDoseAdjustment(
   const totalDoseClearlyLow =
     (thirtyDayEffect?.minuteCompletionRatio ?? adherence30d.minuteCompletionRatio) < 0.5 ||
     adherence14d.adherence < 0.45;
+  const spontaneousSessionsOffsetMissed =
+    adherence14d.spontaneousCompletedSessions > 0 &&
+    adherence14d.completedSessions >= Math.max(1, adherence14d.missedSessions);
   const recoverySignal = hasRecoveryFirstSignal({
     goalTrajectory: params.goalTrajectory,
     trainingGap: params.trainingGap,
@@ -633,14 +765,16 @@ export function buildTrainingDoseAdjustment(
     debugReasonCode =
       recoverySignal.debugReasonCode ?? "recovery_first_local_high_risk";
   } else if (
-    adherence14d.adherence < 0.45 ||
-    adherence14d.missedSessions >= 3 ||
-    ((thirtyDayEffect?.minuteCompletionRatio ?? adherence14d.minuteCompletionRatio) < 0.5 &&
-      thirtyDayConfidence !== "low") ||
-    hasMultipleMissesInRow
+    !spontaneousSessionsOffsetMissed &&
+    (adherence14d.adherence < 0.5 ||
+      adherence14d.missedSessions >= 3 ||
+      ((thirtyDayEffect?.minuteCompletionRatio ?? adherence14d.minuteCompletionRatio) < 0.5 &&
+        thirtyDayConfidence !== "low") ||
+      hasMultipleMissesInRow)
   ) {
     compensationMode = "reduce_ambition";
     debugReasonCode = "low_adherence_reduce_ambition";
+    reductionTriggeredByTrend = true;
     suggestedDurationDelta =
       baseDurationMinutes >= 40 || adherence14d.adherence < 0.3 ? -10 : -5;
     maxExtraDosePercent = 0;
@@ -651,6 +785,9 @@ export function buildTrainingDoseAdjustment(
       minDurationMinutes,
       maxDurationMinutes,
       goal: params.goal,
+      adherence14d: adherence14d.adherence,
+      minuteCompletionRatio30d:
+        thirtyDayEffect?.minuteCompletionRatio ?? adherence14d.minuteCompletionRatio,
     });
   } else if (
     (params.goalTrajectory.status === "behind" ||
@@ -672,8 +809,9 @@ export function buildTrainingDoseAdjustment(
   ) {
     compensationMode = "small";
     debugReasonCode = "single_missed_small_adjustment";
-    suggestedDurationDelta = 5;
+    suggestedDurationDelta = 0;
     maxExtraDosePercent = 10;
+    singleMissIgnoredForDuration = true;
   }
 
   if (compensationMode === "none" && debugReasonCode === "on_track" && insufficientHistory) {
@@ -700,6 +838,16 @@ export function buildTrainingDoseAdjustment(
     completedMinutes14d: adherence14d.completedMinutes,
     insufficientHistory,
     totalDoseClearlyLow,
+    spontaneousSessionsOffsetMissed,
+    singleMissIgnoredForDuration,
+  });
+  const durationPreview = computeAdjustedDuration({
+    baseDurationMinutes,
+    suggestedDurationDelta,
+    recommendedDurationCapMinutes,
+    minDurationMinutes,
+    maxDurationMinutes,
+    maxExtraDosePercent: Math.min(maxExtraDosePercent, 20),
   });
 
   return {
@@ -723,6 +871,15 @@ export function buildTrainingDoseAdjustment(
     focusCompatiblePriorityMuscles: priorityBuckets.focusCompatiblePriorityMuscles,
     globalUndertrainedMuscles: priorityBuckets.globalUndertrainedMuscles,
     deferredMuscles: priorityBuckets.deferredMuscles,
+    durationReductionReason:
+      durationPreview.durationDelta < 0 ? reason : null,
+    reductionTriggeredByTrend,
+    singleMissIgnoredForDuration,
+    spontaneousSessionsOffsetMissed,
+    previousRecommendedDuration: baseDurationMinutes,
+    adjustedRecommendedDuration: durationPreview.adjustedRecommendedDuration,
+    durationDelta: durationPreview.durationDelta,
+    minDurationApplied: durationPreview.minDurationApplied,
     reason,
     debugReasonCode,
   };

@@ -1140,7 +1140,7 @@ export function buildWeeklyWorkoutStructure(params: {
       trainingDoseAdjustment.compensationMode === "moderate") &&
     selectedPlanMode !== "recovery_mobility"
   ) {
-    const adjustmentTargets = trainingDoseAdjustment.priorityMuscles.filter(
+    const adjustmentTargets = trainingDoseAdjustment.focusCompatiblePriorityMuscles.filter(
       (group) =>
         !avoidMuscles.includes(group) &&
         !targetMuscles.includes(group),
@@ -1261,7 +1261,7 @@ export function buildWeeklyWorkoutStructure(params: {
     muscleBudget,
     configuredPriorityMuscles,
     [
-      ...(trainingDoseAdjustment.priorityMuscles ?? []),
+      ...(trainingDoseAdjustment.focusCompatiblePriorityMuscles ?? []),
       ...(coachDecision.priorityGroups ?? []),
     ],
   );

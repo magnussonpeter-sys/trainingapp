@@ -243,7 +243,8 @@ function buildHomeWorkoutRecommendation(params: {
     );
     const muscleGroups = Array.from(
       new Set([
-        ...(params.weeklyStructure.trainingDoseAdjustment.priorityMuscles ?? []),
+        ...(params.weeklyStructure.trainingDoseAdjustment.focusCompatiblePriorityMuscles ??
+          []),
         ...prioritizedGroups,
         ...deficitSortedGroups,
         ...HOME_FOCUS_GROUPS[focus],
@@ -272,7 +273,8 @@ function buildHomeWorkoutRecommendation(params: {
     ),
     muscleGroups: Array.from(
       new Set([
-        ...(params.weeklyStructure.trainingDoseAdjustment.priorityMuscles ?? []),
+        ...(params.weeklyStructure.trainingDoseAdjustment.focusCompatiblePriorityMuscles ??
+          []),
         ...params.weeklyStructure.nextFocusMuscleGroups,
       ]),
     ).slice(0, 3),

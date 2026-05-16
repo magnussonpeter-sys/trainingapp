@@ -89,6 +89,8 @@ export function evaluateSimulation(params: {
     .map((snapshot) => snapshot.workoutResult)
     .filter((workout) => workout !== undefined);
   const completedWorkouts = workoutResults.filter((workout) => workout.completed);
+  const completedPlannedRatio =
+    plannedDays.length > 0 ? completedPlannedWorkouts.length / plannedDays.length : 0;
   const first = dailySnapshots[0]?.stateBefore;
   const last = dailySnapshots[dailySnapshots.length - 1]?.stateAfter;
   const avgReadiness = round(avg(dailySnapshots.map((snapshot) => snapshot.stateAfter.readiness)), 1);
@@ -112,6 +114,11 @@ export function evaluateSimulation(params: {
     avg(completedWorkouts.map((workout) => workout.actualDurationMin)),
     1,
   );
+  const veryLowDoseForGoal =
+    (profile.goal === "hypertrophy" &&
+      (completedPlannedRatio < 0.45 || avgActualDuration <= 15)) ||
+    (profile.goal === "strength" &&
+      (completedPlannedRatio < 0.45 || avgActualDuration <= 18));
   const flags: string[] = [];
 
   if (
@@ -152,8 +159,10 @@ export function evaluateSimulation(params: {
     progressionQualityScore,
     flags,
     summary:
-      profile.goal === "hypertrophy" && avgActualDuration > 0 && avgActualDuration <= 18
-        ? "Simuleringen visar regelbunden men låg faktisk träningsdos; det kräver bättre kortpassoptimering och/eller mer total veckovolym för hypertrofi."
+      profile.goal === "hypertrophy" && veryLowDoseForGoal
+        ? "Simuleringen visar för låg faktisk träningsdos för tydlig muskeltillväxt. Kortare pass kan vara en bra start, men veckovolymen behöver upp över tid."
+        : profile.goal === "strength" && veryLowDoseForGoal
+        ? "Simuleringen visar låg faktisk styrkedos. Kortare, fokuserade pass är troligen rätt väg, men nuvarande nivå är för låg för stabil styrkeutveckling."
         : progressionQualityScore >= 75
         ? "Simuleringen ser balanserad ut: progression, följsamhet och återhämtning samspelar rimligt."
         : progressionQualityScore >= 55

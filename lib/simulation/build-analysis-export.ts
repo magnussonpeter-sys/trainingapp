@@ -74,6 +74,33 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
           ) / meaningfulSnapshots.length,
         )
       : 0;
+  const durationDebugEntries = meaningfulSnapshots
+    .map((snapshot) => dayDebugByIndex.get(snapshot.dayIndex)?.realAppPlanner)
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+  const avgOriginalRecommendedDuration =
+    durationDebugEntries.length > 0
+      ? Math.round(
+          durationDebugEntries.reduce(
+            (sum, entry) =>
+              sum +
+              (entry.actualRecommendedDurationBeforeAdjustment ??
+                entry.suggestedNextDurationMinutes),
+            0,
+          ) / durationDebugEntries.length,
+        )
+      : avgPlannedDuration;
+  const avgAdjustedRecommendedDuration =
+    durationDebugEntries.length > 0
+      ? Math.round(
+          durationDebugEntries.reduce(
+            (sum, entry) =>
+              sum +
+              (entry.actualRecommendedDurationAfterAdjustment ??
+                entry.suggestedNextDurationMinutes),
+            0,
+          ) / durationDebugEntries.length,
+        )
+      : avgPlannedDuration;
 
   const lines = [
     "# Simulationsanalys",
@@ -119,6 +146,8 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     `- Fallbackförsök: ${report.fallbackAttemptCount ?? report.aiFallbackWorkoutCount ?? 0}`,
     `- Underkända fallbackförsök: ${report.fallbackValidationFailureCount ?? 0}`,
     `- Spontana pass: ${spontaneousCount}`,
+    `- Genomsnittlig ursprunglig rekommenderad duration: ${avgOriginalRecommendedDuration} min`,
+    `- Genomsnittlig justerad rekommenderad duration: ${avgAdjustedRecommendedDuration} min`,
     `- Genomsnittlig faktisk duration: ${avgActualDuration} min`,
     `- Genomsnittlig planerad duration: ${avgPlannedDuration} min`,
     `- Utvärdering: ${report.evaluation.summary}`,

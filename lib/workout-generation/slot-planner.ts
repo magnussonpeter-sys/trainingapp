@@ -18,6 +18,7 @@ function clampSlotCount(params: {
 
   if (durationMinutes <= 20) return 3;
   if (durationMinutes <= 30) return goal === "strength" ? 4 : 4;
+  if (goal === "strength" && durationMinutes <= 35) return 4;
   if (durationMinutes <= 40) return 5;
   if (durationMinutes <= 50) return goal === "strength" ? 6 : 6;
   return goal === "strength" ? 7 : 8;
@@ -463,6 +464,7 @@ function buildFullBodyContract(params: {
   targetSlotCount: number;
 }) {
   const isStrength = params.coachContext.goal === "strength";
+  const isShortStrength = isStrength && params.coachContext.durationMinutes <= 35;
   const slots: WorkoutSlot[] = [
     createContractSlot({
       templateId: params.templateId,
@@ -519,7 +521,9 @@ function buildFullBodyContract(params: {
         label: "secondary_lower",
         role: "main_hinge",
         allowedRoles: ["main_hinge", "main_squat", "unilateral_lower"],
-        required: true,
+        // Korta strength-pass ska fokusera på lower + push + pull utan att
+        // alltid falla om ett fjärde lower-mönster inte får plats.
+        required: !isShortStrength,
         priority: isStrength ? 96 : 88,
         preferredMovementPatterns: ["hinge", "squat", "lunge"],
         minGoalSpecificity: isStrength ? 2 : 1,
