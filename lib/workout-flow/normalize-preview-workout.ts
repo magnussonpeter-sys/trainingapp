@@ -221,6 +221,7 @@ function normalizeExercise(exercise: any, index: number): Exercise {
         exercise?.weightSuggestion,
     ),
     suggestedWeightLabel: normalizeOptionalString(exercise?.suggestedWeightLabel),
+    suggestedWeightSourceLabel: normalizeOptionalString(exercise?.suggestedWeightSourceLabel),
     availableWeightsKg:
       Array.isArray(exercise?.availableWeightsKg)
         ? exercise.availableWeightsKg.filter(

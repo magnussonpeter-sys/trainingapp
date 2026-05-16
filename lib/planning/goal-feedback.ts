@@ -298,13 +298,13 @@ function buildMinutesRangeLabel(deltaMinutes: number, mode: "increase" | "decrea
   return `${prefix}${lower}–${upper} min/vecka`;
 }
 
-function buildStatusHeadline(status: GoalFeedbackStatus) {
+function buildStatusHeadline(status: GoalFeedbackStatus, score: number) {
   if (status === "too_low") return "Tydligt under målet";
   if (status === "slightly_low") return "Lite under målet";
-  if (status === "high") return "Mer än du behöver just nu";
-  if (status === "recovery_risk") return "Återhämtningen begränsar";
+  if (status === "high") return "På rätt nivå";
+  if (status === "recovery_risk") return "Prioritera återhämtning";
   if (status === "insufficient_data") return "För lite data ännu";
-  return "Bra riktning";
+  return score >= 85 ? "På rätt nivå" : "På god väg";
 }
 
 function buildSummary(params: {
@@ -349,7 +349,9 @@ function buildSummary(params: {
     return "Du har fått in träningstid, men passen är inte helt tillräckligt riktade mot målet ännu.";
   }
 
-  return `Du ligger lite under nivån som oftast krävs för tydlig utveckling mot ${goalLabel}.`;
+  return params.status === "too_low"
+    ? `Du ligger tydligt under nivån som oftast krävs för tydlig utveckling mot ${goalLabel}.`
+    : `Du ligger lite under nivån som oftast krävs för tydlig utveckling mot ${goalLabel}.`;
 }
 
 function buildMainAdvice(params: {
@@ -455,7 +457,7 @@ export function buildGoalFeedback(input: GoalFeedbackInput): GoalFeedback {
     return {
       score: 0,
       status: "insufficient_data",
-      headline: buildStatusHeadline("insufficient_data"),
+      headline: buildStatusHeadline("insufficient_data", 0),
       summary: "Genomför några pass till så blir bedömningen säkrare.",
       mainAdvice: "Fokusera först på att få in några jämna pass, så kan vi sedan justera mängden bättre.",
       concreteChange: {
@@ -551,11 +553,11 @@ export function buildGoalFeedback(input: GoalFeedbackInput): GoalFeedback {
   let status: GoalFeedbackStatus = "on_track";
   if (recoveryScore < 55) {
     status = "recovery_risk";
-  } else if (score >= 88 && frequencyRatio > 1 && volumeRatio > 1.05) {
+  } else if (score >= 85 && frequencyRatio > 1 && volumeRatio > 1.05) {
     status = "high";
-  } else if (score < 55) {
+  } else if (score < 40) {
     status = "too_low";
-  } else if (score < 76) {
+  } else if (score < 65) {
     status = "slightly_low";
   }
 
@@ -597,7 +599,7 @@ export function buildGoalFeedback(input: GoalFeedbackInput): GoalFeedback {
   return {
     score,
     status,
-    headline: buildStatusHeadline(status),
+    headline: buildStatusHeadline(status, score),
     summary,
     mainAdvice,
     concreteChange,

@@ -258,6 +258,13 @@ export type SimulationPlannerDebugEntry = {
     priorityMuscles: string[];
     recoveryLimitedMuscles: string[];
     muscleSetDeficits: Record<string, number>;
+    trainingDoseAdjustment?: {
+      compensationMode: string;
+      suggestedDurationDelta: number;
+      maxExtraDosePercent: number;
+      priorityMuscles: string[];
+      reason: string;
+    };
     passGenerationMode: "mock_synthetic" | "real_ai" | "fallback_mock";
     aiRequestUsed?: boolean;
     promptContextSummary?: string;

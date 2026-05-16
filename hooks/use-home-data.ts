@@ -16,6 +16,7 @@ import { getCachedHomeSettings, saveCachedHomeSettings } from "@/lib/home-settin
 import {
   syncPendingWorkoutQueue,
 } from "@/lib/workout-flow/pending-sync-service";
+import { getPendingSyncQueue } from "@/lib/workout-flow/pending-sync-store";
 import type {
   SportFocus,
   TrainingGoal,
@@ -89,6 +90,34 @@ function mergeWorkoutLogs(apiLogs: WorkoutLog[], localLogs: WorkoutLog[]) {
     (left, right) =>
       new Date(right.completedAt).getTime() - new Date(left.completedAt).getTime(),
   );
+}
+
+function buildPendingSyncWorkoutLogs(userId: string): WorkoutLog[] {
+  // PWA och web har olika localStorage. Därför ska Home bara komplettera serverloggar
+  // med pass som faktiskt väntar på sync, inte med hela den lokala historiken.
+  return getPendingSyncQueue()
+    .filter((item) => item.userId === userId)
+    .map((item) => ({
+      id: item.id,
+      userId: item.userId,
+      workoutId: item.workoutId,
+      workoutName: item.workoutName,
+      startedAt: item.sessionStartedAt,
+      completedAt: item.completedAt,
+      durationSeconds: Math.max(
+        0,
+        Math.round(
+          (new Date(item.completedAt).getTime() - new Date(item.sessionStartedAt).getTime()) /
+            1000,
+        ),
+      ),
+      status: item.status,
+      exercises: item.completedExercises,
+      metadata: {
+        offlineSync: true,
+        clientSyncId: item.id,
+      },
+    }) satisfies WorkoutLog);
 }
 
 // Normaliserar gyms utan att tappa equipment.
@@ -288,6 +317,7 @@ export function useHomeData({ router }: UseHomeDataParams) {
 
         try {
           const localLogs = getWorkoutLogs(userId);
+          const pendingSyncLogs = buildPendingSyncWorkoutLogs(userId);
           // Home behöver lite bredare historik för lokala fallback-beräkningar,
           // även om serverns veckoplanstatus ska vara primär när den finns.
           const logsRes = await fetch(
@@ -311,10 +341,15 @@ export function useHomeData({ router }: UseHomeDataParams) {
           }
 
           const apiLogs = logsData.logs;
-          const mergedLogs = mergeWorkoutLogs(apiLogs, localLogs);
+          const mergedLogs =
+            pendingSyncLogs.length > 0
+              ? mergeWorkoutLogs(apiLogs, pendingSyncLogs)
+              : apiLogs;
 
           setWorkoutLogs(mergedLogs);
-          setLogsSource(apiLogs.length > 0 ? "api" : localLogs.length > 0 ? "local" : "api");
+          setLogsSource(
+            apiLogs.length > 0 ? "api" : localLogs.length > 0 || pendingSyncLogs.length > 0 ? "local" : "api",
+          );
         } catch (error) {
           console.error("Kunde inte hämta loggar från API:", error);
 

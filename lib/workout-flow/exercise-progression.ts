@@ -10,6 +10,7 @@ import {
 } from "@/lib/equipment";
 import { getSuggestedTimedDuration, getSuggestedWeight } from "@/lib/progression-engine";
 import { getExerciseProgression } from "@/lib/progression-store";
+import type { WorkoutLog } from "@/lib/workout-log-storage";
 import type { Exercise } from "@/types/workout";
 
 export type ProgressionGoal =
@@ -23,6 +24,27 @@ export type WorkoutGymEquipmentItem = {
   equipmentType?: string | null;
   label?: string | null;
   weights_kg?: number[] | null;
+};
+
+export type WorkoutProgressionProfile = {
+  sex?: string | null;
+  age?: number | null;
+  weightKg?: number | null;
+  experienceLevel?: string | null;
+};
+
+type HistoricalLoadSample = {
+  exerciseId: string;
+  variantGroup: string | null;
+  movementPattern: string | null;
+  weightKg: number;
+  weightSelectionMode: "total" | "single_implement" | "per_hand";
+  completedAt: string;
+};
+
+export type ExerciseHistoryIndex = {
+  byExerciseId: Record<string, HistoricalLoadSample>;
+  byVariantGroup: Record<string, HistoricalLoadSample>;
 };
 
 function toFiniteNumberOrNull(value: unknown) {
@@ -247,6 +269,24 @@ function getLoadMetadata(exercise: Exercise) {
   };
 }
 
+function getCatalogExerciseLoadMetadata(exerciseId: string) {
+  const catalogExercise = getExerciseById(exerciseId);
+
+  if (!catalogExercise) {
+    return null;
+  }
+
+  return getLoadMetadata({
+    id: catalogExercise.id,
+    name: catalogExercise.name,
+    sets: catalogExercise.defaultSets,
+    reps: catalogExercise.defaultReps ?? null,
+    duration: catalogExercise.defaultDuration ?? null,
+    rest: catalogExercise.defaultRest,
+    description: catalogExercise.description,
+  });
+}
+
 function getAvailableWeightsForExercise(
   exercise: Exercise,
   gymEquipmentItems: WorkoutGymEquipmentItem[],
@@ -289,13 +329,269 @@ function getAvailableWeightsForExercise(
   };
 }
 
+function getRepresentativeSetWeight(log: WorkoutLog, exerciseId: string) {
+  const completedExercise = log.exercises.find((exercise) => exercise.exerciseId === exerciseId);
+
+  if (!completedExercise) {
+    return null;
+  }
+
+  const reversedSets = [...completedExercise.sets].reverse();
+
+  for (const set of reversedSets) {
+    if (typeof set.actualWeight === "number" && Number.isFinite(set.actualWeight) && set.actualWeight > 0) {
+      return set.actualWeight;
+    }
+  }
+
+  for (const set of reversedSets) {
+    if (typeof set.plannedWeight === "number" && Number.isFinite(set.plannedWeight) && set.plannedWeight > 0) {
+      return set.plannedWeight;
+    }
+  }
+
+  return null;
+}
+
+export function buildExerciseHistoryIndex(logs: WorkoutLog[]): ExerciseHistoryIndex {
+  const byExerciseId: Record<string, HistoricalLoadSample> = {};
+  const byVariantGroup: Record<string, HistoricalLoadSample> = {};
+
+  const sortedLogs = [...logs].sort(
+    (left, right) =>
+      new Date(right.completedAt).getTime() - new Date(left.completedAt).getTime(),
+  );
+
+  for (const log of sortedLogs) {
+    if (log.status !== "completed") {
+      continue;
+    }
+
+    if (log.excludeFromAnalysis === true || log.metadata?.excludeFromAnalysis === true) {
+      continue;
+    }
+
+    for (const completedExercise of log.exercises) {
+      if (!completedExercise.exerciseId || byExerciseId[completedExercise.exerciseId]) {
+        continue;
+      }
+
+      const weightKg = getRepresentativeSetWeight(log, completedExercise.exerciseId);
+      if (weightKg == null) {
+        continue;
+      }
+
+      const catalogExercise = getExerciseById(completedExercise.exerciseId);
+      const loadMetadata = getCatalogExerciseLoadMetadata(completedExercise.exerciseId);
+
+      if (!catalogExercise || !loadMetadata) {
+        continue;
+      }
+
+      const sample: HistoricalLoadSample = {
+        exerciseId: completedExercise.exerciseId,
+        variantGroup: catalogExercise.variantGroup ?? null,
+        movementPattern: catalogExercise.movementPattern ?? null,
+        weightKg,
+        weightSelectionMode: loadMetadata.weightSelectionMode,
+        completedAt: log.completedAt,
+      };
+
+      byExerciseId[completedExercise.exerciseId] = sample;
+
+      if (sample.variantGroup && !byVariantGroup[sample.variantGroup]) {
+        byVariantGroup[sample.variantGroup] = sample;
+      }
+    }
+  }
+
+  return {
+    byExerciseId,
+    byVariantGroup,
+  };
+}
+
+function normalizeExperienceLevel(value: string | null | undefined) {
+  switch (value) {
+    case "advanced":
+      return "advanced";
+    case "experienced":
+      return "intermediate";
+    case "intermediate":
+      return "intermediate";
+    case "some_experience":
+      return "some_experience";
+    case "novice":
+      return "novice";
+    case "beginner":
+      return "beginner";
+    default:
+      return "beginner";
+  }
+}
+
+function getExperienceMultiplier(value: string | null | undefined) {
+  switch (normalizeExperienceLevel(value)) {
+    case "advanced":
+      return 1.25;
+    case "intermediate":
+      return 1.15;
+    case "some_experience":
+      return 1.08;
+    case "novice":
+      return 0.95;
+    case "beginner":
+    default:
+      return 0.85;
+  }
+}
+
+function getSexMultiplier(value: string | null | undefined) {
+  switch (value) {
+    case "female":
+      return 0.82;
+    case "other":
+      return 0.92;
+    case "male":
+    default:
+      return 1;
+  }
+}
+
+function getAgeMultiplier(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 1;
+  }
+
+  if (value >= 65) {
+    return 0.88;
+  }
+
+  if (value >= 55) {
+    return 0.93;
+  }
+
+  if (value <= 22) {
+    return 1.03;
+  }
+
+  return 1;
+}
+
+function roundToWholeKilo(value: number) {
+  return Math.max(1, Math.round(value));
+}
+
+function estimateInitialWeightFromProfile(params: {
+  exercise: Exercise;
+  userProfile?: WorkoutProgressionProfile;
+  weightSelectionMode: "total" | "single_implement" | "per_hand";
+  availableWeightsKg: number[];
+}) {
+  const { exercise, userProfile, weightSelectionMode, availableWeightsKg } = params;
+  const catalogExercise = getExerciseById(exercise.id);
+
+  if (!catalogExercise) {
+    return null;
+  }
+
+  const userWeightKg =
+    typeof userProfile?.weightKg === "number" && Number.isFinite(userProfile.weightKg)
+      ? Math.min(Math.max(userProfile.weightKg, 45), 140)
+      : 75;
+
+  const variantGroup = catalogExercise.variantGroup;
+  const movementPattern = catalogExercise.movementPattern;
+
+  let baseRatio = 0.12;
+
+  if (variantGroup === "bench_press" || movementPattern === "horizontal_push") {
+    baseRatio = weightSelectionMode === "per_hand" ? 0.12 : 0.22;
+  } else if (variantGroup === "row" || movementPattern === "horizontal_pull") {
+    baseRatio = weightSelectionMode === "per_hand" ? 0.14 : 0.18;
+  } else if (variantGroup === "romanian_deadlift" || variantGroup === "deadlift" || movementPattern === "hinge") {
+    baseRatio = weightSelectionMode === "per_hand" ? 0.22 : 0.32;
+  } else if (variantGroup === "squat" || movementPattern === "squat") {
+    baseRatio = weightSelectionMode === "per_hand" ? 0.18 : 0.22;
+  } else if (variantGroup === "lunge" || variantGroup === "step_up" || movementPattern === "lunge") {
+    baseRatio = weightSelectionMode === "per_hand" ? 0.14 : 0.18;
+  } else if (variantGroup === "overhead_press" || movementPattern === "vertical_push") {
+    baseRatio = weightSelectionMode === "per_hand" ? 0.09 : 0.14;
+  } else if (variantGroup === "biceps_curl" || variantGroup === "triceps_isolation") {
+    baseRatio = weightSelectionMode === "per_hand" ? 0.08 : 0.1;
+  } else if (variantGroup === "lateral_raise" || variantGroup === "rear_delt") {
+    baseRatio = weightSelectionMode === "per_hand" ? 0.05 : 0.07;
+  } else if (variantGroup === "carry") {
+    baseRatio = weightSelectionMode === "per_hand" ? 0.18 : 0.24;
+  }
+
+  const estimatedWeight =
+    userWeightKg *
+    baseRatio *
+    getExperienceMultiplier(userProfile?.experienceLevel) *
+    getSexMultiplier(userProfile?.sex) *
+    getAgeMultiplier(userProfile?.age);
+
+  if (!Number.isFinite(estimatedWeight) || estimatedWeight <= 0) {
+    return null;
+  }
+
+  if (availableWeightsKg.length > 0) {
+    return snapWeightToAvailableWeights(estimatedWeight, availableWeightsKg);
+  }
+
+  // Utan gymvikter håller vi oss till hela kilo så användaren får ett enkelt startvärde.
+  return roundToWholeKilo(estimatedWeight);
+}
+
+function getHistoricalSuggestedWeight(params: {
+  exercise: Exercise;
+  historyIndex?: ExerciseHistoryIndex;
+  weightSelectionMode: "total" | "single_implement" | "per_hand";
+}) {
+  const { exercise, historyIndex, weightSelectionMode } = params;
+
+  if (!historyIndex) {
+    return null;
+  }
+
+  const exactSample = historyIndex.byExerciseId[exercise.id];
+  if (exactSample && exactSample.weightSelectionMode === weightSelectionMode) {
+    return {
+      weightKg: exactSample.weightKg,
+      source: "exact_history" as const,
+    };
+  }
+
+  const catalogExercise = getExerciseById(exercise.id);
+  const variantSample = catalogExercise?.variantGroup
+    ? historyIndex.byVariantGroup[catalogExercise.variantGroup]
+    : null;
+
+  if (variantSample && variantSample.weightSelectionMode === weightSelectionMode) {
+    return {
+      weightKg: variantSample.weightKg,
+      source: "variant_history" as const,
+    };
+  }
+
+  return null;
+}
+
 function buildWeightProgressionNote(params: {
   availableWeightsKg: number[];
   lastWeight: number | null;
   suggestedWeight: number | null;
   weightUnitLabel: string;
+  suggestionSource?: "exercise_progression" | "exact_history" | "variant_history" | "profile_estimate";
 }) {
-  const { availableWeightsKg, lastWeight, suggestedWeight, weightUnitLabel } = params;
+  const {
+    availableWeightsKg,
+    lastWeight,
+    suggestedWeight,
+    weightUnitLabel,
+    suggestionSource,
+  } = params;
 
   if (suggestedWeight == null) {
     return undefined;
@@ -304,6 +600,14 @@ function buildWeightProgressionNote(params: {
   const suggestedLabel = `${formatWeightValue(suggestedWeight)} ${weightUnitLabel}`;
 
   if (lastWeight == null) {
+    if (suggestionSource === "variant_history") {
+      return `Startförslag: ${suggestedLabel}. Förslaget lutar mot en liknande övning du redan har kört.`;
+    }
+
+    if (suggestionSource === "profile_estimate") {
+      return `Startförslag: ${suggestedLabel}. Förslaget bygger på din profil och övningstypen.`;
+    }
+
     if (availableWeightsKg.length > 0) {
       return `Startförslag: ${suggestedLabel}. Förslaget är anpassat till registrerade vikter i gymmet.`;
     }
@@ -321,6 +625,20 @@ function buildWeightProgressionNote(params: {
   const deltaLabel = formatWeightValue(Math.abs(difference));
 
   return `Senast låg du runt ${formatWeightValue(lastWeight)} ${weightUnitLabel}. Nu föreslås ${suggestedLabel} (${direction} ${deltaLabel}).`;
+}
+
+function buildSuggestedWeightSourceLabel(
+  source: "exercise_progression" | "exact_history" | "variant_history" | "profile_estimate",
+) {
+  if (source === "exercise_progression" || source === "exact_history") {
+    return "Baserat på tidigare pass";
+  }
+
+  if (source === "variant_history") {
+    return "Baserat på liknande övning";
+  }
+
+  return "Profilbaserat startförslag";
 }
 
 function buildTimedProgressionNote(params: {
@@ -480,10 +798,14 @@ export function buildWeightChipOptions(params: {
       params.currentWeight.trim().replace(",", "."),
   );
 
-  if (availableWeightsKg.length > 0 && Number.isFinite(baseValue) && baseValue > 0) {
-    return getNearbyAvailableWeights(availableWeightsKg, baseValue).map((value) =>
-      formatWeightValue(value),
-    );
+  if (availableWeightsKg.length > 0) {
+    if (Number.isFinite(baseValue) && baseValue > 0) {
+      return getNearbyAvailableWeights(availableWeightsKg, baseValue).map((value) =>
+        formatWeightValue(value),
+      );
+    }
+
+    return availableWeightsKg.slice(0, 7).map((value) => formatWeightValue(value));
   }
 
   const values = new Set<string>();
@@ -591,8 +913,17 @@ export function applyExerciseProgression(params: {
   goal?: string | null;
   gymEquipmentItems?: WorkoutGymEquipmentItem[];
   userId: string;
+  historyIndex?: ExerciseHistoryIndex;
+  userProfile?: WorkoutProgressionProfile;
 }): Exercise {
-  const { exercise, goal, gymEquipmentItems = [], userId } = params;
+  const {
+    exercise,
+    goal,
+    gymEquipmentItems = [],
+    userId,
+    historyIndex,
+    userProfile,
+  } = params;
   const progression = getExerciseProgression(userId, exercise.id);
   const loadMetadata = getAvailableWeightsForExercise(exercise, gymEquipmentItems);
   const progressionEquipment = normalizeEquipmentList(
@@ -602,7 +933,21 @@ export function applyExerciseProgression(params: {
         .filter((value): value is EquipmentId => typeof value === "string" && value.length > 0),
     ),
   );
-  const fallbackWeight = toFiniteNumberOrNull(exercise.suggestedWeight ?? null);
+  const historicalWeight = getHistoricalSuggestedWeight({
+    exercise,
+    historyIndex,
+    weightSelectionMode: loadMetadata.weightSelectionMode,
+  });
+  const profileEstimatedWeight = estimateInitialWeightFromProfile({
+    exercise,
+    userProfile,
+    weightSelectionMode: loadMetadata.weightSelectionMode,
+    availableWeightsKg: loadMetadata.availableWeightsKg,
+  });
+  const fallbackWeight =
+    toFiniteNumberOrNull(exercise.suggestedWeight ?? null) ??
+    historicalWeight?.weightKg ??
+    profileEstimatedWeight;
 
   if (typeof exercise.duration === "number" && exercise.duration > 0) {
     const suggestedDuration = getSuggestedTimedDuration({
@@ -659,6 +1004,14 @@ export function applyExerciseProgression(params: {
     exerciseId: exercise.id,
     fallbackWeight,
   });
+  const suggestionSource: "exercise_progression" | "exact_history" | "variant_history" | "profile_estimate" =
+    progression?.lastWeight != null
+      ? "exercise_progression"
+      : historicalWeight?.source === "exact_history"
+        ? "exact_history"
+        : historicalWeight?.source === "variant_history"
+          ? "variant_history"
+          : "profile_estimate";
   const perHandGuardrail =
     typeof suggestedWeight === "number"
       ? applyConservativePerHandGuardrail({
@@ -704,6 +1057,10 @@ export function applyExerciseProgression(params: {
     ...loadConstraintAdjustment.exercise,
     suggestedWeight: snappedSuggestedWeight,
     suggestedWeightLabel,
+    suggestedWeightSourceLabel:
+      snappedSuggestedWeight != null
+        ? buildSuggestedWeightSourceLabel(suggestionSource)
+        : undefined,
     availableWeightsKg: getNearbyAvailableWeights(
       loadMetadata.availableWeightsKg,
       typeof snappedSuggestedWeight === "number"
@@ -720,6 +1077,7 @@ export function applyExerciseProgression(params: {
       suggestedWeight:
         typeof snappedSuggestedWeight === "number" ? snappedSuggestedWeight : null,
       weightUnitLabel: loadMetadata.weightUnitLabel,
+      suggestionSource,
     }) ?? perHandGuardrail?.note ?? loadConstraintAdjustment.note,
   };
 }

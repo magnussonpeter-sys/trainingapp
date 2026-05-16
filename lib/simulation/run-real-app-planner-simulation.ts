@@ -49,7 +49,9 @@ import {
   getWeekStartDate,
   type WeeklyPlanSettings,
 } from "@/lib/planning/weekly-plan";
+import { buildWeeklyWorkoutStructure } from "@/lib/weekly-workout-structure";
 import {
+  applyTrainingDoseAdjustmentToDuration,
   buildSimulationWeekPlannedSessions,
   buildSimulationWeeklyPlanSettings,
   buildSimulationWorkoutLogsFromSnapshots,
@@ -229,6 +231,25 @@ export async function runRealAppPlannerSimulation(params?: {
       });
       const weeklyPlanStatus = buildWeeklyPlanStatus(weeklyPlanState);
       const weeklyPlanContext = buildWeeklyPlanContext(weeklyPlanState);
+      const weeklyStructure = buildWeeklyWorkoutStructure({
+        logs: workoutLogs,
+        now: currentDate,
+        settings: {
+          experience_level: effectiveSimulationProfile.experienceLevel,
+          training_goal: effectiveSimulationProfile.goal,
+          sport_focus: effectiveSimulationProfile.sportFocus ?? "none",
+          primary_priority_muscle: simulationPriorityMuscles[0] ?? null,
+          secondary_priority_muscle: simulationPriorityMuscles[1] ?? null,
+          tertiary_priority_muscle: simulationPriorityMuscles[2] ?? null,
+        },
+        missedPlannedSessionsCount: weeklyPlanState.missedSessions.length,
+      });
+      const adjustedSuggestedDurationMinutes = applyTrainingDoseAdjustmentToDuration({
+        baseDurationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
+        adjustment: weeklyStructure.trainingDoseAdjustment,
+        minDurationMinutes: weeklySettings.minDurationMinutes,
+        maxDurationMinutes: weeklySettings.maxDurationMinutes,
+      });
       const trainingHistoryContext = buildTrainingHistoryContext({
         workoutLogs,
         now: currentDate,
@@ -260,7 +281,7 @@ export async function runRealAppPlannerSimulation(params?: {
         const plannedFocus = weeklyPlanStatus.suggestedNextWorkoutFocus;
         const plannerDayPlan = {
           ...dayPlan,
-          targetDurationMin: weeklyPlanStatus.suggestedNextDurationMinutes,
+          targetDurationMin: adjustedSuggestedDurationMinutes,
         };
         const plannedExercises = buildSuggestedSyntheticExercises({
           dayPlan: plannerDayPlan,
@@ -308,7 +329,7 @@ export async function runRealAppPlannerSimulation(params?: {
         workoutResult = buildMissedWorkoutResult({
           dayPlan: {
             ...dayPlan,
-            targetDurationMin: weeklyPlanStatus.suggestedNextDurationMinutes,
+            targetDurationMin: adjustedSuggestedDurationMinutes,
           },
           profile: effectiveSimulationProfile,
           skipReason: adherence.skipReason ?? "random",
@@ -338,12 +359,13 @@ export async function runRealAppPlannerSimulation(params?: {
             weekStartDate,
             suggestedNextFocus: weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
             suggestedNextWorkoutFocus: weeklyPlanStatus.suggestedNextWorkoutFocus,
-            suggestedNextDurationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
+            suggestedNextDurationMinutes: adjustedSuggestedDurationMinutes,
             coachText: weeklyPlanContext.coachText,
             goalReached: weeklyPlanStatus.goalReached,
             priorityMuscles: weeklyPlanContext.priorityMuscles,
             recoveryLimitedMuscles: weeklyPlanContext.recoveryLimitedMuscles,
             muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
+            trainingDoseAdjustment: weeklyStructure.trainingDoseAdjustment,
             passGenerationMode: "mock_synthetic",
           },
           trainingHistoryContextSummary: {

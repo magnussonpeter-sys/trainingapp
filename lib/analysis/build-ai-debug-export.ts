@@ -1839,6 +1839,7 @@ function buildCurrentPlanSnapshot(params: {
     coachDecision: params.weeklyStructure.coachDecision,
     goalFeedback: params.weeklyStructure.goalFeedback,
     goalTrajectory: params.weeklyStructure.goalTrajectory,
+    trainingDoseAdjustment: params.weeklyStructure.trainingDoseAdjustment,
     trainingGap: params.weeklyStructure.trainingGap,
     optimalPlanText: params.weeklyStructure.optimalPlanText,
     completedLast7Days: params.weeklyStructure.completedLast7Days,

@@ -144,6 +144,7 @@ export default function PreviewExerciseList({
             description={exercise.description}
             progressionNote={exercise.progressionNote}
             suggestedWeightLabel={exercise.suggestedWeightLabel}
+            suggestedWeightSourceLabel={exercise.suggestedWeightSourceLabel}
             weightUnitLabel={exercise.weightUnitLabel}
             ringSetupLabel={exercise.ringSetup?.label}
             ringSetupInstruction={exercise.ringSetup?.instruction}

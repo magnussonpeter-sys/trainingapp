@@ -8,6 +8,7 @@ type ManualWeightInputProps = {
   onChange: (value: string) => void;
   suggestedWeightValue: string;
   suggestedWeightLabel?: string;
+  suggestedWeightSourceLabel?: string;
   progressionNote?: string;
   label?: string;
   unitLabel?: string;
@@ -18,6 +19,7 @@ export default function ManualWeightInput({
   onChange,
   suggestedWeightValue,
   suggestedWeightLabel,
+  suggestedWeightSourceLabel,
   progressionNote,
   label = "Vikt",
   unitLabel = "kg",
@@ -43,6 +45,10 @@ export default function ManualWeightInput({
           ? `Förslag: ${suggestedWeightLabel ?? `${suggestedWeightValue} ${unitLabel}`}`
           : "Ingen vikt föreslagen"}
       </p>
+
+      {suggestedWeightSourceLabel ? (
+        <p className="mt-1 text-xs text-slate-500">{suggestedWeightSourceLabel}</p>
+      ) : null}
 
       {progressionNote ? (
         <p className="mt-2 text-sm leading-5 text-sky-800">{progressionNote}</p>

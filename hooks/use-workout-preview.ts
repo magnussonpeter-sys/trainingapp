@@ -13,12 +13,20 @@ import { normalizePreviewWorkout } from "@/lib/workout-flow/normalize-preview-wo
 import { getGeneratedWorkout } from "@/lib/workout-storage";
 import {
   applyExerciseProgression,
+  buildExerciseHistoryIndex,
+  type ExerciseHistoryIndex,
   type WorkoutGymEquipmentItem,
+  type WorkoutProgressionProfile,
 } from "@/lib/workout-flow/exercise-progression";
 import {
   getWorkoutDraft,
   saveWorkoutDraft,
 } from "@/lib/workout-flow/workout-draft-store";
+import {
+  getWorkoutLogs,
+  type WorkoutLog,
+} from "@/lib/workout-log-storage";
+import { getPendingSyncQueue } from "@/lib/workout-flow/pending-sync-store";
 import type {
   Exercise,
   Workout,
@@ -61,6 +69,13 @@ type PreviewSummary = {
   estimatedMinutes: number;
 };
 
+type PreviewUserSettings = {
+  sex?: string | null;
+  age?: number | null;
+  weight_kg?: number | null;
+  experience_level?: string | null;
+};
+
 function clampNumber(value: number, min: number, max?: number) {
   if (Number.isNaN(value)) {
     return min;
@@ -91,6 +106,110 @@ function normalizeGymName(value: string) {
 
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values));
+}
+
+function mergeWorkoutLogs(apiLogs: WorkoutLog[], localLogs: WorkoutLog[]) {
+  const merged = [...apiLogs];
+  const seen = new Set(
+    apiLogs.map((log) => `${log.workoutName}:${log.completedAt}:${log.status}`),
+  );
+
+  for (const log of localLogs) {
+    const key = `${log.workoutName}:${log.completedAt}:${log.status}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(log);
+  }
+
+  return merged.sort(
+    (left, right) =>
+      new Date(right.completedAt).getTime() - new Date(left.completedAt).getTime(),
+  );
+}
+
+function buildPendingSyncWorkoutLogs(userId: string): WorkoutLog[] {
+  return getPendingSyncQueue()
+    .filter((item) => item.userId === userId)
+    .map((item) => ({
+      id: item.id,
+      userId: item.userId,
+      workoutId: item.workoutId,
+      workoutName: item.workoutName,
+      startedAt: item.sessionStartedAt,
+      completedAt: item.completedAt,
+      durationSeconds: Math.max(
+        0,
+        Math.round(
+          (new Date(item.completedAt).getTime() - new Date(item.sessionStartedAt).getTime()) /
+            1000,
+        ),
+      ),
+      status: item.status,
+      exercises: item.completedExercises,
+      metadata: {
+        offlineSync: true,
+        clientSyncId: item.id,
+      },
+    }) satisfies WorkoutLog);
+}
+
+async function fetchUserSettings(userId: string): Promise<PreviewUserSettings | null> {
+  if (!userId.trim()) {
+    return null;
+  }
+
+  const response = await fetch(`/api/user-settings?userId=${encodeURIComponent(userId)}`, {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json().catch(() => null)) as
+    | { settings?: PreviewUserSettings | null }
+    | null;
+
+  return payload?.settings ?? null;
+}
+
+async function fetchWorkoutLogs(userId: string): Promise<WorkoutLog[]> {
+  const localLogs = getWorkoutLogs(userId);
+  const pendingSyncLogs = buildPendingSyncWorkoutLogs(userId);
+
+  if (!userId.trim()) {
+    return mergeWorkoutLogs(localLogs, pendingSyncLogs);
+  }
+
+  try {
+    const response = await fetch(
+      `/api/workout-logs?userId=${encodeURIComponent(userId)}&limit=60`,
+      {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      },
+    );
+
+    if (!response.ok) {
+      return mergeWorkoutLogs(localLogs, pendingSyncLogs);
+    }
+
+    const payload = (await response.json().catch(() => null)) as
+      | { logs?: WorkoutLog[] }
+      | null;
+
+    const apiLogs = Array.isArray(payload?.logs) ? payload.logs : [];
+    return mergeWorkoutLogs(apiLogs, pendingSyncLogs);
+  } catch {
+    return mergeWorkoutLogs(localLogs, pendingSyncLogs);
+  }
 }
 
 // Läser en godtycklig equipment-array från API/draft/workout.
@@ -529,6 +648,8 @@ function applyProgressionToWorkout(params: {
   userId: string;
   workout: Workout;
   gymEquipmentItems?: WorkoutGymEquipmentItem[];
+  historyIndex?: ExerciseHistoryIndex;
+  userProfile?: WorkoutProgressionProfile;
 }): Workout {
   const safeWorkout = ensureWorkoutHasBlocks(params.workout);
   const goal = safeWorkout.goal ?? "health";
@@ -543,6 +664,8 @@ function applyProgressionToWorkout(params: {
           goal,
           gymEquipmentItems: params.gymEquipmentItems ?? [],
           userId: params.userId,
+          historyIndex: params.historyIndex,
+          userProfile: params.userProfile,
         }),
       ),
     })),
@@ -591,6 +714,12 @@ function buildSummary(workout: Workout | null): PreviewSummary {
 export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
   const [workout, setWorkout] = useState<Workout | null>(null);
   const [gyms, setGyms] = useState<GymSummary[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<ExerciseHistoryIndex>({
+    byExerciseId: {},
+    byVariantGroup: {},
+  });
+  const [progressionProfile, setProgressionProfile] =
+    useState<WorkoutProgressionProfile>({});
   const [gymsLoaded, setGymsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -624,9 +753,11 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       setError(null);
 
       try {
-        const [draft, loadedGyms] = await Promise.all([
+        const [draft, loadedGyms, settings, workoutLogs] = await Promise.all([
           Promise.resolve(getWorkoutDraft(userId)),
           fetchGyms(userId),
+          fetchUserSettings(userId),
+          fetchWorkoutLogs(userId),
         ]);
 
         if (!isMounted) {
@@ -647,11 +778,22 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
           return;
         }
 
+        const nextHistoryIndex = buildExerciseHistoryIndex(workoutLogs);
+        const userProfile: WorkoutProgressionProfile = {
+          sex: settings?.sex ?? null,
+          age: settings?.age ?? null,
+          weightKg: settings?.weight_kg ?? null,
+          experienceLevel: settings?.experience_level ?? null,
+        };
+        setHistoryIndex(nextHistoryIndex);
+        setProgressionProfile(userProfile);
         const matchedGym = matchGymByWorkout(normalized, loadedGyms);
         const safeWorkout = applyProgressionToWorkout({
           userId,
           workout: ensureWorkoutHasBlocks(normalized),
           gymEquipmentItems: matchedGym?.equipmentItems ?? [],
+          historyIndex: nextHistoryIndex,
+          userProfile,
         });
 
         // Spara tillbaka berikad workout så att run-sidan får samma metadata
@@ -955,18 +1097,20 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       return;
     }
 
-    blocks[0] = {
-      ...currentPrimaryBlock,
-      exercises: nextExercises.map((exercise) =>
-        applyExerciseProgression({
-          exercise,
+        blocks[0] = {
+          ...currentPrimaryBlock,
+          exercises: nextExercises.map((exercise) =>
+            applyExerciseProgression({
+              exercise,
           goal: workout.goal ?? "health",
-          gymEquipmentItems:
-            matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
-          userId,
-        }),
-      ),
-    };
+              gymEquipmentItems:
+                matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
+              userId,
+              historyIndex,
+              userProfile: progressionProfile,
+            }),
+          ),
+        };
 
     persistWorkout({
       ...workout,
@@ -1001,17 +1145,19 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       const nextExercises = [...block.exercises];
       const nextExercise = updater(location.exercise);
 
-      if (nextExercise === null) {
-        nextExercises.splice(location.exerciseIndex, 1);
-      } else {
-        nextExercises[location.exerciseIndex] = applyExerciseProgression({
-          exercise: nextExercise,
-          goal: workout.goal ?? "health",
-          gymEquipmentItems:
-            matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
-          userId,
-        });
-      }
+        if (nextExercise === null) {
+          nextExercises.splice(location.exerciseIndex, 1);
+        } else {
+          nextExercises[location.exerciseIndex] = applyExerciseProgression({
+            exercise: nextExercise,
+            goal: workout.goal ?? "health",
+            gymEquipmentItems:
+              matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
+            userId,
+            historyIndex,
+            userProfile: progressionProfile,
+          });
+        }
 
       return {
         ...block,
@@ -1061,6 +1207,8 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       gymEquipmentItems:
         matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
       userId,
+      historyIndex,
+      userProfile: progressionProfile,
     });
     const replaced = updateExerciseInBlocks(exerciseId, () => ({
       ...replacement,
@@ -1269,6 +1417,8 @@ export function useWorkoutPreview({ userId }: UseWorkoutPreviewProps) {
       gymEquipmentItems:
         matchGymByWorkout(previewWorkout, gyms)?.equipmentItems ?? [],
       userId,
+      historyIndex,
+      userProfile: progressionProfile,
     });
     updatePrimaryExercises([...currentExercises, nextExercise]);
     setError(null);

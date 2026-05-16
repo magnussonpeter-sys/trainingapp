@@ -8,7 +8,9 @@ import {
   getWeekStartDate,
   type WeeklyPlanSettings,
 } from "@/lib/planning/weekly-plan";
+import { buildWeeklyWorkoutStructure } from "@/lib/weekly-workout-structure";
 import {
+  applyTrainingDoseAdjustmentToDuration,
   buildSimulationWeekPlannedSessions,
   buildSimulationWeeklyPlanSettings,
   buildSimulationWorkoutLogsFromSnapshots,
@@ -1212,6 +1214,25 @@ export async function runFullAppChainSimulation(params?: {
       });
       const weeklyPlanStatus = buildWeeklyPlanStatus(weeklyPlanState);
       const weeklyPlanContext = buildWeeklyPlanContext(weeklyPlanState);
+      const weeklyStructure = buildWeeklyWorkoutStructure({
+        logs: workoutLogs,
+        now: currentDate,
+        settings: {
+          experience_level: effectiveSimulationProfile.experienceLevel,
+          training_goal: effectiveSimulationProfile.goal,
+          sport_focus: effectiveSimulationProfile.sportFocus ?? "none",
+          primary_priority_muscle: simulationPriorityMuscles[0] ?? null,
+          secondary_priority_muscle: simulationPriorityMuscles[1] ?? null,
+          tertiary_priority_muscle: simulationPriorityMuscles[2] ?? null,
+        },
+        missedPlannedSessionsCount: weeklyPlanState.missedSessions.length,
+      });
+      const adjustedSuggestedDurationMinutes = applyTrainingDoseAdjustmentToDuration({
+        baseDurationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
+        adjustment: weeklyStructure.trainingDoseAdjustment,
+        minDurationMinutes: weeklySettings.minDurationMinutes,
+        maxDurationMinutes: weeklySettings.maxDurationMinutes,
+      });
       const trainingHistoryContext = buildTrainingHistoryContext({
         workoutLogs,
         now: currentDate,
@@ -1241,7 +1262,7 @@ export async function runFullAppChainSimulation(params?: {
       if (adherence.train) {
         const plannerDayPlan = {
           ...dayPlan,
-          targetDurationMin: weeklyPlanStatus.suggestedNextDurationMinutes,
+          targetDurationMin: adjustedSuggestedDurationMinutes,
         };
         const selectedPlanMode =
           weeklyPlanStatus.suggestedNextWorkoutFocus === "recovery_strength"
@@ -1254,7 +1275,7 @@ export async function runFullAppChainSimulation(params?: {
         const recentExercises = getRecentExerciseDebug(dailySnapshots);
         const promptContextSummary = buildPromptContextSummary({
           suggestedFocus: weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
-          suggestedDurationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
+          suggestedDurationMinutes: adjustedSuggestedDurationMinutes,
           priorityMuscles: weeklyPlanContext.priorityMuscles,
           recoveryLimitedMuscles: weeklyPlanContext.recoveryLimitedMuscles,
           typicalWorkoutDurationMinutes:
@@ -1273,7 +1294,7 @@ export async function runFullAppChainSimulation(params?: {
             generationMode: config.generationMode,
             input: {
             goal: effectiveSimulationProfile.goal,
-            durationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
+            durationMinutes: adjustedSuggestedDurationMinutes,
             equipment: effectiveSimulationProfile.availableEquipmentIds,
             gymEquipmentDetails: [],
             gym:
@@ -1387,13 +1408,14 @@ export async function runFullAppChainSimulation(params?: {
                   suggestedNextWorkoutFocus:
                     weeklyPlanStatus.suggestedNextWorkoutFocus,
                   suggestedNextDurationMinutes:
-                    weeklyPlanStatus.suggestedNextDurationMinutes,
+                    adjustedSuggestedDurationMinutes,
                   coachText: weeklyPlanContext.coachText,
                   goalReached: weeklyPlanStatus.goalReached,
                   priorityMuscles: weeklyPlanContext.priorityMuscles,
                   recoveryLimitedMuscles:
                     weeklyPlanContext.recoveryLimitedMuscles,
                   muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
+                  trainingDoseAdjustment: weeklyStructure.trainingDoseAdjustment,
                   passGenerationMode: "real_ai",
                   aiRequestUsed: true,
                   promptContextSummary,
@@ -1492,13 +1514,14 @@ export async function runFullAppChainSimulation(params?: {
                   suggestedNextWorkoutFocus:
                     weeklyPlanStatus.suggestedNextWorkoutFocus,
                   suggestedNextDurationMinutes:
-                    weeklyPlanStatus.suggestedNextDurationMinutes,
+                    adjustedSuggestedDurationMinutes,
                   coachText: weeklyPlanContext.coachText,
                   goalReached: weeklyPlanStatus.goalReached,
                   priorityMuscles: weeklyPlanContext.priorityMuscles,
                   recoveryLimitedMuscles:
                     weeklyPlanContext.recoveryLimitedMuscles,
                   muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
+                  trainingDoseAdjustment: weeklyStructure.trainingDoseAdjustment,
                   passGenerationMode: "fallback_mock",
                   aiRequestUsed: true,
                   promptContextSummary,
@@ -1586,12 +1609,13 @@ export async function runFullAppChainSimulation(params?: {
                 suggestedNextWorkoutFocus:
                   weeklyPlanStatus.suggestedNextWorkoutFocus,
                 suggestedNextDurationMinutes:
-                  weeklyPlanStatus.suggestedNextDurationMinutes,
+                  adjustedSuggestedDurationMinutes,
                 coachText: weeklyPlanContext.coachText,
                 goalReached: weeklyPlanStatus.goalReached,
                 priorityMuscles: weeklyPlanContext.priorityMuscles,
                 recoveryLimitedMuscles: weeklyPlanContext.recoveryLimitedMuscles,
                 muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
+                trainingDoseAdjustment: weeklyStructure.trainingDoseAdjustment,
                 passGenerationMode: "fallback_mock",
                 aiRequestUsed: false,
                 promptContextSummary,
@@ -1614,7 +1638,8 @@ export async function runFullAppChainSimulation(params?: {
         workoutResult = buildMissedWorkoutResult({
           dayPlan: {
             ...dayPlan,
-            targetDurationMin: weeklyPlanStatus.suggestedNextDurationMinutes,
+            // Missade pass ska visa samma lätt justerade dos som planeringen rekommenderade.
+            targetDurationMin: adjustedSuggestedDurationMinutes,
           },
           profile: effectiveSimulationProfile,
           skipReason: adherence.skipReason ?? "random",

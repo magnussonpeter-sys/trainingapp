@@ -435,9 +435,10 @@ export const EXERCISE_CATALOG: ExerciseCatalogItem[] = [
     name: "Planka med axelklapp",
     requiredEquipment: ["bodyweight"],
     description:
-      "Utförande: Stå i hög planka och klappa växelvis motsatt axel utan att rotera höften. Mål: Träna antirotation, axelstabilitet och bålstyrka.",
+      "Utförande: Stå i hög planka och klappa växelvis motsatt axel utan att rotera höften. Reps räknas per sida, så 12 betyder 12 klappar per arm. Mål: Träna antirotation, axelstabilitet och bålstyrka.",
     defaultSets: 3,
     defaultReps: 12,
+    sidedness: "per_side",
     defaultRest: 30,
     movementPattern: "core",
     primaryMuscles: ["core", "obliques"],

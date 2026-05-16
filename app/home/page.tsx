@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 
 import AppToast from "@/components/shared/app-toast";
 import GoalFeedbackCard from "@/components/home/goal-feedback-card";
+import TrainingTrendCard from "@/components/home/training-trend-card";
 import { useHomeData } from "@/hooks/use-home-data";
 import { getDailyHomeWisdom } from "@/lib/get-daily-home-wisdom";
 import {
@@ -27,7 +28,6 @@ import {
   buildWeeklyPlanContext,
   buildWeeklyPlanStatus,
   deriveWeeklyPlanState,
-  formatWeekdayLabel,
   getDefaultWeeklyPlanSettings,
   getWeekStartDate,
   mapPlannedFocusToWorkoutFocus,
@@ -40,7 +40,7 @@ import {
 import { getLocalWeeklyPlanSettings } from "@/lib/planning/weekly-plan-local-store";
 import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
 import { buildGoalFeedback } from "@/lib/planning/goal-feedback";
-import type { TrainingGap } from "@/lib/planning/training-gap";
+import { buildHomeTrainingTrend } from "@/lib/planning/home-training-trend";
 import { generateWorkout } from "@/lib/workout-generator";
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
 import { uiButtonClasses } from "@/lib/ui/button-classes";
@@ -103,26 +103,6 @@ function formatMuscleGroup(group: MuscleBudgetGroup) {
   if (group === "triceps") return "Triceps";
   if (group === "calves") return "Vader";
   return "Bål";
-}
-
-function formatTrainingGapStatusTone(status: TrainingGap["status"]) {
-  if (status === "recovery_first") {
-    return "border-amber-200 bg-amber-50 text-amber-900";
-  }
-
-  if (status === "major_gap") {
-    return "border-sky-200 bg-sky-50 text-sky-900";
-  }
-
-  if (status === "minor_gap") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-900";
-  }
-
-  if (status === "insufficient_data") {
-    return "border-slate-200 bg-slate-50 text-slate-800";
-  }
-
-  return "border-lime-200 bg-lime-50 text-lime-900";
 }
 
 function getDisplayName(user: AuthUser | null) {
@@ -218,6 +198,17 @@ function buildHomeWorkoutRecommendation(params: {
   weeklyStructure: ReturnType<typeof buildWeeklyWorkoutStructure>;
   fallbackDurationMinutes: number;
 }) {
+  const applyTrainingDoseAdjustment = (baseDuration: number) => {
+    const adjustment = params.weeklyStructure.trainingDoseAdjustment;
+    const maxExtraMinutes = Math.round(baseDuration * (adjustment.maxExtraDosePercent / 100));
+    const boundedDelta =
+      adjustment.suggestedDurationDelta > 0
+        ? Math.min(adjustment.suggestedDurationDelta, maxExtraMinutes)
+        : adjustment.suggestedDurationDelta;
+
+    return clampDuration(baseDuration + boundedDelta);
+  };
+
   if (params.weeklyPlanState && params.weeklyPlanContext) {
     const weeklyPlanContext = params.weeklyPlanContext;
     const weeklyPlanStatus = buildWeeklyPlanStatus(params.weeklyPlanState);
@@ -245,13 +236,20 @@ function buildHomeWorkoutRecommendation(params: {
       allowedGroups.has(group),
     );
     const muscleGroups = Array.from(
-      new Set([...prioritizedGroups, ...deficitSortedGroups, ...HOME_FOCUS_GROUPS[focus]]),
+      new Set([
+        ...(params.weeklyStructure.trainingDoseAdjustment.priorityMuscles ?? []),
+        ...prioritizedGroups,
+        ...deficitSortedGroups,
+        ...HOME_FOCUS_GROUPS[focus],
+      ]),
     ).slice(0, 3);
 
     return {
       focus,
       plannedFocus,
-      durationMinutes: weeklyPlanStatus.suggestedNextDurationMinutes,
+      durationMinutes: applyTrainingDoseAdjustment(
+        weeklyPlanStatus.suggestedNextDurationMinutes,
+      ),
       muscleGroups,
       // Weekly plan ska vara primär synlig rekommendation när status finns.
       source: "weekly_plan",
@@ -261,8 +259,13 @@ function buildHomeWorkoutRecommendation(params: {
   return {
     focus: params.weeklyStructure.nextFocus,
     plannedFocus: params.weeklyStructure.nextFocus,
-    durationMinutes: params.fallbackDurationMinutes,
-    muscleGroups: params.weeklyStructure.nextFocusMuscleGroups,
+    durationMinutes: applyTrainingDoseAdjustment(params.fallbackDurationMinutes),
+    muscleGroups: Array.from(
+      new Set([
+        ...(params.weeklyStructure.trainingDoseAdjustment.priorityMuscles ?? []),
+        ...params.weeklyStructure.nextFocusMuscleGroups,
+      ]),
+    ).slice(0, 3),
     // Adaptive fallback används bara när veckoplanstatus saknas eller inte gick att läsa.
     source: "adaptive_fallback",
   } satisfies HomeWorkoutRecommendation;
@@ -787,16 +790,24 @@ function TodayFocusCard(props: {
   onSelectGym: (value: string) => void;
   recommendedDurationMinutes: number;
   actionDurationMinutes: number;
+  selectedDurationPreset: string;
+  setSelectedDurationPreset: (value: string) => void;
+  customDurationInput: string;
+  setCustomDurationInput: (value: string) => void;
   onAction: () => void;
+  onCustomWorkout: () => void;
+  onToggleCustomizeAi: () => void;
   isGenerating: boolean;
   hasActiveWorkout: boolean;
   activeWorkoutName?: string | null;
   hasCompletedTrainingToday: boolean;
   completedTodayMessage: string;
+  aiError: string | null;
+  gymError: string | null;
+  pageError: string | null;
 }) {
   const showCompletedTodayState =
     props.hasCompletedTrainingToday && !props.hasActiveWorkout;
-  const [showGymPicker, setShowGymPicker] = useState(false);
 
   return (
     <section className={cn(uiCardClasses.base, "p-6 shadow-[0_20px_48px_rgba(15,23,42,0.07)]")}>
@@ -814,24 +825,68 @@ function TodayFocusCard(props: {
         <>
           <div className="mt-2 flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <h2 className="text-[clamp(1.9rem,7vw,2.5rem)] font-semibold tracking-tight text-slate-950">
+              <h2 className="text-[clamp(1.7rem,6vw,2.2rem)] font-semibold tracking-tight text-slate-950">
                 {formatWorkoutFocus(props.focus)}
               </h2>
-              <p className="mt-3 text-base leading-7 text-slate-700">{props.coachText}</p>
+              <p className="mt-3 text-base leading-7 text-slate-700">
+                Rekommenderat nästa pass utifrån mål, historik och vald utrustning.
+              </p>
             </div>
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2.5">
-            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900">
-              {props.actionDurationMinutes} min
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowGymPicker((previous) => !previous)}
-              className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-900"
-            >
-              Gym: {props.gymLabel}
-            </button>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-slate-700">Gym</span>
+              <select
+                value={props.selectedGymId}
+                onChange={(event) => props.onSelectGym(event.target.value)}
+                className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+              >
+                {props.gymOptions.map((gym) => (
+                  <option key={String(gym.id)} value={String(gym.id)}>
+                    {gym.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-slate-700">Passlängd</span>
+              <select
+                id="home-duration-preset"
+                value={props.selectedDurationPreset}
+                onChange={(event) => props.setSelectedDurationPreset(event.target.value)}
+                className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+              >
+                <option value={15}>15 min</option>
+                <option value={20}>20 min</option>
+                <option value={30}>30 min</option>
+                <option value={45}>45 min</option>
+                <option value={60}>60 min</option>
+                <option value="custom">Eget val</option>
+              </select>
+            </label>
+          </div>
+
+          {props.selectedDurationPreset === "custom" ? (
+            <div className="mt-3">
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-slate-700">Egna minuter</span>
+                <input
+                  id="home-duration-custom-input"
+                  type="number"
+                  min={5}
+                  max={180}
+                  step={1}
+                  value={props.customDurationInput}
+                  onChange={(event) => props.setCustomDurationInput(event.target.value)}
+                  className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                />
+              </label>
+            </div>
+          ) : null}
+
+          <div className="mt-4 flex flex-wrap gap-2.5">
             {props.hasActiveWorkout ? (
               <span className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-emerald-800">
                 Pågående pass
@@ -853,30 +908,9 @@ function TodayFocusCard(props: {
             )}
           </div>
 
-          {showGymPicker ? (
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-              {/* Dagens pass återanvänder samma gymval som AI-genereringen för att hålla flödet konsekvent. */}
-              <label className="block">
-                <span className="mb-2 block text-sm font-medium text-slate-700">
-                  Välj gym för dagens pass
-                </span>
-                <select
-                  value={props.selectedGymId}
-                  onChange={(event) => {
-                    props.onSelectGym(event.target.value);
-                    setShowGymPicker(false);
-                  }}
-                  className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
-                >
-                  {props.gymOptions.map((gym) => (
-                    <option key={String(gym.id)} value={String(gym.id)}>
-                      {gym.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          ) : null}
+          <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+            Rekommenderad längd idag är {props.recommendedDurationMinutes} min, men du kan ändra den här innan du startar.
+          </div>
 
           {props.hasActiveWorkout ? (
             <p className="mt-4 text-base leading-7 text-emerald-800">
@@ -902,143 +936,29 @@ function TodayFocusCard(props: {
                 ? "Fortsätt dagens pass"
                 : "Starta dagens pass"}
           </button>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={props.onToggleCustomizeAi}
+              className={cn(uiButtonClasses.secondary, "w-full justify-center")}
+            >
+              Anpassa AI-pass
+            </button>
+            <button
+              type="button"
+              onClick={props.onCustomWorkout}
+              className={cn(uiButtonClasses.secondary, "w-full justify-center")}
+            >
+              Eget pass
+            </button>
+          </div>
+
+          {props.aiError ? <div className={cn(uiCardClasses.danger, "mt-4")}>{props.aiError}</div> : null}
+          {props.gymError ? <div className={cn(uiCardClasses.danger, "mt-4")}>{props.gymError}</div> : null}
+          {props.pageError ? <div className={cn(uiCardClasses.danger, "mt-4")}>{props.pageError}</div> : null}
         </>
       )}
-    </section>
-  );
-}
-
-function TrainingGapCard(props: {
-  trainingGap: TrainingGap;
-  onShowDetails: () => void;
-}) {
-  const progressPercent = Math.round(props.trainingGap.completionRatio * 100);
-  const tone = formatTrainingGapStatusTone(props.trainingGap.status);
-
-  return (
-    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-            Veckomål
-          </p>
-          <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
-            {progressPercent}% på plats
-          </h2>
-        </div>
-        <span className={cn("rounded-full border px-3 py-1 text-xs font-medium", tone)}>
-          {props.trainingGap.status === "recovery_first"
-            ? "Återhämtning först"
-            : props.trainingGap.status === "major_gap"
-              ? "Mer kvar"
-              : props.trainingGap.status === "minor_gap"
-                ? "Lite kvar"
-                : props.trainingGap.status === "insufficient_data"
-                  ? "Lär känna dig"
-                  : "Bra riktning"}
-        </span>
-      </div>
-
-      <p className="mt-3 text-sm leading-6 text-slate-600">{props.trainingGap.message}</p>
-
-      <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-lime-500"
-          style={{ width: `${Math.max(8, progressPercent)}%` }}
-        />
-      </div>
-
-      <div className="mt-4 grid grid-cols-3 gap-3">
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-            Pass
-          </p>
-          <p className="mt-1 text-base font-semibold text-slate-950">
-            {props.trainingGap.completedSessions} / {props.trainingGap.plannedSessions}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-            Minuter
-          </p>
-          <p className="mt-1 text-base font-semibold text-slate-950">
-            {props.trainingGap.completedMinutes} / {props.trainingGap.plannedMinutes}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-            Återstår
-          </p>
-          <p className="mt-1 text-base font-semibold text-slate-950">
-            {props.trainingGap.missingMinutes} min
-          </p>
-        </div>
-      </div>
-
-      <p className="mt-4 text-base text-slate-700">
-        Främst:{" "}
-        <span className="font-medium text-slate-900">
-          {props.trainingGap.missingMuscles.length > 0
-            ? props.trainingGap.missingMuscles.map((group) => formatMuscleGroup(group)).join(" · ")
-            : "jämn riktning just nu"}
-        </span>
-      </p>
-
-      <button
-        type="button"
-        onClick={props.onShowDetails}
-        className={cn(uiButtonClasses.secondary, "mt-4 w-full justify-center")}
-      >
-        Visa detaljer
-      </button>
-    </section>
-  );
-}
-
-function WeeklyPlanSummaryCard(props: {
-  state: WeeklyPlanState;
-  onOpenPlan: () => void;
-}) {
-  const weeklyPlanStatus = buildWeeklyPlanStatus(props.state);
-  const completedSessions = weeklyPlanStatus.completedSessions;
-  const targetSessions = weeklyPlanStatus.plannedSessions;
-  const nextPlannedSession = props.state.plannedSessions.find(
-    (session) => session.status === "planned" || session.status === "moved",
-  );
-  const nextPlannedDayLabel = nextPlannedSession
-    ? formatWeekdayLabel(nextPlannedSession.weekday)
-    : null;
-
-  return (
-    <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
-      <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-        Veckan
-      </p>
-      <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
-        {completedSessions} av {targetSessions} pass genomförda
-      </h2>
-      <p className="mt-2 text-base leading-7 text-slate-700">
-        Nästa rekommenderade pass: {weeklyPlanStatus.suggestedNextDurationMinutes} min{" "}
-        {weeklyPlanStatus.suggestedNextWorkoutFocus === "full_body"
-          ? "helkropp"
-          : weeklyPlanStatus.suggestedNextWorkoutFocus === "upper_body"
-            ? "överkropp"
-            : weeklyPlanStatus.suggestedNextWorkoutFocus === "lower_body"
-              ? "ben"
-              : weeklyPlanStatus.suggestedNextWorkoutFocus === "core"
-                    ? "bål"
-                    : "återhämtande styrka"}
-      </p>
-      {nextPlannedDayLabel ? (
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          Planerat nästa gång: {nextPlannedDayLabel}
-        </p>
-      ) : null}
-      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-        <button type="button" onClick={props.onOpenPlan} className={uiButtonClasses.secondary}>
-          Ändra veckoplan
-        </button>
-      </div>
     </section>
   );
 }
@@ -1063,13 +983,13 @@ function QuickStartCard(props: {
   return (
     <section className={cn(uiCardClasses.base, "p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]")}>
       <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-        Skapa AI-pass
+        Anpassa AI-pass
       </p>
       <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">
-        Skapa nästa pass
+        Ändra gym eller längd
       </h2>
       <p className="mt-2 text-base leading-7 text-slate-700">
-        Välj gym och längd. AI bygger ett pass utifrån mål, historik och utrustning.
+        Om du vill avvika från rekommendationen kan du justera gym och passlängd här innan du skapar passet.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -1504,6 +1424,7 @@ export default function HomePage() {
   const [pendingCount, setPendingCount] = useState(0);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [showWeeklyInsights, setShowWeeklyInsights] = useState(false);
+  const [showAiCustomization, setShowAiCustomization] = useState(false);
   const [homeNotice, setHomeNotice] = useState<string | null>(null);
   const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
   const [weeklyPlanSettings, setWeeklyPlanSettings] = useState<WeeklyPlanSettings | null>(null);
@@ -1565,12 +1486,6 @@ export default function HomePage() {
     return clampDuration(Number(activePreset));
   }
 
-  const weeklyStructure = useMemo(() => {
-    return buildWeeklyWorkoutStructure({
-      logs: workoutLogs,
-      settings,
-    });
-  }, [settings, workoutLogs]);
   const fallbackWeeklyPlanState = useMemo(() => {
     if (!userId || !weeklyPlanSettings) {
       return null;
@@ -1598,6 +1513,17 @@ export default function HomePage() {
     weeklyPlanSettings,
     workoutLogs,
   ]);
+  const effectiveMissedPlannedSessionsCount =
+    serverWeeklyPlanState?.missedSessions.length ??
+    fallbackWeeklyPlanState?.missedSessions.length ??
+    0;
+  const weeklyStructure = useMemo(() => {
+    return buildWeeklyWorkoutStructure({
+      logs: workoutLogs,
+      settings,
+      missedPlannedSessionsCount: effectiveMissedPlannedSessionsCount,
+    });
+  }, [effectiveMissedPlannedSessionsCount, settings, workoutLogs]);
   const weeklyPlanState = serverWeeklyPlanState ?? fallbackWeeklyPlanState;
   const weeklyPlanContext = useMemo(
     () => serverWeeklyPlanContext ?? (weeklyPlanState ? buildWeeklyPlanContext(weeklyPlanState) : null),
@@ -1624,6 +1550,36 @@ export default function HomePage() {
       currentRecommendation: homeRecommendation,
     });
   }, [homeRecommendation, weeklyPlanState, weeklyStructure, workoutLogs]);
+  const trainingTrend = useMemo(() => {
+    return buildHomeTrainingTrend({
+      logs: workoutLogs,
+      weeklyPlanState,
+      weeklyPlanStatus,
+      fallbackTargetMinutesPerWeek: weeklyStructure.trainingGap.plannedMinutes,
+      goal: settings?.training_goal ?? null,
+      experienceLevel: settings?.experience_level ?? null,
+      muscleBudget: weeklyStructure.muscleBudget,
+      nextFocus: homeRecommendation.focus,
+      nextFocusMuscleGroups: homeRecommendation.muscleGroups,
+    });
+  }, [
+    homeRecommendation.focus,
+    homeRecommendation.muscleGroups,
+    settings?.experience_level,
+    settings?.training_goal,
+    weeklyPlanState,
+    weeklyPlanStatus,
+    weeklyStructure.muscleBudget,
+    weeklyStructure.trainingGap.plannedMinutes,
+    workoutLogs,
+  ]);
+  const weekSummaryLabel = useMemo(() => {
+    return `${weeklyStructure.trainingGap.completedSessions}/${weeklyStructure.trainingGap.plannedSessions} pass · ${weeklyStructure.trainingGap.completedMinutes}/${weeklyStructure.trainingGap.plannedMinutes} min`;
+  }, [weeklyStructure.trainingGap]);
+  const recommendationFocusSummary = useMemo(() => {
+    const labels = homeRecommendation.muscleGroups.map((group) => formatMuscleGroup(group));
+    return labels.length > 0 ? labels.join(" · ") : "balans över hela kroppen";
+  }, [homeRecommendation.muscleGroups]);
   const goalFeedback = useMemo(() => {
     return buildGoalFeedback({
       logs: workoutLogs,
@@ -1747,6 +1703,16 @@ export default function HomePage() {
   // Home visar ett klart-för-idag-läge när dagens planerade slot redan är genomförd.
   const hasCompletedTrainingToday = Boolean(todayPlanDay?.completedSummary);
   const completedTodayMessage = "Bra jobbat! Du har ingen mer planerad träning idag.";
+  const recommendationLabel = useMemo(() => {
+    if (hasCompletedTrainingToday) {
+      return completedTodayMessage;
+    }
+
+    return `Starta dagens ${formatWorkoutFocus(homeRecommendation.focus).toLowerCase()}pass på ${durationMinutes} min.`;
+  }, [completedTodayMessage, durationMinutes, hasCompletedTrainingToday, homeRecommendation.focus]);
+  const goalFeedbackPrimaryButtonLabel = hasCompletedTrainingToday
+    ? "Starta extra pass"
+    : "Starta rekommenderat pass";
 
   useEffect(() => {
     if (hasManualDurationChoice) {
@@ -2189,6 +2155,11 @@ export default function HomePage() {
 
         <GoalFeedbackCard
           feedback={goalFeedback}
+          recommendationLabel={recommendationLabel}
+          weekSummary={weekSummaryLabel}
+          focusSummary={recommendationFocusSummary}
+          primaryButtonLabel={goalFeedbackPrimaryButtonLabel}
+          hideFocusHint={hasCompletedTrainingToday}
           onStartRecommended={handleQuickStartTodayWorkout}
           onShowDetails={() => setShowWeeklyInsights(true)}
         />
@@ -2203,25 +2174,6 @@ export default function HomePage() {
           onSelectGym={handleSelectedGymChange}
           recommendedDurationMinutes={homeRecommendation.durationMinutes}
           actionDurationMinutes={durationMinutes}
-          onAction={handleQuickStartTodayWorkout}
-          isGenerating={isGenerating}
-          hasActiveWorkout={Boolean(activeWorkout)}
-          activeWorkoutName={activeWorkout?.name ?? null}
-          hasCompletedTrainingToday={hasCompletedTrainingToday}
-          completedTodayMessage={completedTodayMessage}
-        />
-
-        {weeklyPlanState ? (
-          <WeeklyPlanSummaryCard
-            state={weeklyPlanState}
-            onOpenPlan={() => router.push("/home/plan")}
-          />
-        ) : null}
-
-        <QuickStartCard
-          gymOptions={gymOptions}
-          selectedGymId={selectedGymId}
-          setSelectedGymId={handleSelectedGymChange}
           selectedDurationPreset={selectedDurationPreset}
           setSelectedDurationPreset={(value) => {
             setHasManualDurationChoice(true);
@@ -2234,18 +2186,49 @@ export default function HomePage() {
             customDurationInputRef.current = value;
             setCustomDurationInput(value);
           }}
-          durationMinutes={durationMinutes}
-          onAiPass={handleReviewAiWorkout}
+          onAction={handleQuickStartTodayWorkout}
           onCustomWorkout={handleCustomWorkout}
-          isGenerating={isGenerating || isLoadingGyms}
-          userId={userId}
+          onToggleCustomizeAi={() => setShowAiCustomization((previous) => !previous)}
+          isGenerating={isGenerating}
+          hasActiveWorkout={Boolean(activeWorkout)}
+          activeWorkoutName={activeWorkout?.name ?? null}
+          hasCompletedTrainingToday={hasCompletedTrainingToday}
+          completedTodayMessage={completedTodayMessage}
           aiError={aiError}
           gymError={gymError}
           pageError={pageError}
         />
 
-        <TrainingGapCard
-          trainingGap={weeklyStructure.trainingGap}
+        {showAiCustomization ? (
+          <QuickStartCard
+            gymOptions={gymOptions}
+            selectedGymId={selectedGymId}
+            setSelectedGymId={handleSelectedGymChange}
+            selectedDurationPreset={selectedDurationPreset}
+            setSelectedDurationPreset={(value) => {
+              setHasManualDurationChoice(true);
+              selectedDurationPresetRef.current = value;
+              setSelectedDurationPreset(value);
+            }}
+            customDurationInput={customDurationInput}
+            setCustomDurationInput={(value) => {
+              setHasManualDurationChoice(true);
+              customDurationInputRef.current = value;
+              setCustomDurationInput(value);
+            }}
+            durationMinutes={durationMinutes}
+            onAiPass={handleReviewAiWorkout}
+            onCustomWorkout={handleCustomWorkout}
+            isGenerating={isGenerating || isLoadingGyms}
+            userId={userId}
+            aiError={aiError}
+            gymError={gymError}
+            pageError={pageError}
+          />
+        ) : null}
+
+        <TrainingTrendCard
+          trend={trainingTrend}
           onShowDetails={() => setShowWeeklyInsights(true)}
         />
 

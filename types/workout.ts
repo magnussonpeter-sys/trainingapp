@@ -23,6 +23,7 @@ export type Exercise = {
   isNewExercise?: boolean;
   suggestedWeight?: number | string | null;
   suggestedWeightLabel?: string;
+  suggestedWeightSourceLabel?: string;
   availableWeightsKg?: number[];
   weightUnitLabel?: string;
   weightSelectionMode?: "total" | "single_implement" | "per_hand";

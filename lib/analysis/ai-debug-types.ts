@@ -27,6 +27,9 @@ import type {
 import type {
   GoalFeedback,
 } from "@/lib/planning/goal-feedback";
+import type {
+  TrainingDoseAdjustment,
+} from "@/lib/planning/training-dose-adjustment";
 
 export type AiDebugExportType = "quick" | "full";
 
@@ -319,6 +322,7 @@ export type AiDebugCurrentPlanSnapshot = {
   coachDecision: CoachDecision;
   goalFeedback: GoalFeedback;
   goalTrajectory: GoalTrajectory;
+  trainingDoseAdjustment: TrainingDoseAdjustment;
   trainingGap: TrainingGap;
   optimalPlanText: string;
   completedLast7Days: number;

@@ -61,6 +61,11 @@ function getChipTone(status: GoalFeedback["chips"][number]["status"]) {
 
 type GoalFeedbackCardProps = {
   feedback: GoalFeedback;
+  recommendationLabel: string;
+  weekSummary: string;
+  focusSummary: string;
+  primaryButtonLabel?: string;
+  hideFocusHint?: boolean;
   onStartRecommended: () => void;
   onShowDetails: () => void;
 };
@@ -99,20 +104,23 @@ export default function GoalFeedbackCard(props: GoalFeedbackCardProps) {
 
       <div className="mt-4 rounded-2xl border border-white/70 bg-white/85 px-4 py-3">
         <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-          Bästa justering
+          Bästa nästa steg
         </p>
         <p className="mt-2 text-lg font-semibold tracking-tight text-slate-950">
-          {props.feedback.concreteChange.type === "maintain"
-            ? "Behåll nivån"
-            : props.feedback.concreteChange.sessionsDelta > 0
-              ? `+${props.feedback.concreteChange.sessionsDelta} kort pass eller ${props.feedback.concreteChange.minutesRangeLabel.toLowerCase()}`
-              : props.feedback.concreteChange.minutesRangeLabel}
+          {props.recommendationLabel}
         </p>
-        {props.feedback.concreteChange.focusLabels.length > 0 ? (
+        {!props.hideFocusHint && props.feedback.concreteChange.focusLabels.length > 0 ? (
           <p className="mt-1 text-sm leading-6 text-slate-600">
             Helst med fokus på {props.feedback.concreteChange.focusLabels.join(" och ")}.
           </p>
         ) : null}
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-white/70 bg-white/85 px-4 py-3">
+        <p className="text-sm font-medium text-slate-900">{props.weekSummary}</p>
+        <p className="mt-1 text-sm leading-6 text-slate-600">
+          Fokus just nu: <span className="font-medium text-slate-900">{props.focusSummary}</span>
+        </p>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
@@ -141,7 +149,7 @@ export default function GoalFeedbackCard(props: GoalFeedbackCardProps) {
           onClick={props.onStartRecommended}
           className={cn(uiButtonClasses.primary, "w-full justify-center sm:flex-1")}
         >
-          Starta rekommenderat pass
+          {props.primaryButtonLabel ?? "Starta rekommenderat pass"}
         </button>
         <button
           type="button"

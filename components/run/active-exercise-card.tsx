@@ -223,14 +223,12 @@ export default function ActiveExerciseCard({
   onSubmitFeedback,
 }: ActiveExerciseCardProps) {
   const [showDescription, setShowDescription] = useState(false);
-  const [showWeightPicker, setShowWeightPicker] = useState(false);
   const [showWeightEditor, setShowWeightEditor] = useState(false);
 
   useEffect(() => {
     // Reset secondary panels after React has committed the new active step.
     const resetPanelTimer = window.setTimeout(() => {
       setShowDescription(false);
-      setShowWeightPicker(false);
       setShowWeightEditor(false);
     }, 0);
 
@@ -444,28 +442,27 @@ export default function ActiveExerciseCard({
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setShowWeightPicker((previous) => !previous)}
-                className="flex w-full items-end justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left"
-              >
-                <span className="text-2xl font-semibold text-slate-900">
-                  {weight || suggestedWeightValue || "Ange vikt"}
-                </span>
-                <span className="pb-1 text-sm font-medium text-slate-500">
-                  {weightUnitLabel}
-                </span>
-              </button>
+                <div className="flex w-full items-end justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left">
+                  <span className="text-2xl font-semibold text-slate-900">
+                    {weight || suggestedWeightValue || "Ange vikt"}
+                  </span>
+                  <span className="pb-1 text-sm font-medium text-slate-500">
+                    {weightUnitLabel}
+                  </span>
+                </div>
 
               <ManualWeightInput
                 value={weight}
                 onChange={onWeightChange}
                 suggestedWeightValue={suggestedWeightValue}
+                suggestedWeightLabel={exercise.suggestedWeightLabel}
+                suggestedWeightSourceLabel={exercise.suggestedWeightSourceLabel}
+                progressionNote={exercise.progressionNote}
                 label="Ange vikt"
                 unitLabel={weightUnitLabel}
               />
 
-              {showWeightPicker ? (
+              {weightChipOptions.length > 0 ? (
                 <WeightChipRow
                   chips={weightChipOptions}
                   selectedWeight={weight}
