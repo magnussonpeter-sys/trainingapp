@@ -98,7 +98,15 @@ const FALLBACK_ROLE_FAMILIES = {
     "dumbbell_shoulder_press",
     "push_up",
   ]),
-  pull: new Set(["barbell_row", "pull_up", "dumbbell_row", "lat_pulldown", "face_pull"]),
+  pull: new Set([
+    "barbell_row",
+    "pull_up",
+    "dumbbell_row",
+    "chest_supported_row",
+    "ring_row",
+    "lat_pulldown",
+    "face_pull",
+  ]),
 };
 
 function validateSyntheticFallbackPlan(params: {
@@ -1273,7 +1281,11 @@ export async function runFullAppChainSimulation(params?: {
   let state = createInitialSimulationState(effectiveSimulationProfile);
   let plannedWorkoutOrdinal = 0;
   let aiGeneratedWorkoutCount = 0;
+  let actualAiAttemptCount = 0;
   let aiFallbackWorkoutCount = 0;
+  let fallbackAttemptCount = 0;
+  let fallbackValidationFailureCount = 0;
+  let generationFailedCount = 0;
   let aiLimitReached = false;
 
   for (let dayIndex = 0; dayIndex < config.totalDays; dayIndex += 1) {
@@ -1287,6 +1299,8 @@ export async function runFullAppChainSimulation(params?: {
     let workoutResult;
     let generatedWorkoutSummary: SimulationDailySnapshot["generatedWorkoutSummary"] | undefined;
     let dayEvent: SimulationDailySnapshot["dayEvent"] = "rest";
+    let userOutcome: SimulationDailySnapshot["userOutcome"] = "skipped";
+    let generationStatus: SimulationDailySnapshot["generationStatus"] = "not_attempted";
 
     if (dayPlan.isPlannedTrainingDay) {
       const currentDate = new Date(`${dayPlan.date}T12:00:00`);
@@ -1408,6 +1422,7 @@ export async function runFullAppChainSimulation(params?: {
           aiGeneratedWorkoutCount < (config.maxAiGeneratedWorkouts ?? 4);
 
         if (canUseRealAi) {
+          actualAiAttemptCount += 1;
           const generationRun = await generateWorkoutForSimulationMode({
             generationMode: config.generationMode,
             input: {
@@ -1448,6 +1463,7 @@ export async function runFullAppChainSimulation(params?: {
 
           if (generatedWorkout.ok) {
             aiGeneratedWorkoutCount += 1;
+            generationStatus = "real_ai";
             const normalizedWorkout = generatedWorkout.workout;
             const generationEngineDebug = generationRun.generationEngineDebug;
             const plannedExercises = adaptNormalizedWorkoutToSimulationPlan(
@@ -1472,6 +1488,7 @@ export async function runFullAppChainSimulation(params?: {
             };
             stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
             dayEvent = "planned_training";
+            userOutcome = "completed";
             generatedWorkoutSummary = {
               workoutId: workoutResult.workoutId,
               workoutName: normalizedWorkout.name,
@@ -1542,6 +1559,11 @@ export async function runFullAppChainSimulation(params?: {
                   trainingDoseAdjustment: weeklyStructure.trainingDoseAdjustment,
                   passGenerationMode: "real_ai",
                   aiRequestUsed: true,
+                  shouldGenerateWorkout: true,
+                  generationSkippedReason: null,
+                  attemptedRealAi: true,
+                  realAiFailureReason: null,
+                  usedFallback: false,
                   promptContextSummary,
                   generationModeRequested:
                     generationEngineDebug.generationModeRequested ?? undefined,
@@ -1573,6 +1595,7 @@ export async function runFullAppChainSimulation(params?: {
             }
           } else {
             aiFallbackWorkoutCount += 1;
+            fallbackAttemptCount += 1;
             const plannedExercises = buildSyntheticWorkoutPlan({
               dayPlan: plannerDayPlan,
               profile: effectiveSimulationProfile,
@@ -1587,18 +1610,23 @@ export async function runFullAppChainSimulation(params?: {
               plannedExercises,
             });
             if (!fallbackValidation.fallbackValidationPassed) {
+              generationStatus = "generation_failed";
+              generationFailedCount += 1;
+              fallbackValidationFailureCount += 1;
               workoutResult = buildMissedWorkoutResult({
                 dayPlan: plannerDayPlan,
                 profile: effectiveSimulationProfile,
                 skipReason: "random",
               });
-              stateAfter = applyMissedWorkoutState(
+              stateAfter = applyRestDayRecovery(
                 stateBefore,
                 effectiveSimulationProfile,
                 config,
               );
-              dayEvent = "missed_planned";
+              dayEvent = "rest";
+              userOutcome = "completed";
             } else {
+              generationStatus = "fallback_mock";
               workoutResult = simulateWorkout({
                 dayPlan: plannerDayPlan,
                 plannedExercises,
@@ -1620,6 +1648,7 @@ export async function runFullAppChainSimulation(params?: {
               };
               stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
               dayEvent = "planned_training";
+              userOutcome = "completed";
             }
             generatedWorkoutSummary = {
               workoutId: workoutResult.workoutId,
@@ -1682,6 +1711,11 @@ export async function runFullAppChainSimulation(params?: {
                   fallbackFailureReasons:
                     fallbackValidation.fallbackFailureReasons,
                   aiRequestUsed: true,
+                  shouldGenerateWorkout: true,
+                  generationSkippedReason: null,
+                  attemptedRealAi: true,
+                  realAiFailureReason: generatedWorkout.error,
+                  usedFallback: true,
                   promptContextSummary,
                   generationFallbackReason: generatedWorkout.error,
                 },
@@ -1702,6 +1736,7 @@ export async function runFullAppChainSimulation(params?: {
         } else {
           aiLimitReached = true;
           aiFallbackWorkoutCount += 1;
+          fallbackAttemptCount += 1;
           const plannedExercises = buildSyntheticWorkoutPlan({
             dayPlan: plannerDayPlan,
             profile: effectiveSimulationProfile,
@@ -1716,18 +1751,23 @@ export async function runFullAppChainSimulation(params?: {
             plannedExercises,
           });
           if (!fallbackValidation.fallbackValidationPassed) {
+            generationStatus = "generation_failed";
+            generationFailedCount += 1;
+            fallbackValidationFailureCount += 1;
             workoutResult = buildMissedWorkoutResult({
               dayPlan: plannerDayPlan,
               profile: effectiveSimulationProfile,
               skipReason: "random",
             });
-            stateAfter = applyMissedWorkoutState(
+            stateAfter = applyRestDayRecovery(
               stateBefore,
               effectiveSimulationProfile,
               config,
             );
-            dayEvent = "missed_planned";
+            dayEvent = "rest";
+            userOutcome = "completed";
           } else {
+            generationStatus = "fallback_mock";
             workoutResult = simulateWorkout({
               dayPlan: plannerDayPlan,
               plannedExercises,
@@ -1749,6 +1789,7 @@ export async function runFullAppChainSimulation(params?: {
             };
             stateAfter = applyWorkoutFatigue(stateBefore, workoutResult, effectiveSimulationProfile, config);
             dayEvent = "planned_training";
+            userOutcome = "completed";
           }
           generatedWorkoutSummary = {
             workoutId: workoutResult.workoutId,
@@ -1808,6 +1849,11 @@ export async function runFullAppChainSimulation(params?: {
                 fallbackFailureReasons:
                   fallbackValidation.fallbackFailureReasons,
                 aiRequestUsed: false,
+                shouldGenerateWorkout: true,
+                generationSkippedReason: "ai_budget_reached",
+                attemptedRealAi: false,
+                realAiFailureReason: null,
+                usedFallback: true,
                 promptContextSummary,
               },
               trainingHistoryContextSummary: {
@@ -1825,6 +1871,7 @@ export async function runFullAppChainSimulation(params?: {
           }
         }
       } else {
+        generationStatus = "not_attempted";
         workoutResult = buildMissedWorkoutResult({
           dayPlan: {
             ...dayPlan,
@@ -1836,6 +1883,7 @@ export async function runFullAppChainSimulation(params?: {
         });
         stateAfter = applyMissedWorkoutState(stateBefore, effectiveSimulationProfile, config);
         dayEvent = "missed_planned";
+        userOutcome = "user_missed";
       }
     } else if (
       shouldAddSpontaneousWorkout({
@@ -1931,6 +1979,7 @@ export async function runFullAppChainSimulation(params?: {
         aiGeneratedWorkoutCount < (config.maxAiGeneratedWorkouts ?? 4);
 
       if (canUseRealAi) {
+        actualAiAttemptCount += 1;
         const generationRun = await generateWorkoutForSimulationMode({
           generationMode: config.generationMode,
           input: {
@@ -2000,6 +2049,8 @@ export async function runFullAppChainSimulation(params?: {
             config,
           );
           dayEvent = "spontaneous_training";
+          userOutcome = "completed";
+          generationStatus = "real_ai";
           generatedWorkoutSummary = {
             workoutId: workoutResult.workoutId,
             workoutName: normalizedWorkout.name,
@@ -2062,6 +2113,11 @@ export async function runFullAppChainSimulation(params?: {
                 muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
                 passGenerationMode: "real_ai",
                 aiRequestUsed: true,
+                shouldGenerateWorkout: true,
+                generationSkippedReason: null,
+                attemptedRealAi: true,
+                realAiFailureReason: null,
+                usedFallback: false,
                 promptContextSummary,
                 generationModeRequested:
                   generationEngineDebug.generationModeRequested ?? undefined,
@@ -2093,6 +2149,7 @@ export async function runFullAppChainSimulation(params?: {
           }
         } else {
           aiFallbackWorkoutCount += 1;
+          fallbackAttemptCount += 1;
           const spontaneousExercises = buildSyntheticWorkoutPlan({
             dayPlan: spontaneousPlan,
             profile: effectiveSimulationProfile,
@@ -2124,6 +2181,8 @@ export async function runFullAppChainSimulation(params?: {
             config,
           );
           dayEvent = "spontaneous_training";
+          userOutcome = "completed";
+          generationStatus = "fallback_mock";
           generatedWorkoutSummary = {
             workoutId: workoutResult.workoutId,
             workoutName: workoutResult.workoutName,
@@ -2138,6 +2197,7 @@ export async function runFullAppChainSimulation(params?: {
       } else {
         aiLimitReached = true;
         aiFallbackWorkoutCount += 1;
+        fallbackAttemptCount += 1;
         const spontaneousExercises = buildSyntheticWorkoutPlan({
           dayPlan: spontaneousPlan,
           profile: effectiveSimulationProfile,
@@ -2169,6 +2229,8 @@ export async function runFullAppChainSimulation(params?: {
           config,
         );
         dayEvent = "spontaneous_training";
+        userOutcome = "completed";
+        generationStatus = "fallback_mock";
         generatedWorkoutSummary = {
           workoutId: workoutResult.workoutId,
           workoutName: workoutResult.workoutName,
@@ -2182,12 +2244,17 @@ export async function runFullAppChainSimulation(params?: {
       }
     } else {
       stateAfter = applyRestDayRecovery(stateBefore, effectiveSimulationProfile, config);
+      userOutcome = "skipped";
+      generationStatus = "not_attempted";
     }
 
     dailySnapshots.push({
       dayIndex,
       date: dayPlan.date,
       dayEvent,
+      plannedByScenario: dayPlan.isPlannedTrainingDay,
+      userOutcome,
+      generationStatus,
       stateBefore,
       plannedTraining: dayPlan,
       generatedWorkoutSummary,
@@ -2215,7 +2282,11 @@ export async function runFullAppChainSimulation(params?: {
     plannedWorkoutDayIndices,
     plannedWorkoutDayLabels: formatPlannedWorkoutDayLabels(plannedWorkoutDayIndices),
     aiGeneratedWorkoutCount,
+    actualAiAttemptCount,
     aiFallbackWorkoutCount,
+    generationFailedCount,
+    fallbackAttemptCount,
+    fallbackValidationFailureCount,
     notes,
     dailySnapshots,
     timeSeries,

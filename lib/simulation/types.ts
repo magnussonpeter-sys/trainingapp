@@ -200,10 +200,25 @@ export type SimulationDayPlan = {
   targetDurationMin: number;
 };
 
+export type SimulationWorkoutEventStatus =
+  | "completed"
+  | "user_missed"
+  | "generation_failed"
+  | "skipped_not_planned";
+
+export type SimulationGenerationStatus =
+  | "not_attempted"
+  | "real_ai"
+  | "fallback_mock"
+  | "generation_failed";
+
 export type SimulationDailySnapshot = {
   dayIndex: number;
   date: string;
   dayEvent: "planned_training" | "missed_planned" | "spontaneous_training" | "rest";
+  plannedByScenario: boolean;
+  userOutcome: "completed" | "user_missed" | "skipped";
+  generationStatus: SimulationGenerationStatus;
   stateBefore: SimulationUserState;
   plannedTraining: SimulationDayPlan;
   generatedWorkoutSummary?: {
@@ -299,6 +314,11 @@ export type SimulationPlannerDebugEntry = {
     fallbackValidationPassed?: boolean;
     fallbackFailureReasons?: string[];
     aiRequestUsed?: boolean;
+    shouldGenerateWorkout?: boolean;
+    generationSkippedReason?: string | null;
+    attemptedRealAi?: boolean;
+    realAiFailureReason?: string | null;
+    usedFallback?: boolean;
     promptContextSummary?: string;
     generationModeRequested?: WorkoutGenerationMode;
     generationEngineUsed?: "legacy_ai_chain" | "slot_based_v1" | null;
@@ -571,7 +591,11 @@ export type SimulationReport = {
   plannedWorkoutDayIndices: number[];
   plannedWorkoutDayLabels: string[];
   aiGeneratedWorkoutCount?: number;
+  actualAiAttemptCount?: number;
   aiFallbackWorkoutCount?: number;
+  generationFailedCount?: number;
+  fallbackAttemptCount?: number;
+  fallbackValidationFailureCount?: number;
   notes?: string[];
   dailySnapshots: SimulationDailySnapshot[];
   timeSeries: SimulationSeriesPoint[];

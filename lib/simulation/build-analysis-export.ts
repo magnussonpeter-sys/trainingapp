@@ -37,13 +37,20 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     (report.plannerDebug ?? []).map((entry) => [entry.dayIndex, entry]),
   );
   const meaningfulSnapshots = report.dailySnapshots.filter(
-    (snapshot) => snapshot.dayEvent !== "rest",
+    (snapshot) =>
+      snapshot.dayEvent !== "rest" || snapshot.generationStatus === "generation_failed",
   );
+  const scenarioCompletedCount = report.dailySnapshots.filter(
+    (snapshot) => snapshot.userOutcome === "completed",
+  ).length;
   const completedCount = report.dailySnapshots.filter(
     (snapshot) => snapshot.workoutResult?.completed,
   ).length;
   const missedCount = report.dailySnapshots.filter(
-    (snapshot) => snapshot.dayEvent === "missed_planned",
+    (snapshot) => snapshot.userOutcome === "user_missed",
+  ).length;
+  const generationFailedCount = report.dailySnapshots.filter(
+    (snapshot) => snapshot.generationStatus === "generation_failed",
   ).length;
   const spontaneousCount = report.dailySnapshots.filter(
     (snapshot) => snapshot.dayEvent === "spontaneous_training",
@@ -99,13 +106,18 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       ? `- Profilvarningar: ${report.effectiveUserProfile.warnings.join("; ")}`
       : "- Profilvarningar: inga",
     `- Max AI-pass: ${report.config.maxAiGeneratedWorkouts ?? "n/a"}`,
-    `- Faktiska AI-anrop: ${report.aiGeneratedWorkoutCount ?? 0}`,
+    `- Faktiska AI-anrop: ${report.actualAiAttemptCount ?? report.aiGeneratedWorkoutCount ?? 0}`,
+    `- Riktiga AI-pass: ${report.aiGeneratedWorkoutCount ?? 0}`,
     `- AI-fallback/mock: ${report.aiFallbackWorkoutCount ?? 0}`,
     "",
     "## Sammanfattning",
     `- Planerade pass: ${report.dailySnapshots.filter((snapshot) => snapshot.plannedTraining.isPlannedTrainingDay).length}`,
+    `- Scenario completed-dagar: ${scenarioCompletedCount}`,
     `- Genomförda pass: ${completedCount}`,
     `- Missade pass: ${missedCount}`,
+    `- Genereringsfel: ${generationFailedCount}`,
+    `- Fallbackförsök: ${report.fallbackAttemptCount ?? report.aiFallbackWorkoutCount ?? 0}`,
+    `- Underkända fallbackförsök: ${report.fallbackValidationFailureCount ?? 0}`,
     `- Spontana pass: ${spontaneousCount}`,
     `- Genomsnittlig faktisk duration: ${avgActualDuration} min`,
     `- Genomsnittlig planerad duration: ${avgPlannedDuration} min`,
@@ -122,6 +134,9 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     lines.push(
       `### Dag ${snapshot.dayIndex + 1} – ${snapshot.date} (${snapshot.plannedTraining.weekday})`,
       `- Händelse: ${dayEventLabel(snapshot.dayEvent)}`,
+      `- Planerad av scenario: ${snapshot.plannedByScenario ? "ja" : "nej"}`,
+      `- User outcome: ${snapshot.userOutcome}`,
+      `- Generation status: ${snapshot.generationStatus}`,
       `- Planner mode: ${debug?.plannerMode ?? report.config.plannerMode}`,
       `- Planner source: ${snapshot.generatedWorkoutSummary?.plannerSource ?? "-"}`,
       `- Rekommenderat fokus: ${plannerSummary?.suggestedNextWorkoutFocus ?? plannerSummary?.suggestedNextFocus ?? "-"}`,

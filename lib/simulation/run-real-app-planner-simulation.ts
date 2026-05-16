@@ -193,6 +193,8 @@ export async function runRealAppPlannerSimulation(params?: {
     let workoutResult;
     let generatedWorkoutSummary: SimulationDailySnapshot["generatedWorkoutSummary"] | undefined;
     let dayEvent: SimulationDailySnapshot["dayEvent"] = "rest";
+    let userOutcome: SimulationDailySnapshot["userOutcome"] = "skipped";
+    let generationStatus: SimulationDailySnapshot["generationStatus"] = "not_attempted";
 
     if (dayPlan.isPlannedTrainingDay) {
       const currentDate = new Date(`${dayPlan.date}T12:00:00`);
@@ -323,6 +325,8 @@ export async function runRealAppPlannerSimulation(params?: {
           config,
         );
         dayEvent = "planned_training";
+        userOutcome = "completed";
+        generationStatus = "not_attempted";
         generatedWorkoutSummary = {
           workoutId: workoutResult.workoutId,
           workoutName: workoutResult.workoutName,
@@ -347,6 +351,8 @@ export async function runRealAppPlannerSimulation(params?: {
           config,
         );
         dayEvent = "missed_planned";
+        userOutcome = "user_missed";
+        generationStatus = "not_attempted";
       }
 
       if (config.enablePlannerDebug) {
@@ -429,6 +435,8 @@ export async function runRealAppPlannerSimulation(params?: {
         config,
       );
       dayEvent = "spontaneous_training";
+      userOutcome = "completed";
+      generationStatus = "not_attempted";
       generatedWorkoutSummary = {
         workoutId: workoutResult.workoutId,
         workoutName: workoutResult.workoutName,
@@ -444,12 +452,17 @@ export async function runRealAppPlannerSimulation(params?: {
         effectiveSimulationProfile,
         config,
       );
+      userOutcome = "skipped";
+      generationStatus = "not_attempted";
     }
 
     dailySnapshots.push({
       dayIndex,
       date: dayPlan.date,
       dayEvent,
+      plannedByScenario: dayPlan.isPlannedTrainingDay,
+      userOutcome,
+      generationStatus,
       stateBefore,
       plannedTraining: dayPlan,
       generatedWorkoutSummary,

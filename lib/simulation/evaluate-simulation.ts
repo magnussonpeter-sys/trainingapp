@@ -79,6 +79,12 @@ export function evaluateSimulation(params: {
 }) {
   const { dailySnapshots, profile } = params;
   const plannedDays = dailySnapshots.filter((snapshot) => snapshot.plannedTraining.isPlannedTrainingDay);
+  const plannedDaysEligibleForAdherence = plannedDays.filter(
+    (snapshot) => snapshot.generationStatus !== "generation_failed",
+  );
+  const completedPlannedWorkouts = plannedDaysEligibleForAdherence.filter(
+    (snapshot) => snapshot.workoutResult?.completed,
+  );
   const workoutResults = dailySnapshots
     .map((snapshot) => snapshot.workoutResult)
     .filter((workout) => workout !== undefined);
@@ -108,7 +114,10 @@ export function evaluateSimulation(params: {
   );
   const flags: string[] = [];
 
-  if (plannedDays.length > 0 && completedWorkouts.length / plannedDays.length < 0.65) {
+  if (
+    plannedDaysEligibleForAdherence.length > 0 &&
+    completedPlannedWorkouts.length / plannedDaysEligibleForAdherence.length < 0.65
+  ) {
     flags.push("Låg följsamhet: användaren missar många planerade pass.");
   }
   if (overloadRiskScore > 70) {
@@ -122,7 +131,13 @@ export function evaluateSimulation(params: {
   }
 
   const evaluation: SimulationEvaluation = {
-    adherenceRate: round(plannedDays.length > 0 ? completedWorkouts.length / plannedDays.length : 0, 2),
+    // Appfel ska inte räknas som användarens bristande följsamhet.
+    adherenceRate: round(
+      plannedDaysEligibleForAdherence.length > 0
+        ? completedPlannedWorkouts.length / plannedDaysEligibleForAdherence.length
+        : 0,
+      2,
+    ),
     completionRate: round(workoutResults.length > 0 ? completedWorkouts.length / workoutResults.length : 0, 2),
     avgSessionDifficulty: round(avg(completedWorkouts.map((workout) => workout.sessionDifficultyScore)), 1),
     avgSessionSatisfaction: round(avg(completedWorkouts.map((workout) => workout.sessionSatisfactionScore)), 1),

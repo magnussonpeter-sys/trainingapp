@@ -23,7 +23,9 @@ const SYNTHETIC_EXERCISES: Array<Omit<SyntheticExercisePlan, "plannedSets" | "pl
   { exerciseId: "split_squat", exerciseName: "Split squat", difficulty: 62, baseLoadScore: 14, category: "accessory", goals: ["strength", "hypertrophy", "health"], equipment: ["bodyweight", "dumbbells", "barbell"] },
   { exerciseId: "barbell_hip_thrust", exerciseName: "Hip thrust", difficulty: 66, baseLoadScore: 16, category: "compound", goals: ["strength", "hypertrophy"], equipment: ["barbell", "bench"] },
   { exerciseId: "pull_up", exerciseName: "Chins", difficulty: 68, baseLoadScore: 15, category: "compound", goals: ["strength", "hypertrophy", "health"], equipment: ["pullup_bar", "bodyweight"] },
-  { exerciseId: "dumbbell_row", exerciseName: "Hantelrodd", difficulty: 58, baseLoadScore: 13, category: "accessory", goals: ["hypertrophy", "health"], equipment: ["dumbbells"] },
+  { exerciseId: "dumbbell_row", exerciseName: "Hantelrodd", difficulty: 58, baseLoadScore: 13, category: "accessory", goals: ["strength", "hypertrophy", "health"], equipment: ["dumbbells"] },
+  { exerciseId: "chest_supported_row", exerciseName: "Bröststödd rodd med hantlar", difficulty: 60, baseLoadScore: 13, category: "accessory", goals: ["strength", "hypertrophy", "health"], equipment: ["dumbbells", "bench"] },
+  { exerciseId: "ring_row", exerciseName: "Ring rows", difficulty: 56, baseLoadScore: 12, category: "accessory", goals: ["strength", "hypertrophy", "health"], equipment: ["rings"] },
   { exerciseId: "dumbbell_bench_press", exerciseName: "Hantelpress", difficulty: 60, baseLoadScore: 14, category: "accessory", goals: ["strength", "hypertrophy"], equipment: ["dumbbells", "bench"] },
   { exerciseId: "dumbbell_shoulder_press", exerciseName: "Hantelpress axlar", difficulty: 58, baseLoadScore: 13, category: "accessory", goals: ["strength", "hypertrophy"], equipment: ["dumbbells"] },
   { exerciseId: "goblet_squat", exerciseName: "Goblet squat", difficulty: 55, baseLoadScore: 13, category: "compound", goals: ["health", "body_composition", "hypertrophy"], equipment: ["dumbbells", "kettlebells"] },
@@ -36,6 +38,97 @@ const SYNTHETIC_EXERCISES: Array<Omit<SyntheticExercisePlan, "plannedSets" | "pl
 
 function canUseExercise(exercise: (typeof SYNTHETIC_EXERCISES)[number], equipment: string[]) {
   return exercise.equipment.some((item) => equipment.includes(item));
+}
+
+function createSyntheticPlanForCandidate(params: {
+  candidate: (typeof SYNTHETIC_EXERCISES)[number];
+  profile: SimulationUserProfile;
+  random: SeededRandom;
+  state: SimulationUserState;
+}) {
+  const { candidate, profile, random, state } = params;
+  const strengthScale =
+    profile.experienceLevel === "advanced"
+      ? 0.52
+      : profile.experienceLevel === "intermediate"
+        ? 0.42
+        : 0.32;
+  const sets =
+    candidate.category === "compound"
+      ? profile.goal === "strength"
+        ? 4
+        : 3
+      : 2 + random.int(0, 1);
+  const reps =
+    candidate.category === "core"
+      ? undefined
+      : profile.goal === "strength" && candidate.category === "compound"
+        ? 5
+        : random.int(8, 12);
+  const duration =
+    candidate.category === "core" ? random.pick([30, 40, 45, 60]) : undefined;
+  const weight =
+    reps != null && candidate.category !== "conditioning"
+      ? round(
+          Math.max(
+            2.5,
+            state.strengthLevel * strengthScale * (candidate.difficulty / 70),
+          ),
+          1,
+        )
+      : undefined;
+
+  return {
+    exerciseId: candidate.exerciseId,
+    exerciseName: candidate.exerciseName,
+    variantGroup: createSimulationVariantGroup(candidate),
+    difficulty: candidate.difficulty,
+    baseLoadScore: candidate.baseLoadScore,
+    category: candidate.category,
+    plannedSets: sets,
+    plannedReps: reps,
+    plannedDurationSec: duration,
+    plannedWeightKg: weight,
+  } satisfies SyntheticExercisePlan;
+}
+
+function pickPreferredFallbackExercises(params: {
+  candidates: (typeof SYNTHETIC_EXERCISES)[number][];
+  targetExerciseCount: number;
+  goal: SimulationGoal;
+  focusHint?: WorkoutFocus;
+}) {
+  const selected: (typeof SYNTHETIC_EXERCISES)[number][] = [];
+  const normalizedFocus = params.focusHint ?? "full_body";
+
+  if (
+    params.goal !== "strength" ||
+    normalizedFocus !== "full_body" ||
+    params.targetExerciseCount < 4
+  ) {
+    return selected;
+  }
+
+  const rolePreferences = [
+    ["goblet_squat", "split_squat", "barbell_squat", "walking_lunge"],
+    ["romanian_deadlift", "deadlift", "barbell_hip_thrust"],
+    ["dumbbell_bench_press", "bench_press", "push_up", "dumbbell_shoulder_press"],
+    ["chest_supported_row", "ring_row", "dumbbell_row", "pull_up", "barbell_row", "lat_pulldown"],
+  ];
+
+  for (const preferredIds of rolePreferences) {
+    const candidate = preferredIds
+      .map((exerciseId) =>
+        params.candidates.find((entry) => entry.exerciseId === exerciseId),
+      )
+      .find(Boolean);
+
+    if (candidate && !selected.some((entry) => entry.exerciseId === candidate.exerciseId)) {
+      selected.push(candidate);
+    }
+  }
+
+  return selected.slice(0, params.targetExerciseCount);
 }
 
 function matchesFocusHint(
@@ -87,7 +180,15 @@ export function buildSyntheticWorkoutPlan(params: {
   focusHint?: WorkoutFocus;
 }) {
   const { dayPlan, profile, random, state, focusHint } = params;
-  const targetExerciseCount = clamp(Math.round(dayPlan.targetDurationMin / 12), 2, 6);
+  const targetExerciseCount = clamp(
+    profile.goal === "strength" &&
+      (focusHint ?? "full_body") === "full_body" &&
+      dayPlan.targetDurationMin >= 30
+      ? Math.max(Math.round(dayPlan.targetDurationMin / 12), 4)
+      : Math.round(dayPlan.targetDurationMin / 12),
+    2,
+    6,
+  );
   const focusPool = SYNTHETIC_EXERCISES.filter((exercise) =>
     matchesFocusHint(exercise, focusHint),
   );
@@ -110,38 +211,37 @@ export function buildSyntheticWorkoutPlan(params: {
             (exercise) => !pool.some((goalExercise) => goalExercise.exerciseId === exercise.exerciseId),
           ),
         ];
-  const selected: SyntheticExercisePlan[] = [];
+  const preferredCandidates = pickPreferredFallbackExercises({
+    candidates,
+    targetExerciseCount,
+    goal: profile.goal,
+    focusHint,
+  });
+  const selectedCandidates = [...preferredCandidates];
 
-  while (selected.length < targetExerciseCount && selected.length < candidates.length) {
+  while (
+    selectedCandidates.length < targetExerciseCount &&
+    selectedCandidates.length < candidates.length
+  ) {
     const candidate = random.pick(candidates);
 
-    if (selected.some((item) => item.exerciseId === candidate.exerciseId)) {
+    if (
+      selectedCandidates.some((item) => item.exerciseId === candidate.exerciseId)
+    ) {
       continue;
     }
 
-    const strengthScale = profile.experienceLevel === "advanced" ? 0.52 : profile.experienceLevel === "intermediate" ? 0.42 : 0.32;
-    const sets = candidate.category === "compound" ? (profile.goal === "strength" ? 4 : 3) : 2 + random.int(0, 1);
-    const reps = candidate.category === "core" ? undefined : profile.goal === "strength" && candidate.category === "compound" ? 5 : random.int(8, 12);
-    const duration = candidate.category === "core" ? random.pick([30, 40, 45, 60]) : undefined;
-    const weight = reps != null && candidate.category !== "conditioning"
-      ? round(Math.max(2.5, state.strengthLevel * strengthScale * (candidate.difficulty / 70)), 1)
-      : undefined;
-
-    selected.push({
-      exerciseId: candidate.exerciseId,
-      exerciseName: candidate.exerciseName,
-      variantGroup: createSimulationVariantGroup(candidate),
-      difficulty: candidate.difficulty,
-      baseLoadScore: candidate.baseLoadScore,
-      category: candidate.category,
-      plannedSets: sets,
-      plannedReps: reps,
-      plannedDurationSec: duration,
-      plannedWeightKg: weight,
-    });
+    selectedCandidates.push(candidate);
   }
 
-  return selected;
+  return selectedCandidates.map((candidate) =>
+    createSyntheticPlanForCandidate({
+      candidate,
+      profile,
+      random,
+      state,
+    }),
+  );
 }
 
 export function simulateWorkout(params: {

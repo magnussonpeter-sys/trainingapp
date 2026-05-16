@@ -144,9 +144,19 @@ export function countMissedPlannedSessions(params: {
   plannedSessions: number;
   completedSessions: number;
   explicitMissedSessions?: number | null;
+  estimateFromCadence?: boolean;
 }) {
-  const estimatedMissed = Math.max(0, Math.round(params.plannedSessions) - params.completedSessions);
-  return Math.max(estimatedMissed, params.explicitMissedSessions ?? 0);
+  const explicitMissed = Math.max(0, params.explicitMissedSessions ?? 0);
+
+  if (params.estimateFromCadence === false) {
+    return explicitMissed;
+  }
+
+  const estimatedMissed = Math.max(
+    0,
+    Math.round(params.plannedSessions) - params.completedSessions,
+  );
+  return Math.max(estimatedMissed, explicitMissed);
 }
 
 export function calculateAdherenceWindow(params: {
@@ -156,6 +166,7 @@ export function calculateAdherenceWindow(params: {
   plannedSessionsPerWeek: number;
   plannedMinutesPerWeek: number;
   explicitMissedSessions?: number | null;
+  estimateMissedFromCadence?: boolean;
 }) {
   const completedLogs = getCompletedLogsWithinDays(params.logs, params.now, params.days);
   const completedSessions = completedLogs.length;
@@ -190,6 +201,7 @@ export function calculateAdherenceWindow(params: {
       plannedSessions,
       completedSessions,
       explicitMissedSessions: params.explicitMissedSessions,
+      estimateFromCadence: params.estimateMissedFromCadence,
     }),
     minuteCompletionRatio,
     sessionCompletionRatio,
@@ -443,6 +455,14 @@ function buildAdjustmentReason(params: {
     return "Ett planerat pass verkar ha glidit. Nästa pass kan bli lite längre eller mer fokuserat, men ökningen hålls liten.";
   }
 
+  if (params.insufficientHistory) {
+    if (params.goal === "strength") {
+      return "Jag har begränsad historik än så länge. Vi börjar med ett genomförbart styrkepass innan vi justerar träningsdosen mer aktivt.";
+    }
+
+    return "Jag har begränsad historik än så länge. Vi börjar med ett genomförbart pass innan vi justerar träningsdosen mer aktivt.";
+  }
+
   return "Ingen säker dosjustering behövs just nu.";
 }
 
@@ -496,6 +516,14 @@ export function buildTrainingDoseAdjustment(
   params: BuildTrainingDoseAdjustmentParams,
 ): TrainingDoseAdjustment {
   const configuredPriorityMuscles = params.configuredPriorityMuscles ?? [];
+  const completedHistoryCount = params.logs.filter(
+    (log) => log.status === "completed" && !isWorkoutLogExcludedFromAnalysis(log),
+  ).length;
+  const thirtyDayEffect = params.trainingGap.thirtyDayEffect;
+  const thirtyDayConfidence = thirtyDayEffect?.confidence ?? "low";
+  // Undvik att tolka teoretiskt planerade pass som "missade" när historiken ännu är för tunn.
+  const canEstimateMissesFromCadence =
+    completedHistoryCount >= 2 || thirtyDayConfidence !== "low";
   const baseDurationMinutes = getBaseDurationMinutes(params);
   const minDurationMinutes = Math.max(
     15,
@@ -516,6 +544,7 @@ export function buildTrainingDoseAdjustment(
     plannedSessionsPerWeek: params.goalTrajectory.weeklyFrequencyTarget,
     plannedMinutesPerWeek: targetMinutesPerWeek,
     explicitMissedSessions: params.missedPlannedSessionsCount ?? 0,
+    estimateMissedFromCadence: canEstimateMissesFromCadence,
   });
   const adherence14d = calculateAdherenceWindow({
     logs: params.logs,
@@ -523,6 +552,7 @@ export function buildTrainingDoseAdjustment(
     days: 14,
     plannedSessionsPerWeek: params.goalTrajectory.weeklyFrequencyTarget,
     plannedMinutesPerWeek: targetMinutesPerWeek,
+    estimateMissedFromCadence: canEstimateMissesFromCadence,
   });
   const adherence30d = calculateAdherenceWindow({
     logs: params.logs,
@@ -530,9 +560,8 @@ export function buildTrainingDoseAdjustment(
     days: 30,
     plannedSessionsPerWeek: params.goalTrajectory.weeklyFrequencyTarget,
     plannedMinutesPerWeek: targetMinutesPerWeek,
+    estimateMissedFromCadence: canEstimateMissesFromCadence,
   });
-  const thirtyDayEffect = params.trainingGap.thirtyDayEffect;
-  const thirtyDayConfidence = thirtyDayEffect?.confidence ?? "low";
   const plannedMinutes30d =
     thirtyDayEffect?.plannedMinutes ?? adherence30d.plannedMinutes;
   const completedMinutes30d =
@@ -545,6 +574,7 @@ export function buildTrainingDoseAdjustment(
     plannedSessions: plannedSessions30d,
     completedSessions: completedSessions30d,
     explicitMissedSessions: params.missedPlannedSessionsCount ?? 0,
+    estimateFromCadence: canEstimateMissesFromCadence,
   });
   const adherence30dValue = clamp(
     Math.min(
@@ -575,8 +605,7 @@ export function buildTrainingDoseAdjustment(
     adherence7d.missedSessions >= 2 ||
     (adherence7d.completedSessions === 0 && adherence14d.missedSessions >= 2);
   const insufficientHistory =
-    params.logs.filter((log) => log.status === "completed").length < 2 &&
-    thirtyDayConfidence === "low";
+    completedHistoryCount < 2 && thirtyDayConfidence === "low";
   const totalDoseClearlyLow =
     (thirtyDayEffect?.minuteCompletionRatio ?? adherence30d.minuteCompletionRatio) < 0.5 ||
     adherence14d.adherence < 0.45;

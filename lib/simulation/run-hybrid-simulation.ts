@@ -281,6 +281,21 @@ export async function runHybridSimulation(params?: {
       dayIndex,
       date: dayPlan.date,
       dayEvent,
+      plannedByScenario: dayPlan.isPlannedTrainingDay,
+      userOutcome:
+        dayEvent === "planned_training" || dayEvent === "spontaneous_training"
+          ? "completed"
+          : dayEvent === "missed_planned"
+            ? "user_missed"
+            : "skipped",
+      generationStatus:
+        generatedWorkoutSummary?.passGenerationMode === "real_ai"
+          ? "real_ai"
+          : generatedWorkoutSummary?.passGenerationMode === "fallback_mock"
+            ? "fallback_mock"
+            : generatedWorkoutSummary?.passGenerationMode === "failed_generation"
+              ? "generation_failed"
+              : "not_attempted",
       stateBefore,
       plannedTraining: dayPlan,
       generatedWorkoutSummary,
