@@ -464,7 +464,8 @@ function buildFullBodyContract(params: {
   targetSlotCount: number;
 }) {
   const isStrength = params.coachContext.goal === "strength";
-  const isShortStrength = isStrength && params.coachContext.durationMinutes <= 35;
+  const isShortStrength =
+    isStrength && params.coachContext.planningDurationBucket <= 35;
   const slots: WorkoutSlot[] = [
     createContractSlot({
       templateId: params.templateId,
@@ -662,9 +663,9 @@ export function buildSlotContract(params: {
 }): WorkoutSlotContract {
   const goalConfig = getTrainingGoalConfig(params.coachContext.goal);
   const contractMode = params.mode ?? "full";
-  const templateId = `${goalConfig.id}:${params.coachContext.selectedFocus}:${params.coachContext.durationMinutes}:${contractMode}`;
+  const templateId = `${goalConfig.id}:${params.coachContext.selectedFocus}:${params.coachContext.planningDurationBucket}:${contractMode}`;
   const targetSlotCount = clampSlotCount({
-    durationMinutes: params.coachContext.durationMinutes,
+    durationMinutes: params.coachContext.planningDurationBucket,
     goal: params.coachContext.goal,
   });
 
@@ -788,6 +789,9 @@ function buildDegradedSlotContract(params: {
     const pushSlot = findSlot("main_push");
     const pullSlot = findSlot("main_pull");
     const supportSlot = findSlot("secondary_lower") ?? findSlot("core_or_carry");
+    const isCompactStrengthBucket =
+      coachContext.goal === "strength" &&
+      coachContext.planningDurationBucket <= 35;
 
     if (lowerSlot) {
       degradedSlots.push(
@@ -806,7 +810,8 @@ function buildDegradedSlotContract(params: {
           label: "support_lower_or_core",
           role: "main_hinge",
           allowedRoles: ["main_hinge", "core", "carry", "rear_delt_scapula"],
-          required: true,
+          // Compact strength-pass ska kunna nöja sig med fyra huvudroller utan extra fatal secondary lower-slot.
+          required: !isCompactStrengthBucket,
           preferredMovementPatterns: ["hinge", "core", "carry"],
         }),
       );
@@ -888,7 +893,7 @@ function buildDegradedSlotContract(params: {
         );
 
   // Minimum contract still needs enough slots to build a meaningful short session.
-  if (coachContext.durationMinutes >= 15 && finalSlots.length < 3) {
+  if (coachContext.planningDurationBucket >= 15 && finalSlots.length < 3) {
     for (const slot of baseContract.slots) {
       if (finalSlots.some((existing) => existing.label === slot.label)) {
         continue;

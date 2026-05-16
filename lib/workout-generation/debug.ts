@@ -38,6 +38,10 @@ export function attachWorkoutGenerationDebug(params: {
                 missingRoles: params.slotDebug.missingRoles,
                 availableRoles: params.slotDebug.availableRoles,
                 equipmentLimitations: params.slotDebug.equipmentLimitations,
+                displayDurationMinutes: params.slotDebug.displayDurationMinutes,
+                planningDurationBucket: params.slotDebug.planningDurationBucket,
+                timeBudgetMinutes: params.slotDebug.timeBudgetMinutes,
+                durationBucketReason: params.slotDebug.durationBucketReason,
                 selectedFallbackStrategy:
                   params.slotDebug.selectedFallbackStrategy,
                 contractBeforeFeasibility:
@@ -47,6 +51,7 @@ export function attachWorkoutGenerationDebug(params: {
                 contractSlots: params.slotDebug.contractSlots,
                 requiredSlots: params.slotDebug.requiredSlots,
                 protectedSlots: params.slotDebug.protectedSlots,
+                recoveredProtectedSlots: params.slotDebug.recoveredProtectedSlots,
                 optionalSlots: params.slotDebug.optionalSlots,
                 candidatesPerSlot: params.slotDebug.candidatesPerSlot,
                 selectedPerSlot: params.slotDebug.selectedExercisePerSlot,
@@ -124,6 +129,10 @@ export function attachWorkoutGenerationDebug(params: {
               missingRoles: params.slotDebug.missingRoles,
               availableRoles: params.slotDebug.availableRoles,
               equipmentLimitations: params.slotDebug.equipmentLimitations,
+              displayDurationMinutes: params.slotDebug.displayDurationMinutes,
+              planningDurationBucket: params.slotDebug.planningDurationBucket,
+              timeBudgetMinutes: params.slotDebug.timeBudgetMinutes,
+              durationBucketReason: params.slotDebug.durationBucketReason,
               selectedFallbackStrategy:
                 params.slotDebug.selectedFallbackStrategy,
               contractBeforeFeasibility:
@@ -137,6 +146,7 @@ export function attachWorkoutGenerationDebug(params: {
               contractSlots: params.slotDebug.contractSlots,
               requiredSlots: params.slotDebug.requiredSlots,
               protectedSlots: params.slotDebug.protectedSlots,
+              recoveredProtectedSlots: params.slotDebug.recoveredProtectedSlots,
               slotReasons: params.slotDebug.slotReasons,
               candidatesPerSlot: params.slotDebug.candidatesPerSlot,
               selectedExercisePerSlot: params.slotDebug.selectedExercisePerSlot,

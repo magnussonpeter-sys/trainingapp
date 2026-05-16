@@ -312,6 +312,8 @@ export function runSimulation(params?: {
       generationStatus:
         generatedWorkoutSummary?.passGenerationMode === "real_ai"
           ? "real_ai"
+          : generatedWorkoutSummary?.passGenerationMode === "safe_template_valid"
+            ? "safe_template_valid"
           : generatedWorkoutSummary?.passGenerationMode === "fallback_mock"
             ? "fallback_mock"
             : generatedWorkoutSummary?.passGenerationMode === "failed_generation"

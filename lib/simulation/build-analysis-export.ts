@@ -170,6 +170,9 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       `- Planner source: ${snapshot.generatedWorkoutSummary?.plannerSource ?? "-"}`,
       `- Rekommenderat fokus: ${plannerSummary?.suggestedNextWorkoutFocus ?? plannerSummary?.suggestedNextFocus ?? "-"}`,
       `- Rekommenderad längd: ${plannerSummary?.suggestedNextDurationMinutes ?? snapshot.plannedTraining.targetDurationMin} min`,
+      typeof plannerSummary?.planningDurationBucket === "number"
+        ? `- Intern duration bucket: ${plannerSummary.planningDurationBucket} min${typeof plannerSummary.displayDurationMinutes === "number" ? ` (display ${plannerSummary.displayDurationMinutes} min)` : ""}`
+        : "- Intern duration bucket: saknas",
       `- Faktisk längd: ${snapshot.workoutResult?.actualDurationMin ?? 0} min`,
       `- Coachtext: ${plannerSummary?.coachText ?? debug?.note ?? "-"}`,
       `- Priority muscles: ${plannerSummary?.priorityMuscles.join(", ") || "inga"}`,

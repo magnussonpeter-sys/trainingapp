@@ -7,6 +7,9 @@ function getPlannerStats(report: SimulationReport) {
 
   return {
     total: summaries.length,
+    actualAiAttempts: report.actualAiAttemptCount ?? 0,
+    realAiGenerated: report.aiGeneratedWorkoutCount ?? 0,
+    generationFailed: report.generationFailedCount ?? 0,
     ai: summaries.filter((summary) => summary.plannerSource === "ai").length,
     fullAppChain: summaries.filter((summary) => summary.plannerSource === "full_app_chain").length,
     fallback: summaries.filter((summary) => summary.plannerSource === "ai_fallback").length,
@@ -43,23 +46,28 @@ export default function SimulationPlannerStatusCard({
       <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
         {modeLabel}
       </h2>
-      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+      <div className="mt-4 grid grid-cols-4 gap-2 text-center">
         <div className="rounded-2xl bg-emerald-50 px-3 py-3">
-          <p className="text-2xl font-semibold text-emerald-800">{stats.ai + stats.fullAppChain}</p>
-          <p className="text-xs text-emerald-900">AI-pass</p>
+          <p className="text-2xl font-semibold text-emerald-800">{stats.actualAiAttempts}</p>
+          <p className="text-xs text-emerald-900">AI-försök</p>
+        </div>
+        <div className="rounded-2xl bg-emerald-50 px-3 py-3">
+          <p className="text-2xl font-semibold text-emerald-800">{stats.realAiGenerated}</p>
+          <p className="text-xs text-emerald-900">Riktiga AI-pass</p>
         </div>
         <div className="rounded-2xl bg-amber-50 px-3 py-3">
           <p className="text-2xl font-semibold text-amber-800">{stats.fallback}</p>
           <p className="text-xs text-amber-900">Fallback</p>
         </div>
-        <div className="rounded-2xl bg-slate-50 px-3 py-3">
-          <p className="text-2xl font-semibold text-slate-800">{stats.synthetic}</p>
-          <p className="text-xs text-slate-600">Syntetiska</p>
+        <div className="rounded-2xl bg-rose-50 px-3 py-3">
+          <p className="text-2xl font-semibold text-rose-800">{stats.generationFailed}</p>
+          <p className="text-xs text-rose-900">Genereringsfel</p>
         </div>
       </div>
       <p className="mt-3 text-sm leading-6 text-slate-600">
         Planerade träningspass i körningen: {stats.total}. Planerade veckodagar:{" "}
         {plannedWorkoutDayLabels.join(", ").toLowerCase() || "inga"}.{" "}
+        {stats.synthetic > 0 ? `Syntetiska pass: ${stats.synthetic}. ` : ""}
         {stats.realAppPlanner > 0 ? `Riktig planner: ${stats.realAppPlanner}. ` : ""}
         {stats.fullAppChain > 0 ? `Full app-kedja: ${stats.fullAppChain}. ` : ""}
         {stats.lastNote ? `Senaste status: ${stats.lastNote}` : null}

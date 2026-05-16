@@ -209,6 +209,7 @@ export type SimulationWorkoutEventStatus =
 export type SimulationGenerationStatus =
   | "not_attempted"
   | "real_ai"
+  | "safe_template_valid"
   | "fallback_mock"
   | "generation_failed";
 
@@ -237,6 +238,7 @@ export type SimulationDailySnapshot = {
     passGenerationMode?:
       | "mock_synthetic"
       | "real_ai"
+      | "safe_template_valid"
       | "fallback_mock"
       | "failed_generation";
     fallbackValidationPassed?: boolean;
@@ -274,6 +276,10 @@ export type SimulationPlannerDebugEntry = {
     suggestedNextFocus: string;
     suggestedNextWorkoutFocus: string;
     suggestedNextDurationMinutes: number;
+    displayDurationMinutes?: number;
+    planningDurationBucket?: number;
+    timeBudgetMinutes?: number;
+    durationBucketReason?: string | null;
     actualRecommendedDurationBeforeAdjustment?: number;
     actualRecommendedDurationAfterAdjustment?: number;
     durationAdjustmentReason?: string | null;
@@ -317,6 +323,7 @@ export type SimulationPlannerDebugEntry = {
     passGenerationMode:
       | "mock_synthetic"
       | "real_ai"
+      | "safe_template_valid"
       | "fallback_mock"
       | "failed_generation";
     fallbackValidationPassed?: boolean;

@@ -75,6 +75,9 @@ import {
   generateWorkoutForSpecificEngine,
   generateWorkoutWithMode,
 } from "@/lib/workouts/generate-workout-with-mode";
+import { getPlanningDurationBucket } from "@/lib/workout-generation/coach-context";
+import { getExerciseById } from "@/lib/exercise-catalog";
+import { getExerciseRoleCandidates } from "@/lib/workout-generation/exercise-selector";
 import { generateSafeSlotTemplateWorkout } from "@/lib/workouts/generate-workout-slot-based-v1";
 import {
   normalizeSimulationWorkoutGenerationMode,
@@ -86,27 +89,6 @@ type FallbackValidationResult = {
   generationStatus: "fallback_mock" | "failed_generation";
   fallbackValidationPassed: boolean;
   fallbackFailureReasons: string[];
-};
-
-const FALLBACK_ROLE_FAMILIES = {
-  squatOrLunge: new Set(["barbell_squat", "goblet_squat", "split_squat", "walking_lunge"]),
-  hinge: new Set(["deadlift", "romanian_deadlift", "barbell_hip_thrust"]),
-  push: new Set([
-    "bench_press",
-    "overhead_press",
-    "dumbbell_bench_press",
-    "dumbbell_shoulder_press",
-    "push_up",
-  ]),
-  pull: new Set([
-    "barbell_row",
-    "pull_up",
-    "dumbbell_row",
-    "chest_supported_row",
-    "ring_row",
-    "lat_pulldown",
-    "face_pull",
-  ]),
 };
 
 function validateSyntheticFallbackPlan(params: {
@@ -126,18 +108,24 @@ function validateSyntheticFallbackPlan(params: {
       fallbackFailureReasons: [],
     };
   }
-
-  const hasSquatOrLunge = params.plannedExercises.some((exercise) =>
-    FALLBACK_ROLE_FAMILIES.squatOrLunge.has(exercise.exerciseId),
+  const plannedRoleSnapshots = params.plannedExercises
+    .map((exercise) => getExerciseById(exercise.exerciseId))
+    .filter((exercise): exercise is NonNullable<typeof exercise> => Boolean(exercise))
+    .map((exercise) => ({
+      exerciseId: exercise.id,
+      roles: getExerciseRoleCandidates(exercise),
+    }));
+  const hasSquatOrLunge = plannedRoleSnapshots.some((exercise) =>
+    exercise.roles.some((role) => ["main_squat", "unilateral_lower"].includes(role)),
   );
-  const hasHinge = params.plannedExercises.some((exercise) =>
-    FALLBACK_ROLE_FAMILIES.hinge.has(exercise.exerciseId),
+  const hasHinge = plannedRoleSnapshots.some((exercise) =>
+    exercise.roles.includes("main_hinge"),
   );
-  const hasPush = params.plannedExercises.some((exercise) =>
-    FALLBACK_ROLE_FAMILIES.push.has(exercise.exerciseId),
+  const hasPush = plannedRoleSnapshots.some((exercise) =>
+    exercise.roles.includes("main_push"),
   );
-  const hasPull = params.plannedExercises.some((exercise) =>
-    FALLBACK_ROLE_FAMILIES.pull.has(exercise.exerciseId),
+  const hasPull = plannedRoleSnapshots.some((exercise) =>
+    exercise.roles.includes("main_pull"),
   );
   const coveredRoleCount = [hasSquatOrLunge, hasHinge, hasPush, hasPull].filter(Boolean).length;
   const reasons: string[] = [];
@@ -355,6 +343,70 @@ function getWorkoutExerciseCount(workout: {
   blocks: Array<{ exercises: unknown[] }>;
 }) {
   return workout.blocks.reduce((sum, block) => sum + block.exercises.length, 0);
+}
+
+function getDurationBucketDebug(displayDurationMinutes: number) {
+  const planningDurationBucket = getPlanningDurationBucket(displayDurationMinutes);
+
+  return {
+    displayDurationMinutes,
+    planningDurationBucket,
+    timeBudgetMinutes: displayDurationMinutes,
+    durationBucketReason:
+      planningDurationBucket === displayDurationMinutes
+        ? "requested_duration_matches_bucket"
+        : `requested_${displayDurationMinutes}_uses_${planningDurationBucket}_minute_bucket`,
+  };
+}
+
+function buildPlannerDebugExercisesFromPlannedIds(
+  plannedExercises: Array<{ exerciseId: string }>,
+) {
+  return plannedExercises.map((exercise) => {
+    const catalogExercise = getExerciseById(exercise.exerciseId);
+
+    return toPlannerDebugExercise({
+      exerciseId: exercise.exerciseId,
+      exerciseName: catalogExercise?.name ?? exercise.exerciseId,
+      variantGroup: catalogExercise?.variantGroup,
+    });
+  });
+}
+
+function getSuccessfulPassGenerationMode(workout: {
+  aiDebug?: { validation?: unknown };
+}) {
+  const slotModel = getSlotModelDebugFromWorkout(workout);
+  const fallbackMode =
+    slotModel && typeof slotModel.fallbackMode === "string"
+      ? slotModel.fallbackMode
+      : null;
+
+  return fallbackMode === "catalog_safe_template" ||
+    fallbackMode === "catalog_emergency_template"
+    ? "safe_template_valid"
+    : "real_ai";
+}
+
+function buildGenerationFailedWorkoutSummary(params: {
+  date: string;
+  plannerSource: "ai_fallback" | "full_app_chain";
+  note: string;
+  fallbackValidationPassed?: boolean;
+  fallbackFailureReasons?: string[];
+}) {
+  return {
+    workoutId: `generation_failed_${params.date}`,
+    workoutName: "Misslyckad passgenerering",
+    blockCount: 0,
+    exerciseCount: 0,
+    estimatedVolumeScore: 0,
+    plannerSource: params.plannerSource,
+    plannerNote: params.note,
+    passGenerationMode: "failed_generation" as const,
+    fallbackValidationPassed: params.fallbackValidationPassed,
+    fallbackFailureReasons: params.fallbackFailureReasons,
+  };
 }
 
 async function generateWorkoutForSimulationMode(params: {
@@ -1463,7 +1515,9 @@ export async function runFullAppChainSimulation(params?: {
 
           if (generatedWorkout.ok) {
             aiGeneratedWorkoutCount += 1;
-            generationStatus = "real_ai";
+            generationStatus = getSuccessfulPassGenerationMode(
+              generatedWorkout.workout,
+            );
             const normalizedWorkout = generatedWorkout.workout;
             const generationEngineDebug = generationRun.generationEngineDebug;
             const plannedExercises = adaptNormalizedWorkoutToSimulationPlan(
@@ -1505,7 +1559,9 @@ export async function runFullAppChainSimulation(params?: {
                   : generationEngineDebug.generationFallbackUsed
                   ? `Riktig veckoplanering användes. Slot-motorn underkändes och passet genererades med legacy fallback (${generationEngineDebug.generationFallbackReason ?? "okänd orsak"}).`
                   : `Riktig veckoplanering och AI-generering användes via ${generationEngineDebug.generationEngineUsed ?? "legacy_ai_chain"}.`,
-              passGenerationMode: "real_ai",
+              passGenerationMode: getSuccessfulPassGenerationMode(
+                generatedWorkout.workout,
+              ),
             };
 
             if (config.enablePlannerDebug) {
@@ -1544,6 +1600,7 @@ export async function runFullAppChainSimulation(params?: {
                     weeklyPlanStatus.suggestedNextWorkoutFocus,
                   suggestedNextDurationMinutes:
                     adjustedSuggestedDurationMinutes,
+                  ...getDurationBucketDebug(adjustedSuggestedDurationMinutes),
                   actualRecommendedDurationBeforeAdjustment:
                     weeklyPlanStatus.suggestedNextDurationMinutes,
                   actualRecommendedDurationAfterAdjustment:
@@ -1557,7 +1614,9 @@ export async function runFullAppChainSimulation(params?: {
                     weeklyPlanContext.recoveryLimitedMuscles,
                   muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
                   trainingDoseAdjustment: weeklyStructure.trainingDoseAdjustment,
-                  passGenerationMode: "real_ai",
+                  passGenerationMode: getSuccessfulPassGenerationMode(
+                    generatedWorkout.workout,
+                  ),
                   aiRequestUsed: true,
                   shouldGenerateWorkout: true,
                   generationSkippedReason: null,
@@ -1613,18 +1672,14 @@ export async function runFullAppChainSimulation(params?: {
               generationStatus = "generation_failed";
               generationFailedCount += 1;
               fallbackValidationFailureCount += 1;
-              workoutResult = buildMissedWorkoutResult({
-                dayPlan: plannerDayPlan,
-                profile: effectiveSimulationProfile,
-                skipReason: "random",
-              });
+              workoutResult = undefined;
               stateAfter = applyRestDayRecovery(
                 stateBefore,
                 effectiveSimulationProfile,
                 config,
               );
               dayEvent = "rest";
-              userOutcome = "completed";
+              userOutcome = "skipped";
             } else {
               generationStatus = "fallback_mock";
               workoutResult = simulateWorkout({
@@ -1650,25 +1705,39 @@ export async function runFullAppChainSimulation(params?: {
               dayEvent = "planned_training";
               userOutcome = "completed";
             }
-            generatedWorkoutSummary = {
-              workoutId: workoutResult.workoutId,
-              workoutName: workoutResult.workoutName,
-              blockCount: workoutResult.exerciseResults.length > 3 ? 2 : 1,
-              exerciseCount: workoutResult.exerciseResults.length,
-              estimatedVolumeScore: workoutResult.estimatedLoadScore,
-              plannerSource: "ai_fallback",
-              plannerNote: fallbackValidation.fallbackValidationPassed
-                ? `AI-genereringen misslyckades och simulationen föll tillbaka till mockat pass: ${generatedWorkout.error}.`
-                : `AI-genereringen misslyckades och fallbackpasset underkändes: ${fallbackValidation.fallbackFailureReasons.join(", ")}.`,
-              passGenerationMode: fallbackValidation.generationStatus,
-              fallbackValidationPassed: fallbackValidation.fallbackValidationPassed,
-              fallbackFailureReasons: fallbackValidation.fallbackFailureReasons,
-            };
+            if (fallbackValidation.fallbackValidationPassed && workoutResult) {
+              generatedWorkoutSummary = {
+                workoutId: workoutResult.workoutId,
+                workoutName: workoutResult.workoutName,
+                blockCount: workoutResult.exerciseResults.length > 3 ? 2 : 1,
+                exerciseCount: workoutResult.exerciseResults.length,
+                estimatedVolumeScore: workoutResult.estimatedLoadScore,
+                plannerSource: "ai_fallback",
+                plannerNote: `AI-genereringen misslyckades och simulationen föll tillbaka till mockat pass: ${generatedWorkout.error}.`,
+                passGenerationMode: fallbackValidation.generationStatus,
+                fallbackValidationPassed:
+                  fallbackValidation.fallbackValidationPassed,
+                fallbackFailureReasons:
+                  fallbackValidation.fallbackFailureReasons,
+              };
+            } else {
+              generatedWorkoutSummary = buildGenerationFailedWorkoutSummary({
+                date: plannerDayPlan.date,
+                plannerSource: "ai_fallback",
+                note: `AI-genereringen misslyckades och fallbackpasset underkändes: ${fallbackValidation.fallbackFailureReasons.join(", ")}.`,
+                fallbackValidationPassed:
+                  fallbackValidation.fallbackValidationPassed,
+                fallbackFailureReasons:
+                  fallbackValidation.fallbackFailureReasons,
+              });
+            }
 
             if (config.enablePlannerDebug) {
-              const afterNormalization = workoutResult.exerciseResults.map((exercise) =>
-                toPlannerDebugExercise(exercise),
-              );
+              const afterNormalization = workoutResult
+                ? workoutResult.exerciseResults.map((exercise) =>
+                    toPlannerDebugExercise(exercise),
+                  )
+                : buildPlannerDebugExercisesFromPlannedIds(plannedExercises);
 
               plannerDebug.push({
                 dayIndex,
@@ -1692,6 +1761,7 @@ export async function runFullAppChainSimulation(params?: {
                     weeklyPlanStatus.suggestedNextWorkoutFocus,
                   suggestedNextDurationMinutes:
                     adjustedSuggestedDurationMinutes,
+                  ...getDurationBucketDebug(adjustedSuggestedDurationMinutes),
                   actualRecommendedDurationBeforeAdjustment:
                     weeklyPlanStatus.suggestedNextDurationMinutes,
                   actualRecommendedDurationAfterAdjustment:
@@ -1754,18 +1824,14 @@ export async function runFullAppChainSimulation(params?: {
             generationStatus = "generation_failed";
             generationFailedCount += 1;
             fallbackValidationFailureCount += 1;
-            workoutResult = buildMissedWorkoutResult({
-              dayPlan: plannerDayPlan,
-              profile: effectiveSimulationProfile,
-              skipReason: "random",
-            });
+            workoutResult = undefined;
             stateAfter = applyRestDayRecovery(
               stateBefore,
               effectiveSimulationProfile,
               config,
             );
             dayEvent = "rest";
-            userOutcome = "completed";
+            userOutcome = "skipped";
           } else {
             generationStatus = "fallback_mock";
             workoutResult = simulateWorkout({
@@ -1791,23 +1857,39 @@ export async function runFullAppChainSimulation(params?: {
             dayEvent = "planned_training";
             userOutcome = "completed";
           }
-          generatedWorkoutSummary = {
-            workoutId: workoutResult.workoutId,
-            workoutName: workoutResult.workoutName,
-            blockCount: workoutResult.exerciseResults.length > 3 ? 2 : 1,
-            exerciseCount: workoutResult.exerciseResults.length,
-            estimatedVolumeScore: workoutResult.estimatedLoadScore,
-            plannerSource: "ai_fallback",
-            plannerNote: `Maxgränsen för AI-pass (${config.maxAiGeneratedWorkouts}) nåddes. Resterande pass mockas syntetiskt.`,
-            passGenerationMode: fallbackValidation.generationStatus,
-            fallbackValidationPassed: fallbackValidation.fallbackValidationPassed,
-            fallbackFailureReasons: fallbackValidation.fallbackFailureReasons,
-          };
+          if (fallbackValidation.fallbackValidationPassed && workoutResult) {
+            generatedWorkoutSummary = {
+              workoutId: workoutResult.workoutId,
+              workoutName: workoutResult.workoutName,
+              blockCount: workoutResult.exerciseResults.length > 3 ? 2 : 1,
+              exerciseCount: workoutResult.exerciseResults.length,
+              estimatedVolumeScore: workoutResult.estimatedLoadScore,
+              plannerSource: "ai_fallback",
+              plannerNote: `Maxgränsen för AI-pass (${config.maxAiGeneratedWorkouts}) nåddes. Resterande pass mockas syntetiskt.`,
+              passGenerationMode: fallbackValidation.generationStatus,
+              fallbackValidationPassed:
+                fallbackValidation.fallbackValidationPassed,
+              fallbackFailureReasons:
+                fallbackValidation.fallbackFailureReasons,
+            };
+          } else {
+            generatedWorkoutSummary = buildGenerationFailedWorkoutSummary({
+              date: plannerDayPlan.date,
+              plannerSource: "ai_fallback",
+              note: `Maxgränsen för AI-pass (${config.maxAiGeneratedWorkouts}) nåddes och fallbackpasset underkändes: ${fallbackValidation.fallbackFailureReasons.join(", ")}.`,
+              fallbackValidationPassed:
+                fallbackValidation.fallbackValidationPassed,
+              fallbackFailureReasons:
+                fallbackValidation.fallbackFailureReasons,
+            });
+          }
 
           if (config.enablePlannerDebug) {
-            const afterNormalization = workoutResult.exerciseResults.map((exercise) =>
-              toPlannerDebugExercise(exercise),
-            );
+            const afterNormalization = workoutResult
+              ? workoutResult.exerciseResults.map((exercise) =>
+                  toPlannerDebugExercise(exercise),
+                )
+              : buildPlannerDebugExercisesFromPlannedIds(plannedExercises);
 
             plannerDebug.push({
               dayIndex,
@@ -1831,6 +1913,7 @@ export async function runFullAppChainSimulation(params?: {
                   weeklyPlanStatus.suggestedNextWorkoutFocus,
                 suggestedNextDurationMinutes:
                   adjustedSuggestedDurationMinutes,
+                ...getDurationBucketDebug(adjustedSuggestedDurationMinutes),
                 actualRecommendedDurationBeforeAdjustment:
                   weeklyPlanStatus.suggestedNextDurationMinutes,
                 actualRecommendedDurationAfterAdjustment:
@@ -2016,11 +2099,14 @@ export async function runFullAppChainSimulation(params?: {
               : config.generationMode,
           },
         });
-        const generatedWorkout = generationRun.generatedWorkout;
+          const generatedWorkout = generationRun.generatedWorkout;
 
-        if (generatedWorkout.ok) {
-          aiGeneratedWorkoutCount += 1;
-          const normalizedWorkout = generatedWorkout.workout;
+          if (generatedWorkout.ok) {
+            aiGeneratedWorkoutCount += 1;
+            generationStatus = getSuccessfulPassGenerationMode(
+              generatedWorkout.workout,
+            );
+            const normalizedWorkout = generatedWorkout.workout;
           const generationEngineDebug = generationRun.generationEngineDebug;
           const plannedExercises = adaptNormalizedWorkoutToSimulationPlan(
             normalizedWorkout,
@@ -2050,7 +2136,6 @@ export async function runFullAppChainSimulation(params?: {
           );
           dayEvent = "spontaneous_training";
           userOutcome = "completed";
-          generationStatus = "real_ai";
           generatedWorkoutSummary = {
             workoutId: workoutResult.workoutId,
             workoutName: normalizedWorkout.name,
@@ -2067,7 +2152,7 @@ export async function runFullAppChainSimulation(params?: {
                 : generationEngineDebug.generationFallbackUsed
                 ? `Scenario lade in ett spontant pass. Slot-motorn underkändes och legacy användes som fallback (${generationEngineDebug.generationFallbackReason ?? "okänd orsak"}).`
                 : `Scenario lade in ett spontant pass som genererades via ${generationEngineDebug.generationEngineUsed ?? "legacy_ai_chain"} och påverkar nästa veckoplanbeslut.`,
-            passGenerationMode: "real_ai",
+            passGenerationMode: generationStatus,
           };
 
           if (config.enablePlannerDebug) {
@@ -2105,13 +2190,16 @@ export async function runFullAppChainSimulation(params?: {
                 suggestedNextWorkoutFocus:
                   weeklyPlanStatus.suggestedNextWorkoutFocus,
                 suggestedNextDurationMinutes: spontaneousPlan.targetDurationMin,
+                ...getDurationBucketDebug(spontaneousPlan.targetDurationMin),
                 coachText: weeklyPlanContext.coachText,
                 goalReached: weeklyPlanStatus.goalReached,
                 priorityMuscles: weeklyPlanContext.priorityMuscles,
                 recoveryLimitedMuscles:
                   weeklyPlanContext.recoveryLimitedMuscles,
                 muscleSetDeficits: weeklyPlanContext.muscleSetDeficits,
-                passGenerationMode: "real_ai",
+                passGenerationMode: getSuccessfulPassGenerationMode(
+                  generatedWorkout.workout,
+                ),
                 aiRequestUsed: true,
                 shouldGenerateWorkout: true,
                 generationSkippedReason: null,

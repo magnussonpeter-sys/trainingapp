@@ -87,6 +87,7 @@ type FinalContractEvaluation = {
   requiredSlots: string[];
   missingRequiredSlots: string[];
   lostProtectedSlots: string[];
+  recoveredProtectedSlots: string[];
   sportRelevantSlots: string[];
   goalLossReason: string[];
   sportLossReason: string[];
@@ -449,7 +450,7 @@ function getProtectedSlotIds(params: {
 
       if (
         params.coachContext.goal === "hypertrophy" &&
-        params.coachContext.durationMinutes >= 35
+        params.coachContext.planningDurationBucket >= 35
       ) {
         return [
           "direct_biceps",
@@ -479,8 +480,14 @@ function getProtectedRoleTargets(params: {
       .filter((slot) => protectedSlotIds.has(slot.id))
       .map((slot) => {
         const selection = params.selections.find((item) => item.slotId === slot.id);
+        const isCompactStrengthLowerSupport =
+          params.coachContext.goal === "strength" &&
+          params.coachContext.selectedFocus === "full_body" &&
+          params.coachContext.planningDurationBucket <= 35 &&
+          slot.label === "secondary_lower";
         const shouldLockSelectedRole =
           Boolean(selection) &&
+          !isCompactStrengthLowerSupport &&
           (
             params.coachContext.goal === "strength" ||
             getSportProtectedRoles({
@@ -605,21 +612,36 @@ function evaluateFinalContract(params: {
     const slot = params.slotPlan.slots.find((candidate) => candidate.id === slotId);
     return slot ? !slotCoveredByWorkout({ slot, workout: params.workout }) : true;
   });
-  const lostProtectedSlots = protectedSlots.filter((slotId) => {
+  const lostProtectedSlotsByLockedRole = protectedSlots.filter((slotId) => {
     const targetRoles = protectedRoleTargets.get(slotId) ?? [];
     return !getWorkoutExerciseSnapshots(params.workout).some((snapshot) =>
       snapshot.roles.some((role) => targetRoles.includes(role)),
     );
   });
+  const recoveredProtectedSlots = lostProtectedSlotsByLockedRole.filter((slotId) => {
+    const slot = params.slotPlan.slots.find((candidate) => candidate.id === slotId);
+    return slot ? slotCoveredByWorkout({ slot, workout: params.workout }) : false;
+  });
+  const lostProtectedSlots = lostProtectedSlotsByLockedRole.filter(
+    (slotId) => !recoveredProtectedSlots.includes(slotId),
+  );
+  const isCompactStrengthFullBody =
+    params.coachContext.goal === "strength" &&
+    params.coachContext.selectedFocus === "full_body" &&
+    params.coachContext.planningDurationBucket <= 35;
   const qualityThreshold =
     params.coachContext.selectedFocus === "recovery_strength"
       ? 70
+      : isCompactStrengthFullBody
+        ? 72
       : contractMode === "full"
         ? 80
         : 65;
   const focusThreshold =
     params.coachContext.selectedFocus === "recovery_strength"
       ? 70
+      : isCompactStrengthFullBody
+        ? 80
       : contractMode === "full"
         ? 85
         : 70;
@@ -649,11 +671,9 @@ function evaluateFinalContract(params: {
   if (
     params.coachContext.goal === "strength" &&
     params.coachContext.selectedFocus === "full_body" &&
-    params.coachContext.durationMinutes >= 30 &&
-    !params.validationDebug.finalExercises.some((exercise) =>
-      ["primary_hinge", "glute_accessory", "hamstring_accessory"].includes(
-        exercise.exerciseRole,
-      ),
+    params.coachContext.planningDurationBucket >= 30 &&
+    !getWorkoutExerciseSnapshots(params.workout).some((snapshot) =>
+      snapshot.roles.includes("main_hinge"),
     )
   ) {
     reasons.push("full_body_strength_missing_hinge_after_normalization");
@@ -661,7 +681,7 @@ function evaluateFinalContract(params: {
   }
   if (
     params.coachContext.goal === "hypertrophy" &&
-    params.coachContext.durationMinutes >= 35 &&
+    params.coachContext.planningDurationBucket >= 35 &&
     params.validationDebug.lostUsefulRoles.length > 0
   ) {
     reasons.push("hypertrophy_useful_roles_lost");
@@ -735,6 +755,7 @@ function evaluateFinalContract(params: {
     requiredSlots,
     missingRequiredSlots,
     lostProtectedSlots,
+    recoveredProtectedSlots,
     sportRelevantSlots: protectedSlots.filter((slotId) => {
       const slot = params.slotPlan.slots.find((candidate) => candidate.id === slotId);
       return slot
@@ -883,6 +904,10 @@ function buildSlotDebug(params: {
     selectedFallbackStrategy: params.feasibility.selectedFallbackStrategy,
     contractBeforeFeasibility: params.feasibility.contractBeforeFeasibility,
     contractAfterFeasibility: params.feasibility.contractAfterFeasibility,
+    displayDurationMinutes: params.coachContext.displayDurationMinutes,
+    planningDurationBucket: params.coachContext.planningDurationBucket,
+    timeBudgetMinutes: params.coachContext.timeBudgetMinutes,
+    durationBucketReason: params.coachContext.durationBucketReason,
     selectedGoalConfig: params.goalConfigId,
     coachDecision: {
       reason: params.coachContext.coachDecisionReason,
@@ -899,6 +924,7 @@ function buildSlotDebug(params: {
     contractSlots: params.slotPlan.slots,
     requiredSlots: params.slotPlan.slots.filter((slot) => slot.required).map((slot) => slot.id),
     protectedSlots: params.contractEvaluation?.protectedSlots ?? [],
+    recoveredProtectedSlots: params.contractEvaluation?.recoveredProtectedSlots ?? [],
     slotReasons: params.slotPlan.slots.map((slot) => ({
       slotId: slot.id,
       role: slot.role,
@@ -1007,7 +1033,12 @@ function buildSlotDebug(params: {
     acceptedWithWarnings:
       Boolean(params.warningReasons && params.warningReasons.length > 0) ||
       Boolean(params.acceptedWithDegradedContract),
-    warningReasons: params.warningReasons ?? [],
+    warningReasons: [
+      ...(params.warningReasons ?? []),
+      ...((params.contractEvaluation?.recoveredProtectedSlots ?? []).map(
+        (slotId) => `protected_slot_recovered_by_role_family:${slotId}`,
+      )),
+    ],
     fallbackMockReason: params.fallbackMockReason ?? null,
     slotAiRequested: params.aiSelectionDebug.requested,
     slotAiUsed: params.aiSelectionDebug.used,

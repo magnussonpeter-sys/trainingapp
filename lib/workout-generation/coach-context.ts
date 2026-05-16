@@ -100,6 +100,16 @@ function clampSessionRatio(value: number | null) {
   return Math.max(0, Math.min(1.4, value));
 }
 
+export function getPlanningDurationBucket(displayDurationMinutes: number) {
+  if (displayDurationMinutes < 20) return 15;
+  if (displayDurationMinutes < 25) return 20;
+  if (displayDurationMinutes < 30) return 25;
+  if (displayDurationMinutes < 35) return 30;
+  if (displayDurationMinutes < 45) return 35;
+  if (displayDurationMinutes < 60) return 45;
+  return 60;
+}
+
 function getRecentExerciseIdentity(trainingHistoryContext: TrainingHistoryContext) {
   const recentExerciseIds: string[] = [];
   const recentVariantGroups: string[] = [];
@@ -283,6 +293,8 @@ export function buildWorkoutGenerationCoachContext(params: {
     getRecentExerciseIdentity(trainingHistoryContext);
   const hasSpontaneousWorkoutThisWeek =
     params.input.weeklyPlanContext?.hasSpontaneousWorkoutThisWeek ?? false;
+  const displayDurationMinutes = params.input.durationMinutes;
+  const planningDurationBucket = getPlanningDurationBucket(displayDurationMinutes);
 
   const coachContext: WorkoutCoachContext = {
     goal,
@@ -291,12 +303,20 @@ export function buildWorkoutGenerationCoachContext(params: {
     selectedFocusReason:
       params.input.weeklyPlanContext?.coachText ??
       `Fokus ${selectedFocus} valdes utifrån planerad veckorytm och nuvarande behov.`,
-    durationMinutes: params.input.durationMinutes,
+    durationMinutes: displayDurationMinutes,
+    displayDurationMinutes,
+    planningDurationBucket,
+    timeBudgetMinutes: displayDurationMinutes,
     durationReason:
       typeof typicalCompletedDuration === "number" &&
-      params.input.durationMinutes > typicalCompletedDuration + 10
+      displayDurationMinutes > typicalCompletedDuration + 10
         ? "Requested duration is longer than typical completed sessions, so slots will be prioritized tightly."
         : "Requested duration is within the current realistic range.",
+    // Bucket används bara internt för stabilare slot-kontrakt; UI kan fortfarande visa exakt tid.
+    durationBucketReason:
+      planningDurationBucket === displayDurationMinutes
+        ? "Requested duration already matches the planning bucket."
+        : `Requested ${displayDurationMinutes} min uses the ${planningDurationBucket}-minute planning bucket for a more stable slot contract.`,
     selectedEquipment: params.input.equipment,
     sportFocus: normalizeSportFocus(params.input.settings?.sport_focus),
     typicalCompletedDuration7d: typicalCompletedDuration,

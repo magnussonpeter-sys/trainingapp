@@ -145,7 +145,11 @@ export type WorkoutCoachContext = {
   selectedFocus: WorkoutFocus | "recovery_strength";
   selectedFocusReason: string;
   durationMinutes: number;
+  displayDurationMinutes: number;
+  planningDurationBucket: number;
+  timeBudgetMinutes: number;
   durationReason: string;
+  durationBucketReason: string;
   selectedEquipment: string[];
   sportFocus: SportFocus | null;
   typicalCompletedDuration7d: number | null;
@@ -226,6 +230,10 @@ export type SlotWorkoutDebug = {
   missingRoles: WorkoutSlotRole[];
   availableRoles: WorkoutSlotRole[];
   equipmentLimitations: string[];
+  displayDurationMinutes: number;
+  planningDurationBucket: number;
+  timeBudgetMinutes: number;
+  durationBucketReason: string;
   selectedFallbackStrategy:
     | "full_contract"
     | "degraded_contract"
@@ -249,6 +257,7 @@ export type SlotWorkoutDebug = {
   contractSlots: WorkoutSlot[];
   requiredSlots: string[];
   protectedSlots: string[];
+  recoveredProtectedSlots: string[];
   slotReasons: Array<{
     slotId: string;
     role: WorkoutSlotRole;

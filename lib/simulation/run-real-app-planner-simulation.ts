@@ -5,6 +5,7 @@ import { getSimulationProfilePreset } from "@/lib/simulation/profile-presets";
 import { createSeededRandom } from "@/lib/simulation/random";
 import { DEFAULT_SIMULATION_CONFIG } from "@/lib/simulation/run-simulation";
 import { buildEffectiveSimulationUserProfile } from "@/lib/simulation/effective-user-profile";
+import { getPlanningDurationBucket } from "@/lib/workout-generation/coach-context";
 import {
   addDays,
   adjustScenarioWorkoutDuration,
@@ -373,6 +374,18 @@ export async function runRealAppPlannerSimulation(params?: {
             suggestedNextFocus: weeklyPlanState.remainingTrainingNeed.suggestedNextFocus,
             suggestedNextWorkoutFocus: weeklyPlanStatus.suggestedNextWorkoutFocus,
             suggestedNextDurationMinutes: adjustedSuggestedDurationMinutes,
+            displayDurationMinutes: adjustedSuggestedDurationMinutes,
+            planningDurationBucket: getPlanningDurationBucket(
+              adjustedSuggestedDurationMinutes,
+            ),
+            timeBudgetMinutes: adjustedSuggestedDurationMinutes,
+            durationBucketReason:
+              getPlanningDurationBucket(adjustedSuggestedDurationMinutes) ===
+              adjustedSuggestedDurationMinutes
+                ? "requested_duration_matches_bucket"
+                : `requested_${adjustedSuggestedDurationMinutes}_uses_${getPlanningDurationBucket(
+                    adjustedSuggestedDurationMinutes,
+                  )}_minute_bucket`,
             actualRecommendedDurationBeforeAdjustment:
               weeklyPlanStatus.suggestedNextDurationMinutes,
             actualRecommendedDurationAfterAdjustment: adjustedSuggestedDurationMinutes,
