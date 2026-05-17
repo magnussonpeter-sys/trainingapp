@@ -12,9 +12,11 @@ import {
   applyScenarioProfileTweaks,
   buildPlannedWorkoutDaySet,
   buildScenarioNotes,
+  deriveSimulationPlannedWorkoutDayIndices,
   formatPlannedWorkoutDayLabels,
   getWeekdayIndexForDate,
   getWeekdayLabel,
+  normalizeAvailableTrainingDayIndices,
   normalizePlannedWorkoutDayIndices,
   normalizeSimulationScenario,
   shouldAddSpontaneousWorkout,
@@ -68,11 +70,15 @@ function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
     ...DEFAULT_SIMULATION_CONFIG,
     ...config,
     plannerMode: "real_app_planner",
+    trainingDoseMode: config?.trainingDoseMode === "manual" ? "manual" : "recommended",
     scenario: normalizeSimulationScenario(config?.scenario),
     enablePlannerDebug: Boolean(config?.enablePlannerDebug),
     totalDays,
     randomSeed: Math.max(1, Math.round(config?.randomSeed ?? DEFAULT_SIMULATION_CONFIG.randomSeed)),
     startDate: config?.startDate?.trim() || DEFAULT_SIMULATION_CONFIG.startDate,
+    availableTrainingDayIndices: normalizeAvailableTrainingDayIndices(
+      config?.availableTrainingDayIndices,
+    ),
     plannedWorkoutDayIndices: normalizePlannedWorkoutDayIndices(
       config?.plannedWorkoutDayIndices,
     ),
@@ -135,10 +141,16 @@ export async function runRealAppPlannerSimulation(params?: {
   });
   const profile = scenarioProfile.profile;
   const random = createSeededRandom(config.randomSeed);
+  const availableTrainingDayIndices =
+    normalizeAvailableTrainingDayIndices(config.availableTrainingDayIndices).length > 0
+      ? normalizeAvailableTrainingDayIndices(config.availableTrainingDayIndices)
+      : normalizePlannedWorkoutDayIndices(config.plannedWorkoutDayIndices);
   const plannedWeekDays = buildPlannedWorkoutDaySet({ config, profile });
-  const plannedWorkoutDayIndices = Array.from(plannedWeekDays).sort(
-    (left, right) => left - right,
-  );
+  const plannedWorkoutDayIndices = deriveSimulationPlannedWorkoutDayIndices({
+    availableTrainingDayIndices,
+    plannedWorkoutDayIndices: config.plannedWorkoutDayIndices,
+    preferredWorkoutDaysPerWeek: profile.preferredWorkoutDaysPerWeek,
+  });
   const effectiveProfileBundle = buildEffectiveSimulationUserProfile({
     profile,
     plannedWorkoutDayIndices,
@@ -216,8 +228,12 @@ export async function runRealAppPlannerSimulation(params?: {
           availableEquipmentIds:
             effectiveProfileBundle.effectiveUserProfile.effectiveEquipment,
         },
-        plannedWorkoutDayIndices,
+        availableTrainingDayIndices:
+          availableTrainingDayIndices.length > 0
+            ? availableTrainingDayIndices
+            : plannedWorkoutDayIndices,
         priorityMuscles: simulationPriorityMuscles,
+        trainingDoseMode: config.trainingDoseMode,
         nowIso: dayPlan.date,
       });
       const plannedSessions = buildSimulationWeekPlannedSessions({
@@ -497,8 +513,18 @@ export async function runRealAppPlannerSimulation(params?: {
     config,
     profile,
     effectiveUserProfile: effectiveProfileBundle.effectiveUserProfile,
+    trainingDoseMode: config.trainingDoseMode,
+    targetSessionsPerWeek: effectiveSimulationProfile.preferredWorkoutDaysPerWeek,
+    availableTrainingDayIndices,
+    availableTrainingDayLabels: formatPlannedWorkoutDayLabels(availableTrainingDayIndices),
     plannedWorkoutDayIndices,
     plannedWorkoutDayLabels: formatPlannedWorkoutDayLabels(plannedWorkoutDayIndices),
+    preferredDaysWereUsedAsAvailability: availableTrainingDayIndices.length > 0,
+    plannedDaysWereClampedToTargetSessions:
+      availableTrainingDayIndices.length > plannedWorkoutDayIndices.length,
+    highFrequencyWarningShown:
+      config.trainingDoseMode === "manual" &&
+      effectiveSimulationProfile.preferredWorkoutDaysPerWeek >= 6,
     notes,
     dailySnapshots,
     timeSeries,

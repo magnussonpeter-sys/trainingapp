@@ -76,6 +76,8 @@ export type SimulationAdherenceProfile =
   | "medium"
   | "high";
 
+export type SimulationTrainingDoseMode = "recommended" | "manual";
+
 export type SimulationExercisePerformance = {
   exerciseId: string;
   exerciseName: string;
@@ -537,6 +539,7 @@ export type SimulationConfig = {
   totalDays: number;
   startDate: string;
   randomSeed: number;
+  trainingDoseMode?: SimulationTrainingDoseMode;
   plannerMode?: SimulationPlannerMode;
   generationMode?: SimulationWorkoutGenerationMode;
   scenario?: SimulationScenario;
@@ -546,6 +549,7 @@ export type SimulationConfig = {
   enableWeightProgressionEstimate: boolean;
   enableDeloadDetection: boolean;
   minRestDayProbability: number;
+  availableTrainingDayIndices?: number[];
   plannedWorkoutDayIndices?: number[];
   maxAiGeneratedWorkouts?: number;
   maxFatigue: number;
@@ -603,8 +607,15 @@ export type SimulationReport = {
   config: SimulationConfig;
   profile: SimulationUserProfile;
   effectiveUserProfile?: SimulationEffectiveUserProfile;
+  trainingDoseMode?: SimulationTrainingDoseMode;
+  targetSessionsPerWeek?: number;
+  availableTrainingDayIndices?: number[];
+  availableTrainingDayLabels?: string[];
   plannedWorkoutDayIndices: number[];
   plannedWorkoutDayLabels: string[];
+  preferredDaysWereUsedAsAvailability?: boolean;
+  plannedDaysWereClampedToTargetSessions?: boolean;
+  highFrequencyWarningShown?: boolean;
   aiGeneratedWorkoutCount?: number;
   actualAiAttemptCount?: number;
   aiFallbackWorkoutCount?: number;

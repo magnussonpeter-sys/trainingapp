@@ -7,8 +7,10 @@ import {
   getDefaultWeeklyPlanSettings,
   getPriorityMusclesFromProfile,
   getWeekStartDate,
+  resolveWeeklyPlanSettings,
   type PlannedSession,
   type ProfilePriorityMuscleFields,
+  type WeeklyTrainingDoseMode,
   type WeeklyPlanSettings,
   type WeeklyPlanStatus,
   type WeeklyPlanContext,
@@ -23,6 +25,7 @@ import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
 
 type WeeklyPlanSettingsRow = {
   userId: string;
+  trainingDoseMode: WeeklyTrainingDoseMode | null;
   sessionsPerWeek: number;
   preferredDays: string[];
   defaultDurationMinutes: number;
@@ -54,6 +57,7 @@ type PlannedSessionRow = {
 
 type UserPlanProfileRow = {
   training_goal: string | null;
+  experience_level: string | null;
   primary_priority_muscle: string | null;
   secondary_priority_muscle: string | null;
   tertiary_priority_muscle: string | null;
@@ -120,6 +124,12 @@ function normalizeFlexibility(
   return "balanced";
 }
 
+function normalizeTrainingDoseMode(
+  value: string | null | undefined,
+): WeeklyTrainingDoseMode {
+  return value === "manual" ? "manual" : "recommended";
+}
+
 function normalizePlannedFocus(value: string): PlannedSession["focus"] {
   if (
     value === "upper" ||
@@ -176,6 +186,7 @@ function mapSettingsRow(row: WeeklyPlanSettingsRow): WeeklyPlanSettings {
 
   return {
     userId: row.userId,
+    trainingDoseMode: normalizeTrainingDoseMode(row.trainingDoseMode),
     sessionsPerWeek: row.sessionsPerWeek,
     preferredDays,
     defaultDurationMinutes: row.defaultDurationMinutes,
@@ -217,6 +228,7 @@ export async function ensureWeeklyPlanTables() {
       user_id text not null unique,
       sessions_per_week integer not null,
       preferred_days jsonb not null default '[]'::jsonb,
+      training_dose_mode text not null default 'recommended',
       default_duration_minutes integer not null,
       min_duration_minutes integer not null,
       max_duration_minutes integer not null,
@@ -227,6 +239,11 @@ export async function ensureWeeklyPlanTables() {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
+  `);
+
+  await pool.query(`
+    alter table weekly_plan_settings
+    add column if not exists training_dose_mode text not null default 'recommended'
   `);
 
   await pool.query(`
@@ -276,6 +293,7 @@ async function getWeeklyPlanUserProfile(userId: string) {
     `
       select
         training_goal,
+        experience_level,
         primary_priority_muscle,
         secondary_priority_muscle,
         tertiary_priority_muscle
@@ -290,12 +308,14 @@ async function getWeeklyPlanUserProfile(userId: string) {
   if (!row) {
     return {
       goal: null,
+      experienceLevel: null,
       priorityMuscles: [] as MuscleBudgetGroup[],
     };
   }
 
   return {
     goal: row.training_goal ?? null,
+    experienceLevel: row.experience_level ?? null,
     priorityMuscles: getPriorityMusclesFromProfile({
       primary_priority_muscle: normalizePriorityMuscle(row.primary_priority_muscle),
       secondary_priority_muscle: normalizePriorityMuscle(row.secondary_priority_muscle),
@@ -324,6 +344,7 @@ export async function getWeeklyPlanSettingsByUser(userId: string) {
     `
       select
         user_id as "userId",
+        training_dose_mode as "trainingDoseMode",
         sessions_per_week as "sessionsPerWeek",
         preferred_days as "preferredDays",
         default_duration_minutes as "defaultDurationMinutes",
@@ -353,6 +374,7 @@ export async function upsertWeeklyPlanSettings(settings: WeeklyPlanSettings) {
       insert into weekly_plan_settings (
         id,
         user_id,
+        training_dose_mode,
         sessions_per_week,
         preferred_days,
         default_duration_minutes,
@@ -363,9 +385,10 @@ export async function upsertWeeklyPlanSettings(settings: WeeklyPlanSettings) {
         priority_muscles,
         easy_muscles
       )
-      values ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)
+      values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
       on conflict (user_id)
       do update set
+        training_dose_mode = excluded.training_dose_mode,
         sessions_per_week = excluded.sessions_per_week,
         preferred_days = excluded.preferred_days,
         default_duration_minutes = excluded.default_duration_minutes,
@@ -378,6 +401,7 @@ export async function upsertWeeklyPlanSettings(settings: WeeklyPlanSettings) {
         updated_at = now()
       returning
         user_id as "userId",
+        training_dose_mode as "trainingDoseMode",
         sessions_per_week as "sessionsPerWeek",
         preferred_days as "preferredDays",
         default_duration_minutes as "defaultDurationMinutes",
@@ -392,6 +416,7 @@ export async function upsertWeeklyPlanSettings(settings: WeeklyPlanSettings) {
     [
       id,
       settings.userId,
+      normalizeTrainingDoseMode(settings.trainingDoseMode),
       settings.sessionsPerWeek,
       JSON.stringify(settings.preferredDays),
       settings.defaultDurationMinutes,
@@ -514,12 +539,21 @@ export async function replaceWeeklyPlannedSessions(
 
 async function getOrCreateWeeklyPlanParts(userId: string, now: Date) {
   const weekStartDate = getWeekStartDate(now);
-  const settings =
+  const storedSettings =
     (await getWeeklyPlanSettingsByUser(userId)) ?? getDefaultWeeklyPlanSettings(userId);
+  const profile = await getWeeklyPlanUserProfile(userId);
+  const settings = resolveWeeklyPlanSettings({
+    settings: storedSettings,
+    goal: profile.goal,
+    experienceLevel: profile.experienceLevel,
+  });
   let plannedSessions = await getWeeklyPlannedSessions(userId, weekStartDate);
 
   if (plannedSessions.length === 0) {
-    plannedSessions = buildInitialWeeklyPlan(settings, weekStartDate);
+    plannedSessions = buildInitialWeeklyPlan(settings, weekStartDate, {
+      goal: profile.goal,
+      experienceLevel: profile.experienceLevel,
+    });
     await replaceWeeklyPlannedSessions(userId, weekStartDate, plannedSessions);
   }
 
@@ -527,6 +561,7 @@ async function getOrCreateWeeklyPlanParts(userId: string, now: Date) {
     weekStartDate,
     settings,
     plannedSessions,
+    profile,
   };
 }
 
@@ -540,9 +575,8 @@ export async function getWeeklyPlanStateForUser(
   status: WeeklyPlanStatus;
   context: WeeklyPlanContext;
 }> {
-  const { settings, plannedSessions } = await getOrCreateWeeklyPlanParts(userId, now);
+  const { settings, plannedSessions, profile } = await getOrCreateWeeklyPlanParts(userId, now);
   const logs = await getWorkoutLogsByUser(userId, 120);
-  const profile = await getWeeklyPlanUserProfile(userId);
   const state = deriveWeeklyPlanState({
     settings,
     plannedSessions,
@@ -562,9 +596,18 @@ export async function saveWeeklyPlanSettingsAndRebuildCurrentWeek(
   settings: WeeklyPlanSettings,
   now = new Date(),
 ) {
-  const savedSettings = await upsertWeeklyPlanSettings(settings);
+  const profile = await getWeeklyPlanUserProfile(settings.userId);
+  const resolvedSettings = resolveWeeklyPlanSettings({
+    settings,
+    goal: profile.goal,
+    experienceLevel: profile.experienceLevel,
+  });
+  const savedSettings = await upsertWeeklyPlanSettings(resolvedSettings);
   const weekStartDate = getWeekStartDate(now);
-  const nextSessions = buildInitialWeeklyPlan(savedSettings, weekStartDate);
+  const nextSessions = buildInitialWeeklyPlan(savedSettings, weekStartDate, {
+    goal: profile.goal,
+    experienceLevel: profile.experienceLevel,
+  });
 
   // MVP: vi bygger om innevarande vecka helt när användaren ändrar sina ramar.
   await replaceWeeklyPlannedSessions(savedSettings.userId, weekStartDate, nextSessions);
@@ -578,8 +621,7 @@ export async function postponeWeeklyPlanSession(
   newDate: string,
   now = new Date(),
 ) {
-  const { settings, plannedSessions } = await getOrCreateWeeklyPlanParts(userId, now);
-  const profile = await getWeeklyPlanUserProfile(userId);
+  const { settings, plannedSessions, profile } = await getOrCreateWeeklyPlanParts(userId, now);
   const nextSessions = postponePlannedSession(plannedSessions, sessionId, newDate);
 
   await replaceWeeklyPlannedSessions(userId, getWeekStartDate(now), nextSessions);
@@ -601,9 +643,8 @@ export async function recalculateWeeklyPlanState(
   userId: string,
   now = new Date(),
 ) {
-  const { settings, plannedSessions } = await getOrCreateWeeklyPlanParts(userId, now);
+  const { settings, plannedSessions, profile } = await getOrCreateWeeklyPlanParts(userId, now);
   const logs = await getWorkoutLogsByUser(userId, 120);
-  const profile = await getWeeklyPlanUserProfile(userId);
   const markedSessions = markMissedSessions(
     plannedSessions,
     now,

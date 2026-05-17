@@ -4,6 +4,7 @@ import { requireAuthorizedUserId } from "@/lib/server-auth";
 import {
   getDefaultWeeklyPlanSettings,
   type Weekday,
+  type WeeklyTrainingDoseMode,
   type WeeklyPlanFlexibility,
   type WeeklyPlanSettings,
 } from "@/lib/planning/weekly-plan";
@@ -38,9 +39,15 @@ const flexibilitySchema = z.union([
   z.literal("flexible"),
 ]);
 
+const trainingDoseModeSchema = z.union([
+  z.literal("recommended"),
+  z.literal("manual"),
+]);
+
 const weeklyPlanSettingsSchema = z.object({
   userId: z.string().min(1),
-  sessionsPerWeek: z.number().int().min(1).max(6),
+  trainingDoseMode: trainingDoseModeSchema.default("recommended"),
+  sessionsPerWeek: z.number().int().min(1).max(7),
   preferredDays: z.array(weekdaySchema).min(1).max(7),
   defaultDurationMinutes: z.number().int().min(10).max(180),
   minDurationMinutes: z.number().int().min(5).max(180),
@@ -65,6 +72,7 @@ function buildNormalizedSettings(
   return {
     ...defaultSettings,
     userId: input.userId,
+    trainingDoseMode: input.trainingDoseMode as WeeklyTrainingDoseMode,
     sessionsPerWeek: input.sessionsPerWeek,
     preferredDays: Array.from(new Set(input.preferredDays)) as Weekday[],
     defaultDurationMinutes: input.defaultDurationMinutes,

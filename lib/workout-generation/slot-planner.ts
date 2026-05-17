@@ -1,4 +1,5 @@
 import { getAvailableExercises } from "@/lib/exercise-catalog";
+import { getEffectivePlanningDurationBucket } from "@/lib/workout-generation/coach-context";
 import { getTrainingGoalConfig } from "@/lib/workout-generation/goal-config";
 import { getExerciseRoleCandidates } from "@/lib/workout-generation/exercise-selector";
 import type {
@@ -279,13 +280,16 @@ function buildUpperBodyContract(params: {
         index: slots.length,
         label: "secondary_push_or_pull",
         role: "main_pull",
-        allowedRoles: ["main_push", "main_pull", "rear_delt_scapula", "shoulder_accessory"],
+        // Strength ska i första hand få en andra belastningsbar press- eller dragroll.
+        allowedRoles: isStrength
+          ? ["main_push", "main_pull"]
+          : ["main_push", "main_pull", "rear_delt_scapula", "shoulder_accessory"],
         required: true,
         priority: 90,
         preferredMovementPatterns: ["horizontal_pull", "horizontal_push", "vertical_push"],
-        minGoalSpecificity: 1,
+        minGoalSpecificity: isStrength ? 2 : 1,
         allowRecoveryLight: true,
-        allowBodyweightFallback: true,
+        allowBodyweightFallback: !isStrength,
         progressionHint: params.goalConfig.progressionStyle,
         reason: "Längre överkroppspass behöver en extra överkroppsroll för balans eller progression.",
       }),
@@ -407,7 +411,8 @@ function buildLowerBodyContract(params: {
         preferredMovementPatterns: ["lunge", "squat", "hinge"],
         minGoalSpecificity: 1,
         allowRecoveryLight: true,
-        allowBodyweightFallback: true,
+        // Strength ska hålla kvar belastningsbara lower-varianter när hantlar finns.
+        allowBodyweightFallback: !isStrength,
         progressionHint: params.goalConfig.progressionStyle,
         reason: "Andra underkroppsrollen ska komplettera första lower-slots inom samma familj.",
       }),
@@ -461,11 +466,10 @@ function buildFullBodyContract(params: {
   templateId: string;
   goalConfig: TrainingGoalConfig;
   coachContext: WorkoutCoachContext;
+  planningDurationBucket: number;
   targetSlotCount: number;
 }) {
   const isStrength = params.coachContext.goal === "strength";
-  const isShortStrength =
-    isStrength && params.coachContext.planningDurationBucket <= 35;
   const slots: WorkoutSlot[] = [
     createContractSlot({
       templateId: params.templateId,
@@ -521,10 +525,11 @@ function buildFullBodyContract(params: {
         index: slots.length,
         label: "secondary_lower",
         role: "main_hinge",
-        allowedRoles: ["main_hinge", "main_squat", "unilateral_lower"],
-        // Korta strength-pass ska fokusera på lower + push + pull utan att
-        // alltid falla om ett fjärde lower-mönster inte får plats.
-        required: !isShortStrength,
+        allowedRoles: isStrength
+          ? ["main_hinge"]
+          : ["main_hinge", "main_squat", "unilateral_lower"],
+        // Full body strength behöver en tydlig hinge-roll även i kompakta 35-min-pass.
+        required: true,
         priority: isStrength ? 96 : 88,
         preferredMovementPatterns: ["hinge", "squat", "lunge"],
         minGoalSpecificity: isStrength ? 2 : 1,
@@ -663,9 +668,13 @@ export function buildSlotContract(params: {
 }): WorkoutSlotContract {
   const goalConfig = getTrainingGoalConfig(params.coachContext.goal);
   const contractMode = params.mode ?? "full";
-  const templateId = `${goalConfig.id}:${params.coachContext.selectedFocus}:${params.coachContext.planningDurationBucket}:${contractMode}`;
+  // Derive a stable bucket even if an older caller forgot to set it explicitly.
+  const planningDurationBucket = getEffectivePlanningDurationBucket(
+    params.coachContext,
+  );
+  const templateId = `${goalConfig.id}:${params.coachContext.selectedFocus}:${planningDurationBucket}:${contractMode}`;
   const targetSlotCount = clampSlotCount({
-    durationMinutes: params.coachContext.planningDurationBucket,
+    durationMinutes: planningDurationBucket,
     goal: params.coachContext.goal,
   });
 
@@ -693,6 +702,7 @@ export function buildSlotContract(params: {
               templateId,
               goalConfig,
               coachContext: params.coachContext,
+              planningDurationBucket,
               targetSlotCount,
             });
 
@@ -742,6 +752,7 @@ function buildDegradedSlotContract(params: {
 }): WorkoutSlotContract {
   const { baseContract, coachContext, mode } = params;
   const availableExercises = getAvailableExercises(coachContext.selectedEquipment);
+  const planningDurationBucket = getEffectivePlanningDurationBucket(coachContext);
 
   const cloneSlot = (
     slot: WorkoutSlot,
@@ -791,7 +802,7 @@ function buildDegradedSlotContract(params: {
     const supportSlot = findSlot("secondary_lower") ?? findSlot("core_or_carry");
     const isCompactStrengthBucket =
       coachContext.goal === "strength" &&
-      coachContext.planningDurationBucket <= 35;
+      planningDurationBucket <= 35;
 
     if (lowerSlot) {
       degradedSlots.push(
@@ -893,7 +904,7 @@ function buildDegradedSlotContract(params: {
         );
 
   // Minimum contract still needs enough slots to build a meaningful short session.
-  if (coachContext.planningDurationBucket >= 15 && finalSlots.length < 3) {
+  if (planningDurationBucket >= 15 && finalSlots.length < 3) {
     for (const slot of baseContract.slots) {
       if (finalSlots.some((existing) => existing.label === slot.label)) {
         continue;

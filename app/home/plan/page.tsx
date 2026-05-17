@@ -15,12 +15,14 @@ import {
   deriveWeeklyPlanState,
   formatPlannedSessionFocus,
   formatWeekdayLabel,
+  getHighFrequencyTrainingDoseWarning,
   getDefaultWeeklyPlanSettings,
   getWeekStartDate,
   mapPlannedFocusToWorkoutFocus,
   type PlannedSession,
   type Weekday,
   type WeeklyPlanFlexibility,
+  type WeeklyTrainingDoseMode,
   type WeeklyPlanContext,
   type WeeklyPlanSettings,
   type WeeklyPlanStatus,
@@ -108,6 +110,7 @@ function formatFocusLabel(
 function stripLegacyPlanMuscles(settings: WeeklyPlanSettings): WeeklyPlanSettings {
   return {
     ...settings,
+    trainingDoseMode: settings.trainingDoseMode ?? "recommended",
     // Veckoplanen styr nu bara ramar. Äldre muskelval ignoreras här.
     priorityMuscles: [],
     easyMuscles: [],
@@ -195,7 +198,10 @@ export default function WeeklyPlanPage() {
         saveLocalWeeklyPlanSettings(nextSettings);
         setPlannedSessions(
           payload.plannedSessions ??
-            buildInitialWeeklyPlan(nextSettings, getWeekStartDate(new Date())),
+            buildInitialWeeklyPlan(nextSettings, getWeekStartDate(new Date()), {
+              goal: settings?.training_goal ?? null,
+              experienceLevel: settings?.experience_level ?? null,
+            }),
         );
         setServerPlanState(payload.state ?? null);
         setServerPlanStatus(payload.status ?? null);
@@ -211,7 +217,10 @@ export default function WeeklyPlanPage() {
         setPlanSettings(localSettings);
         setDurationDrafts(createDurationDrafts(localSettings));
         setPlannedSessions(
-          buildInitialWeeklyPlan(localSettings, getWeekStartDate(new Date())),
+          buildInitialWeeklyPlan(localSettings, getWeekStartDate(new Date()), {
+            goal: settings?.training_goal ?? null,
+            experienceLevel: settings?.experience_level ?? null,
+          }),
         );
         setServerPlanState(null);
         setServerPlanStatus(null);
@@ -233,7 +242,7 @@ export default function WeeklyPlanPage() {
     return () => {
       isMounted = false;
     };
-  }, [userId]);
+  }, [settings?.experience_level, settings?.training_goal, userId]);
 
   const fallbackPlanState = useMemo(() => {
     if (!userId || !planSettings) {
@@ -266,8 +275,11 @@ export default function WeeklyPlanPage() {
   const derivedPlanState = serverPlanState ?? fallbackPlanState;
 
   const weeklyPlanRecommendation = useMemo(() => {
-    return buildWeeklyPlanRecommendation(settings?.training_goal ?? null);
-  }, [settings?.training_goal]);
+    return buildWeeklyPlanRecommendation({
+      goal: settings?.training_goal ?? null,
+      experienceLevel: settings?.experience_level ?? null,
+    });
+  }, [settings?.experience_level, settings?.training_goal]);
 
   const weeklyPlanStatus = useMemo(() => {
     return serverPlanStatus ?? (derivedPlanState ? buildWeeklyPlanStatus(derivedPlanState) : null);
@@ -307,6 +319,9 @@ export default function WeeklyPlanPage() {
       .filter((session) => session.status === "planned" || session.status === "moved")
       .slice(0, 2);
   }, [derivedPlanState]);
+  const highFrequencyWarningShown =
+    (planSettings?.trainingDoseMode ?? "recommended") === "manual" &&
+    (planSettings?.sessionsPerWeek ?? 0) >= 6;
 
   function updateDurationDraft(
     field: "defaultDurationMinutes" | "minDurationMinutes" | "maxDurationMinutes",
@@ -395,7 +410,10 @@ export default function WeeklyPlanPage() {
       setPlanSettings(normalizedSettings);
       setDurationDrafts(createDurationDrafts(normalizedSettings));
       setPlannedSessions(
-        buildInitialWeeklyPlan(normalizedSettings, getWeekStartDate(new Date())),
+        buildInitialWeeklyPlan(normalizedSettings, getWeekStartDate(new Date()), {
+          goal: settings?.training_goal ?? null,
+          experienceLevel: settings?.experience_level ?? null,
+        }),
       );
       setServerPlanState(null);
       setServerPlanStatus(null);
@@ -575,24 +593,76 @@ export default function WeeklyPlanPage() {
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
             <label className="block">
               <span className="mb-2 block text-sm font-medium text-slate-700">
-                Antal pass per vecka
+                Målpass per vecka
               </span>
-              <select
-                value={planSettings.sessionsPerWeek}
-                onChange={(event) =>
-                  setPlanSettings({
-                    ...planSettings,
-                    sessionsPerWeek: Number(event.target.value),
-                  })
-                }
-                className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
-              >
-                {[1, 2, 3, 4, 5, 6].map((count) => (
-                  <option key={count} value={count}>
-                    {count} pass
-                  </option>
-                ))}
-              </select>
+              <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                {[
+                  {
+                    value: "recommended" as const,
+                    title: "Låt appen välja bästa träningsdos",
+                    description: `${weeklyPlanRecommendation.recommendedSessionsPerWeek} pass per vecka för ditt mål just nu.`,
+                  },
+                  {
+                    value: "manual" as const,
+                    title: "Välj dos manuellt",
+                    description: "Använd när du vill styra veckans träningsfrekvens själv.",
+                  },
+                ].map((option) => {
+                  const isSelected = planSettings.trainingDoseMode === option.value;
+
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setPlanSettings({
+                          ...planSettings,
+                          trainingDoseMode: option.value as WeeklyTrainingDoseMode,
+                          sessionsPerWeek:
+                            option.value === "recommended"
+                              ? weeklyPlanRecommendation.recommendedSessionsPerWeek
+                              : planSettings.sessionsPerWeek,
+                        })
+                      }
+                      className={cn(
+                        "rounded-2xl border px-4 py-3 text-left transition",
+                        isSelected
+                          ? "border-emerald-300 bg-emerald-50"
+                          : "border-slate-200 bg-slate-50",
+                      )}
+                    >
+                      <p className="text-sm font-semibold text-slate-950">{option.title}</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        {option.description}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+              {planSettings.trainingDoseMode === "manual" ? (
+                <select
+                  value={planSettings.sessionsPerWeek}
+                  onChange={(event) =>
+                    setPlanSettings({
+                      ...planSettings,
+                      sessionsPerWeek: Number(event.target.value),
+                    })
+                  }
+                  // Döljs i rekommenderat läge så dosvalet inte upplevs motsägelsefullt.
+                  className="min-h-[52px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                >
+                  {[1, 2, 3, 4, 5, 6, 7].map((count) => (
+                    <option key={count} value={count}>
+                      {count} pass
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                {planSettings.trainingDoseMode === "recommended"
+                  ? "Appen använder den rekommenderade träningsdosen som mål och väljer sedan vilka dagar passen placeras på."
+                  : "Detta är antal pass appen försöker planera. Föredragna dagar längre ned beskriver bara när passen får placeras."}
+              </p>
             </label>
 
             <label className="block">
@@ -618,9 +688,9 @@ export default function WeeklyPlanPage() {
           </div>
 
           <div className="mt-5">
-            <p className="text-sm font-medium text-slate-700">Föredragna träningsdagar</p>
+            <p className="text-sm font-medium text-slate-700">Föredragna / tillgängliga träningsdagar</p>
             <p className="mt-1 text-sm leading-6 text-slate-600">
-              Det här är hjälpsamma riktmärken, inte hårda låsningar.
+              Välj dagar du kan eller helst vill träna. Du kan välja fler dagar än antal pass och appen använder dem som flexibilitet när veckan planeras.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {WEEKDAY_OPTIONS.map((day) => {
@@ -652,6 +722,38 @@ export default function WeeklyPlanPage() {
               })}
             </div>
           </div>
+
+          {highFrequencyWarningShown ? (
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-900">Hög träningsfrekvens</p>
+              <p className="mt-2 text-sm leading-6 text-amber-900">
+                {getHighFrequencyTrainingDoseWarning()} För ditt mål rekommenderar appen oftast{" "}
+                {weeklyPlanRecommendation.recommendedSessionsPerWeek} tydliga styrkepass per vecka.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPlanSettings({
+                      ...planSettings,
+                      trainingDoseMode: "recommended",
+                      sessionsPerWeek: weeklyPlanRecommendation.recommendedSessionsPerWeek,
+                    })
+                  }
+                  className={uiButtonClasses.secondary}
+                >
+                  Använd rekommenderad dos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSaveMessage("Manuell hög frekvens behålls tills du ändrar den.")}
+                  className={uiButtonClasses.secondary}
+                >
+                  Fortsätt med {planSettings.sessionsPerWeek} pass per vecka
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-5 grid gap-4 sm:grid-cols-3">
             <label className="block">

@@ -13,6 +13,10 @@ import SimulationReadinessChart from "@/components/simulation/simulation-readine
 import SimulationSummaryCards from "@/components/simulation/simulation-summary-cards";
 import type { SimulationGymOption } from "@/components/simulation/simulation-controls";
 import { extractEquipmentIdsFromRecords } from "@/lib/equipment";
+import {
+  buildWeeklyPlanRecommendation,
+  getHighFrequencyTrainingDoseWarning,
+} from "@/lib/planning/weekly-plan";
 import { buildSimulationAnalysisExport } from "@/lib/simulation/build-analysis-export";
 import {
   getStoredSimulationSettings,
@@ -27,6 +31,7 @@ import type {
   SimulationReport,
   SimulationScenario,
   SimulationSportFocus,
+  SimulationTrainingDoseMode,
   SimulationWorkoutGenerationMode,
   SimulationWeeklyPlanFlexibility,
 } from "@/lib/simulation/types";
@@ -62,6 +67,12 @@ function clampSimulationDays(value: number) {
 function normalizeSimulationReport(report: SimulationReport): SimulationReport {
   return {
     ...report,
+    availableTrainingDayIndices: Array.isArray(report.availableTrainingDayIndices)
+      ? report.availableTrainingDayIndices
+      : [],
+    availableTrainingDayLabels: Array.isArray(report.availableTrainingDayLabels)
+      ? report.availableTrainingDayLabels
+      : [],
     plannedWorkoutDayIndices: Array.isArray(report.plannedWorkoutDayIndices)
       ? report.plannedWorkoutDayIndices
       : [],
@@ -82,7 +93,7 @@ function buildInitialSimulationReport(): SimulationReport | null {
           randomSeed: 42,
           startDate: new Date().toISOString().slice(0, 10),
           scenario: "normal",
-          plannedWorkoutDayIndices: [1, 3, 5],
+          availableTrainingDayIndices: [1, 3, 5],
         },
       }),
     );
@@ -106,6 +117,8 @@ export default function SimulationPage() {
   const [experienceLevel, setExperienceLevel] = useState<
     SimulationExperienceLevel | "novice"
   >("beginner");
+  const [trainingDoseMode, setTrainingDoseMode] =
+    useState<SimulationTrainingDoseMode>("recommended");
   const [sessionsPerWeek, setSessionsPerWeek] = useState(3);
   const [preferredSessionDurationMin, setPreferredSessionDurationMin] = useState(45);
   const [minDurationMinutes, setMinDurationMinutes] = useState(25);
@@ -120,7 +133,9 @@ export default function SimulationPage() {
   const [generationMode, setGenerationMode] =
     useState<SimulationWorkoutGenerationMode>("legacy_ai_chain");
   const [maxAiGeneratedWorkouts, setMaxAiGeneratedWorkouts] = useState(4);
-  const [plannedWorkoutDayIndices, setPlannedWorkoutDayIndices] = useState<number[]>([1, 3, 5]);
+  const [availableTrainingDayIndices, setAvailableTrainingDayIndices] = useState<number[]>([
+    1, 3, 5,
+  ]);
   const [loading, setLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
   const [showExport, setShowExport] = useState(false);
@@ -145,6 +160,7 @@ export default function SimulationPage() {
       setHeightCm(stored.heightCm ?? 178);
       setWeightKg(stored.weightKg ?? 78);
       setExperienceLevel(stored.experienceLevel ?? "beginner");
+      setTrainingDoseMode(stored.trainingDoseMode ?? "recommended");
       setSessionsPerWeek(stored.sessionsPerWeek ?? 3);
       setPreferredSessionDurationMin(stored.preferredSessionDurationMin ?? 45);
       setMinDurationMinutes(stored.minDurationMinutes ?? 25);
@@ -156,7 +172,11 @@ export default function SimulationPage() {
       setPlannerMode(stored.plannerMode ?? "synthetic");
       setGenerationMode(stored.generationMode ?? "legacy_ai_chain");
       setMaxAiGeneratedWorkouts(stored.maxAiGeneratedWorkouts ?? 4);
-      setPlannedWorkoutDayIndices(stored.plannedWorkoutDayIndices ?? [1, 3, 5]);
+      setAvailableTrainingDayIndices(
+        stored.availableTrainingDayIndices ??
+          stored.plannedWorkoutDayIndices ??
+          [1, 3, 5],
+      );
     }
 
     setSettingsHydrated(true);
@@ -179,6 +199,7 @@ export default function SimulationPage() {
       heightCm,
       weightKg,
       experienceLevel,
+      trainingDoseMode,
       sessionsPerWeek,
       preferredSessionDurationMin,
       minDurationMinutes,
@@ -190,7 +211,7 @@ export default function SimulationPage() {
       plannerMode,
       generationMode,
       maxAiGeneratedWorkouts,
-      plannedWorkoutDayIndices,
+      availableTrainingDayIndices,
     });
   }, [
     age,
@@ -202,7 +223,7 @@ export default function SimulationPage() {
     maxDurationMinutes,
     minDurationMinutes,
     generationMode,
-    plannedWorkoutDayIndices,
+    availableTrainingDayIndices,
     plannerMode,
     preferredSessionDurationMin,
     priorityMuscles,
@@ -214,6 +235,7 @@ export default function SimulationPage() {
     sex,
     sportFocus,
     startDate,
+    trainingDoseMode,
     weeklyPlanFlexibility,
     weightKg,
   ]);
@@ -270,13 +292,28 @@ export default function SimulationPage() {
     }
   }
 
+  const normalizedExperienceLevel: SimulationExperienceLevel =
+    experienceLevel === "novice" ? "beginner" : experienceLevel;
+  const recommendedDose = useMemo(
+    () =>
+      buildWeeklyPlanRecommendation({
+        goal,
+        experienceLevel: normalizedExperienceLevel,
+      }),
+    [goal, normalizedExperienceLevel],
+  );
+  const effectiveSessionsPerWeek =
+    trainingDoseMode === "recommended"
+      ? recommendedDose.recommendedSessionsPerWeek
+      : Math.min(Math.max(sessionsPerWeek, 1), 7);
+  const highFrequencyWarningShown =
+    trainingDoseMode === "manual" && effectiveSessionsPerWeek >= 6;
+
   async function runRemoteSimulation() {
     setLoading(true);
 
     try {
       const normalizedDays = clampSimulationDays(days);
-      const normalizedExperienceLevel: SimulationExperienceLevel =
-        experienceLevel === "novice" ? "beginner" : experienceLevel;
       const profile = {
         id: "manual_simulation_profile",
         name: "Manuell simulationsprofil",
@@ -291,7 +328,7 @@ export default function SimulationPage() {
         secondaryPriorityMuscle: priorityMuscles[1] ?? null,
         tertiaryPriorityMuscle: priorityMuscles[2] ?? null,
         preferredSessionDurationMin,
-        preferredWorkoutDaysPerWeek: sessionsPerWeek,
+        preferredWorkoutDaysPerWeek: effectiveSessionsPerWeek,
         weeklyPlanMinDurationMin: minDurationMinutes,
         weeklyPlanMaxDurationMin: maxDurationMinutes,
         weeklyPlanFlexibility,
@@ -325,12 +362,14 @@ export default function SimulationPage() {
           config: {
             totalDays: normalizedDays,
             randomSeed: seed,
+            trainingDoseMode,
             plannerMode,
             generationMode,
             enablePlannerDebug: true,
             startDate,
             scenario,
-            plannedWorkoutDayIndices,
+            // Tillgängliga dagar beskriver flexibilitet, inte obligatoriska passdagar.
+            availableTrainingDayIndices,
             maxAiGeneratedWorkouts,
           },
         }),
@@ -368,9 +407,10 @@ export default function SimulationPage() {
           loading={loading}
           age={age}
           experienceLevel={experienceLevel}
+          trainingDoseMode={trainingDoseMode}
           maxDurationMinutes={maxDurationMinutes}
           minDurationMinutes={minDurationMinutes}
-          onPlannedWorkoutDayIndicesChange={setPlannedWorkoutDayIndices}
+          onAvailableTrainingDayIndicesChange={setAvailableTrainingDayIndices}
           onAgeChange={setAge}
           onDaysChange={setDays}
           onExperienceLevelChange={setExperienceLevel}
@@ -387,6 +427,7 @@ export default function SimulationPage() {
           onScenarioChange={setScenario}
           onPreferredSessionDurationMinChange={setPreferredSessionDurationMin}
           onSessionsPerWeekChange={setSessionsPerWeek}
+          onTrainingDoseModeChange={setTrainingDoseMode}
           onSexChange={setSex}
           onSportFocusChange={setSportFocus}
           onStartDateChange={setStartDate}
@@ -395,9 +436,10 @@ export default function SimulationPage() {
           maxAiGeneratedWorkouts={maxAiGeneratedWorkouts}
           generationMode={generationMode}
           plannerMode={plannerMode}
-          plannedWorkoutDayIndices={plannedWorkoutDayIndices}
+          availableTrainingDayIndices={availableTrainingDayIndices}
           preferredSessionDurationMin={preferredSessionDurationMin}
           priorityMuscles={priorityMuscles}
+          recommendedSessionsPerWeek={recommendedDose.recommendedSessionsPerWeek}
           report={report}
           scenario={scenario}
           sessionsPerWeek={sessionsPerWeek}
@@ -407,6 +449,8 @@ export default function SimulationPage() {
           sportFocus={sportFocus}
           onSeedChange={setSeed}
           startDate={startDate}
+          highFrequencyWarningShown={highFrequencyWarningShown}
+          highFrequencyWarningText={getHighFrequencyTrainingDoseWarning()}
           weeklyPlanFlexibility={weeklyPlanFlexibility}
           weightKg={weightKg}
         />

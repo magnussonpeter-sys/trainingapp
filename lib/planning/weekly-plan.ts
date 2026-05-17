@@ -16,6 +16,7 @@ export type Weekday =
   | "sunday";
 
 export type WeeklyPlanFlexibility = "strict" | "balanced" | "flexible";
+export type WeeklyTrainingDoseMode = "recommended" | "manual";
 
 export type PlannedSessionStatus =
   | "planned"
@@ -35,6 +36,7 @@ export type PlannedSessionFocus =
 
 export type WeeklyPlanSettings = {
   userId: string;
+  trainingDoseMode: WeeklyTrainingDoseMode;
   sessionsPerWeek: number;
   preferredDays: Weekday[];
   defaultDurationMinutes: number;
@@ -221,6 +223,11 @@ export type WeeklyPlanStatus = {
   message: string;
 };
 
+type WeeklyPlanRecommendationOptions = {
+  goal?: string | null;
+  experienceLevel?: string | null;
+};
+
 const WEEKDAY_ORDER: Weekday[] = [
   "monday",
   "tuesday",
@@ -329,6 +336,20 @@ function addDays(date: Date, days: number) {
 
 function getWeekdayIndex(day: Weekday) {
   return WEEKDAY_ORDER.indexOf(day);
+}
+
+function normalizeWeeklyTrainingDoseMode(
+  value?: WeeklyTrainingDoseMode | null,
+): WeeklyTrainingDoseMode {
+  return value === "manual" ? "manual" : "recommended";
+}
+
+function normalizePlanningExperienceLevel(value?: string | null) {
+  if (value === "intermediate" || value === "advanced") {
+    return value;
+  }
+
+  return "beginner";
 }
 
 function getWeekdayDate(weekStartDate: string, weekday: Weekday) {
@@ -756,7 +777,7 @@ function getAutoFillDays(
   sessionsPerWeek: number,
   preferredDays: Weekday[],
 ) {
-  const desiredCount = clampNumber(sessionsPerWeek, 1, 6);
+  const desiredCount = clampNumber(sessionsPerWeek, 1, 7);
   const uniquePreferredDays = Array.from(
     new Set(preferredDays.filter((day): day is Weekday => WEEKDAY_ORDER.includes(day))),
   );
@@ -816,7 +837,12 @@ function buildFocusRotation(
     return ["upper", "lower", "push", "pull", "full_body"];
   }
 
-  return ["upper", "lower", "push", "pull", "full_body", "mobility"];
+  if (sessionsPerWeek === 6) {
+    return ["upper", "lower", "push", "pull", "full_body", "mobility"];
+  }
+
+  // Hög frekvens får gärna innehålla lättare återhämtnings-/teknikdagar.
+  return ["upper", "lower", "mobility", "push", "pull", "full_body", "core"];
 }
 
 export function getWeekStartDate(value: Date | string) {
@@ -865,6 +891,7 @@ export function mapPlannedFocusToWorkoutFocus(focus: PlannedSessionFocus): Worko
 export function getDefaultWeeklyPlanSettings(userId: string): WeeklyPlanSettings {
   return {
     userId,
+    trainingDoseMode: "recommended",
     sessionsPerWeek: 3,
     preferredDays: ["monday", "wednesday", "friday"],
     defaultDurationMinutes: 30,
@@ -902,53 +929,172 @@ function normalizeTrainingGoal(goal?: string | null) {
   return "health";
 }
 
-export function buildWeeklyPlanRecommendation(goal?: string | null): WeeklyPlanRecommendation {
-  const normalizedGoal = normalizeTrainingGoal(goal);
+export function buildWeeklyPlanRecommendation(
+  goalOrOptions?: string | null | WeeklyPlanRecommendationOptions,
+  experienceLevelArg?: string | null,
+): WeeklyPlanRecommendation {
+  const options =
+    typeof goalOrOptions === "object" && goalOrOptions !== null
+      ? goalOrOptions
+      : {
+          goal: goalOrOptions ?? null,
+          experienceLevel: experienceLevelArg ?? null,
+        };
+  const normalizedGoal = normalizeTrainingGoal(options.goal);
+  const normalizedExperience = normalizePlanningExperienceLevel(
+    options.experienceLevel,
+  );
 
   if (normalizedGoal === "hypertrophy") {
+    const recommendedSessionsPerWeek =
+      normalizedExperience === "advanced"
+        ? 5
+        : normalizedExperience === "intermediate"
+          ? 4
+          : 3;
+
     return {
-      recommendedSessionsPerWeek: 3,
+      recommendedSessionsPerWeek,
       minimumSessionsPerWeek: 2,
-      recommendedMinutesRange: { min: 35, max: 45 },
+      recommendedMinutesRange:
+        normalizedExperience === "advanced"
+          ? { min: 40, max: 55 }
+          : normalizedExperience === "intermediate"
+            ? { min: 35, max: 50 }
+            : { min: 35, max: 45 },
       explanation:
-        "För muskeltillväxt behövs oftast minst 2 styrkepass per vecka. 3–4 pass ger bättre marginal för tillräcklig träningsvolym och återhämtning.",
+        normalizedExperience === "advanced"
+          ? "För hypertrofi på avancerad nivå behövs ofta 4–5 tydliga pass för att hinna få in tillräcklig volym utan att varje pass blir orimligt långt."
+          : normalizedExperience === "intermediate"
+            ? "För hypertrofi på intermediate-nivå fungerar ofta 3–5 pass bra. 4 pass ger god balans mellan träningsvolym och återhämtning."
+            : "För hypertrofi räcker 3 pass ofta långt i början. Fler pass kan hjälpa senare, men det viktigaste är att dosen går att genomföra vecka efter vecka.",
     };
   }
 
   if (normalizedGoal === "strength") {
+    const recommendedSessionsPerWeek =
+      normalizedExperience === "advanced"
+        ? 5
+        : normalizedExperience === "intermediate"
+          ? 4
+          : 3;
+
     return {
-      recommendedSessionsPerWeek: 3,
+      recommendedSessionsPerWeek,
       minimumSessionsPerWeek: 2,
-      recommendedMinutesRange: { min: 35, max: 50 },
+      recommendedMinutesRange:
+        normalizedExperience === "advanced"
+          ? { min: 40, max: 55 }
+          : normalizedExperience === "intermediate"
+            ? { min: 35, max: 50 }
+            : { min: 35, max: 45 },
       explanation:
-        "För styrkeökning behövs oftast minst 2 pass per vecka. 3 pass ger bättre möjlighet att öva basrörelser och höja belastningen gradvis.",
+        normalizedExperience === "advanced"
+          ? "För styrka på avancerad nivå fungerar ofta 4–5 pass bäst, men det kräver att några pass är lättare eller mer tekniska."
+          : normalizedExperience === "intermediate"
+            ? "För styrka på intermediate-nivå fungerar ofta 3–4 pass bäst. Det ger tillräckligt med exponering för basrörelser utan att varje vecka blir för tung."
+            : "För styrkeökning behövs oftast minst 2 pass per vecka. 2–3 tydliga styrkepass räcker långt i början och ger bra möjlighet att öva basrörelser.",
     };
   }
 
   if (normalizedGoal === "body_composition") {
     return {
-      recommendedSessionsPerWeek: 3,
+      recommendedSessionsPerWeek:
+        normalizedExperience === "advanced" ? 4 : 3,
       minimumSessionsPerWeek: 2,
-      recommendedMinutesRange: { min: 30, max: 45 },
+      recommendedMinutesRange:
+        normalizedExperience === "advanced"
+          ? { min: 35, max: 45 }
+          : { min: 30, max: 45 },
       explanation:
-        "För kroppssammansättning är 2–4 styrkepass per vecka en rimlig grund. Regelbundenhet och progression är viktigare än exakt veckoschema.",
+        "För kroppssammansättning är 3–4 pass per vecka ofta en bra grund. Regelbundenhet och tillräcklig träningsdos väger tyngre än att fylla så många dagar som möjligt.",
     };
   }
 
   return {
-    recommendedSessionsPerWeek: 2,
+    recommendedSessionsPerWeek:
+      normalizedExperience === "advanced" ? 3 : 2,
     minimumSessionsPerWeek: 2,
-    recommendedMinutesRange: { min: 25, max: 40 },
+    recommendedMinutesRange:
+      normalizedExperience === "advanced"
+        ? { min: 30, max: 40 }
+        : { min: 25, max: 40 },
     explanation:
       "För allmän hälsa räcker ofta 2 styrkepass per vecka som miniminivå. 3 pass ger bättre balans mellan styrka, energi och vana.",
   };
 }
 
+export function resolveWeeklyPlanSessionsPerWeek(params: {
+  settings: Pick<WeeklyPlanSettings, "sessionsPerWeek" | "trainingDoseMode">;
+  goal?: string | null;
+  experienceLevel?: string | null;
+}) {
+  if (normalizeWeeklyTrainingDoseMode(params.settings.trainingDoseMode) === "manual") {
+    return clampNumber(params.settings.sessionsPerWeek, 1, 7);
+  }
+
+  return buildWeeklyPlanRecommendation({
+    goal: params.goal,
+    experienceLevel: params.experienceLevel,
+  }).recommendedSessionsPerWeek;
+}
+
+export function resolveWeeklyPlanSettings(params: {
+  settings: WeeklyPlanSettings;
+  goal?: string | null;
+  experienceLevel?: string | null;
+}) {
+  const trainingDoseMode = normalizeWeeklyTrainingDoseMode(
+    params.settings.trainingDoseMode,
+  );
+
+  return {
+    ...params.settings,
+    trainingDoseMode,
+    // Recommended mode resolves to a target count; preferredDays still only
+    // describe placement flexibility.
+    sessionsPerWeek: resolveWeeklyPlanSessionsPerWeek({
+      settings: {
+        sessionsPerWeek: params.settings.sessionsPerWeek,
+        trainingDoseMode,
+      },
+      goal: params.goal,
+      experienceLevel: params.experienceLevel,
+    }),
+  };
+}
+
+export function shouldShowHighFrequencyWarning(params: {
+  trainingDoseMode?: WeeklyTrainingDoseMode | null;
+  sessionsPerWeek: number;
+}) {
+  return (
+    normalizeWeeklyTrainingDoseMode(params.trainingDoseMode) === "manual" &&
+    params.sessionsPerWeek >= 6
+  );
+}
+
+export function getHighFrequencyTrainingDoseWarning() {
+  return "6–7 pass per vecka är hög träningsfrekvens. Det kan fungera om flera pass är korta eller återhämtande, men är sällan bästa standard för styrkeutveckling.";
+}
+
 export function buildInitialWeeklyPlan(
   settings: WeeklyPlanSettings,
   weekStartDate: string,
+  options?: {
+    goal?: string | null;
+    experienceLevel?: string | null;
+  },
 ): PlannedSession[] {
-  const selectedDays = getAutoFillDays(settings.sessionsPerWeek, settings.preferredDays);
+  const effectiveSettings = resolveWeeklyPlanSettings({
+    settings,
+    goal: options?.goal,
+    experienceLevel: options?.experienceLevel,
+  });
+  const selectedDays = getAutoFillDays(
+    effectiveSettings.sessionsPerWeek,
+    effectiveSettings.preferredDays,
+  );
   const focusRotation = buildFocusRotation(selectedDays.length);
 
   return selectedDays.map((weekday, index) => {
@@ -957,14 +1103,14 @@ export function buildInitialWeeklyPlan(
 
     return {
       id: crypto.randomUUID(),
-      userId: settings.userId,
+      userId: effectiveSettings.userId,
       weekStartDate,
       weekday,
       plannedDate,
-      targetDurationMinutes: settings.defaultDurationMinutes,
+      targetDurationMinutes: effectiveSettings.defaultDurationMinutes,
       focus,
       priorityMuscles: getPriorityMusclesForSession(settings, focus),
-      preferredGymId: settings.preferredGymId ?? null,
+      preferredGymId: effectiveSettings.preferredGymId ?? null,
       status: "planned",
       completedWorkoutLogId: null,
       replacedByWorkoutLogId: null,

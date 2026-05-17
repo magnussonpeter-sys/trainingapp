@@ -101,6 +101,10 @@ function clampSessionRatio(value: number | null) {
 }
 
 export function getPlanningDurationBucket(displayDurationMinutes: number) {
+  if (!Number.isFinite(displayDurationMinutes) || displayDurationMinutes <= 0) {
+    return 30;
+  }
+
   if (displayDurationMinutes < 20) return 15;
   if (displayDurationMinutes < 25) return 20;
   if (displayDurationMinutes < 30) return 25;
@@ -108,6 +112,21 @@ export function getPlanningDurationBucket(displayDurationMinutes: number) {
   if (displayDurationMinutes < 45) return 35;
   if (displayDurationMinutes < 60) return 45;
   return 60;
+}
+
+export function getEffectivePlanningDurationBucket(context: {
+  durationMinutes?: number;
+  planningDurationBucket?: number;
+}) {
+  if (
+    typeof context.planningDurationBucket === "number" &&
+    Number.isFinite(context.planningDurationBucket) &&
+    context.planningDurationBucket >= 15
+  ) {
+    return context.planningDurationBucket;
+  }
+
+  return getPlanningDurationBucket(context.durationMinutes ?? 30);
 }
 
 function getRecentExerciseIdentity(trainingHistoryContext: TrainingHistoryContext) {

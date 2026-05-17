@@ -7,9 +7,11 @@ import {
   applyScenarioProfileTweaks,
   buildPlannedWorkoutDaySet,
   buildScenarioNotes,
+  deriveSimulationPlannedWorkoutDayIndices,
   formatPlannedWorkoutDayLabels,
   getWeekdayIndexForDate,
   getWeekdayLabel,
+  normalizeAvailableTrainingDayIndices,
   normalizePlannedWorkoutDayIndices,
   normalizeSimulationScenario,
   shouldAddSpontaneousWorkout,
@@ -55,11 +57,15 @@ function normalizeConfig(config?: Partial<SimulationConfig>): SimulationConfig {
     ...DEFAULT_SIMULATION_CONFIG,
     ...config,
     plannerMode: config?.plannerMode === "real_app_planner" ? "real_app_planner" : "hybrid_ai",
+    trainingDoseMode: config?.trainingDoseMode === "manual" ? "manual" : "recommended",
     scenario: normalizeSimulationScenario(config?.scenario),
     enablePlannerDebug: Boolean(config?.enablePlannerDebug),
     totalDays,
     randomSeed: Math.max(1, Math.round(config?.randomSeed ?? DEFAULT_SIMULATION_CONFIG.randomSeed)),
     startDate: config?.startDate?.trim() || DEFAULT_SIMULATION_CONFIG.startDate,
+    availableTrainingDayIndices: normalizeAvailableTrainingDayIndices(
+      config?.availableTrainingDayIndices,
+    ),
     plannedWorkoutDayIndices: normalizePlannedWorkoutDayIndices(
       config?.plannedWorkoutDayIndices,
     ),
@@ -121,7 +127,16 @@ export async function runHybridSimulation(params?: {
   });
   const profile = scenarioProfile.profile;
   const random = createSeededRandom(config.randomSeed);
+  const availableTrainingDayIndices =
+    normalizeAvailableTrainingDayIndices(config.availableTrainingDayIndices).length > 0
+      ? normalizeAvailableTrainingDayIndices(config.availableTrainingDayIndices)
+      : normalizePlannedWorkoutDayIndices(config.plannedWorkoutDayIndices);
   const plannedWeekDays = buildPlannedWorkoutDaySet({ config, profile });
+  const plannedWorkoutDayIndices = deriveSimulationPlannedWorkoutDayIndices({
+    availableTrainingDayIndices,
+    plannedWorkoutDayIndices: config.plannedWorkoutDayIndices,
+    preferredWorkoutDaysPerWeek: profile.preferredWorkoutDaysPerWeek,
+  });
   const dailySnapshots: SimulationDailySnapshot[] = [];
   const plannerDebug: SimulationPlannerDebugEntry[] = [];
   const notes = [
@@ -315,8 +330,17 @@ export async function runHybridSimulation(params?: {
   return {
     config,
     profile,
-    plannedWorkoutDayIndices: Array.from(plannedWeekDays).sort((left, right) => left - right),
-    plannedWorkoutDayLabels: formatPlannedWorkoutDayLabels(Array.from(plannedWeekDays)),
+    trainingDoseMode: config.trainingDoseMode,
+    targetSessionsPerWeek: profile.preferredWorkoutDaysPerWeek,
+    availableTrainingDayIndices,
+    availableTrainingDayLabels: formatPlannedWorkoutDayLabels(availableTrainingDayIndices),
+    plannedWorkoutDayIndices,
+    plannedWorkoutDayLabels: formatPlannedWorkoutDayLabels(plannedWorkoutDayIndices),
+    preferredDaysWereUsedAsAvailability: availableTrainingDayIndices.length > 0,
+    plannedDaysWereClampedToTargetSessions:
+      availableTrainingDayIndices.length > plannedWorkoutDayIndices.length,
+    highFrequencyWarningShown:
+      config.trainingDoseMode === "manual" && profile.preferredWorkoutDaysPerWeek >= 6,
     notes,
     dailySnapshots,
     timeSeries,

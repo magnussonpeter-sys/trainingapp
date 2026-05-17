@@ -44,6 +44,10 @@ export function normalizePlannedWorkoutDayIndices(indices?: number[]) {
   ).sort((left, right) => left - right);
 }
 
+export function normalizeAvailableTrainingDayIndices(indices?: number[]) {
+  return normalizePlannedWorkoutDayIndices(indices);
+}
+
 export function getDefaultPlannedWorkoutDayIndices(daysPerWeek: number) {
   const templates: Record<number, number[]> = {
     1: [1],
@@ -56,6 +60,70 @@ export function getDefaultPlannedWorkoutDayIndices(daysPerWeek: number) {
   };
 
   return templates[Math.min(Math.max(daysPerWeek, 1), 7)];
+}
+
+function derivePreferredDaysFromAvailable(params: {
+  availableTrainingDayIndices: number[];
+  preferredWorkoutDaysPerWeek: number;
+}) {
+  const normalizedAvailable =
+    normalizeAvailableTrainingDayIndices(params.availableTrainingDayIndices);
+  const desiredCount = Math.min(Math.max(params.preferredWorkoutDaysPerWeek, 1), 7);
+
+  if (normalizedAvailable.length === 0) {
+    return getDefaultPlannedWorkoutDayIndices(desiredCount);
+  }
+
+  if (normalizedAvailable.length === desiredCount) {
+    return normalizedAvailable;
+  }
+
+  const defaultTemplate = getDefaultPlannedWorkoutDayIndices(desiredCount);
+  const filteredTemplate = defaultTemplate.filter((index) =>
+    normalizedAvailable.includes(index),
+  );
+
+  if (filteredTemplate.length >= desiredCount) {
+    return filteredTemplate.slice(0, desiredCount);
+  }
+
+  const selected = [...new Set([...filteredTemplate, ...normalizedAvailable])];
+
+  if (selected.length >= desiredCount) {
+    return selected.slice(0, desiredCount);
+  }
+
+  for (const day of [1, 3, 5, 2, 4, 6, 0]) {
+    if (selected.length >= desiredCount) {
+      break;
+    }
+
+    if (!selected.includes(day)) {
+      selected.push(day);
+    }
+  }
+
+  return selected.slice(0, desiredCount).sort((left, right) => left - right);
+}
+
+export function deriveSimulationPlannedWorkoutDayIndices(params: {
+  availableTrainingDayIndices?: number[];
+  plannedWorkoutDayIndices?: number[];
+  preferredWorkoutDaysPerWeek: number;
+}) {
+  const explicitPlanned = normalizePlannedWorkoutDayIndices(
+    params.plannedWorkoutDayIndices,
+  );
+
+  if (explicitPlanned.length > 0) {
+    return explicitPlanned;
+  }
+
+  return derivePreferredDaysFromAvailable({
+    availableTrainingDayIndices:
+      normalizeAvailableTrainingDayIndices(params.availableTrainingDayIndices),
+    preferredWorkoutDaysPerWeek: params.preferredWorkoutDaysPerWeek,
+  });
 }
 
 export function formatPlannedWorkoutDayLabels(indices: number[]) {
@@ -232,13 +300,11 @@ export function buildPlannedWorkoutDaySet(params: {
   config: SimulationConfig;
   profile: SimulationUserProfile;
 }) {
-  const normalized = normalizePlannedWorkoutDayIndices(
-    params.config.plannedWorkoutDayIndices,
+  return new Set(
+    deriveSimulationPlannedWorkoutDayIndices({
+      availableTrainingDayIndices: params.config.availableTrainingDayIndices,
+      plannedWorkoutDayIndices: params.config.plannedWorkoutDayIndices,
+      preferredWorkoutDaysPerWeek: params.profile.preferredWorkoutDaysPerWeek,
+    }),
   );
-
-  if (normalized.length > 0) {
-    return new Set(normalized);
-  }
-
-  return new Set(getDefaultPlannedWorkoutDayIndices(params.profile.preferredWorkoutDaysPerWeek));
 }

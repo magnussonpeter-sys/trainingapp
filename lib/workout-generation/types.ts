@@ -348,6 +348,9 @@ export type SlotWorkoutDebug = {
   retryReason: string | null;
   finalContractPassed: boolean;
   finalSlotCoverage: string[];
+  lostStrengthMainRoles: WorkoutSlotRole[];
+  restoredStrengthRoles: WorkoutSlotRole[];
+  strengthWeakButValidReasons: string[];
   sportRelevantSlots: string[];
   sportLossReason: string[];
   goalLossReason: string[];

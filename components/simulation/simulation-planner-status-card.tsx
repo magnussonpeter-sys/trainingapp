@@ -28,6 +28,9 @@ export default function SimulationPlannerStatusCard({
   const plannedWorkoutDayLabels = Array.isArray(report.plannedWorkoutDayLabels)
     ? report.plannedWorkoutDayLabels
     : [];
+  const availableTrainingDayLabels = Array.isArray(report.availableTrainingDayLabels)
+    ? report.availableTrainingDayLabels
+    : plannedWorkoutDayLabels;
   const modeLabel =
     report.config.plannerMode === "full_app_chain"
       ? "Full app-kedja – veckoplan + AI-pass"
@@ -65,8 +68,17 @@ export default function SimulationPlannerStatusCard({
         </div>
       </div>
       <p className="mt-3 text-sm leading-6 text-slate-600">
+        Dosläge: {report.trainingDoseMode === "manual" ? "manuell" : "rekommenderad"}.{" "}
+        Målpass per vecka: {report.targetSessionsPerWeek ?? report.profile.preferredWorkoutDaysPerWeek}.{" "}
         Planerade träningspass i körningen: {stats.total}. Planerade veckodagar:{" "}
         {plannedWorkoutDayLabels.join(", ").toLowerCase() || "inga"}.{" "}
+        Tillgängliga dagar: {availableTrainingDayLabels.join(", ").toLowerCase() || "inga"}.{" "}
+        {report.plannedDaysWereClampedToTargetSessions
+          ? "Planeraren reducerade tillgängliga dagar till ett subset som matchar målantalet pass. "
+          : ""}
+        {report.highFrequencyWarningShown
+          ? "Högfrekvensvarning var aktiv i den här körningen. "
+          : ""}
         {stats.synthetic > 0 ? `Syntetiska pass: ${stats.synthetic}. ` : ""}
         {stats.realAppPlanner > 0 ? `Riktig planner: ${stats.realAppPlanner}. ` : ""}
         {stats.fullAppChain > 0 ? `Full app-kedja: ${stats.fullAppChain}. ` : ""}

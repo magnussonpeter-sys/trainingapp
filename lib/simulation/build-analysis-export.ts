@@ -36,10 +36,11 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
   const dayDebugByIndex = new Map(
     (report.plannerDebug ?? []).map((entry) => [entry.dayIndex, entry]),
   );
-  const meaningfulSnapshots = report.dailySnapshots.filter(
+  const snapshotsForDuration = report.dailySnapshots.filter(
     (snapshot) =>
       snapshot.dayEvent !== "rest" || snapshot.generationStatus === "generation_failed",
   );
+  const exportSnapshots = report.dailySnapshots;
   const scenarioCompletedCount = report.dailySnapshots.filter(
     (snapshot) => snapshot.userOutcome === "completed",
   ).length;
@@ -56,25 +57,25 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     (snapshot) => snapshot.dayEvent === "spontaneous_training",
   ).length;
   const avgActualDuration =
-    meaningfulSnapshots.length > 0
+    snapshotsForDuration.length > 0
       ? Math.round(
-          meaningfulSnapshots.reduce(
+          snapshotsForDuration.reduce(
             (sum, snapshot) => sum + (snapshot.workoutResult?.actualDurationMin ?? 0),
             0,
-          ) / meaningfulSnapshots.length,
+          ) / snapshotsForDuration.length,
         )
       : 0;
   const avgPlannedDuration =
-    meaningfulSnapshots.length > 0
+    snapshotsForDuration.length > 0
       ? Math.round(
-          meaningfulSnapshots.reduce(
+          snapshotsForDuration.reduce(
             (sum, snapshot) =>
               sum + (snapshot.workoutResult?.plannedDurationMin ?? snapshot.plannedTraining.targetDurationMin),
             0,
-          ) / meaningfulSnapshots.length,
+          ) / snapshotsForDuration.length,
         )
       : 0;
-  const durationDebugEntries = meaningfulSnapshots
+  const durationDebugEntries = snapshotsForDuration
     .map((snapshot) => dayDebugByIndex.get(snapshot.dayIndex)?.realAppPlanner)
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
   const avgOriginalRecommendedDuration =
@@ -124,7 +125,15 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     `- Startdatum: ${report.config.startDate}`,
     `- Antal dagar: ${report.config.totalDays}`,
     `- Seed: ${report.config.randomSeed}`,
+    `- Training dose mode: ${report.trainingDoseMode ?? "recommended"}`,
+    `- Målpass per vecka: ${report.targetSessionsPerWeek ?? report.profile.preferredWorkoutDaysPerWeek}`,
+    `- Tillgängliga träningsdagar: ${report.availableTrainingDayLabels?.join(", ") || "inga"}`,
     `- Planerade träningsdagar: ${report.plannedWorkoutDayLabels.join(", ") || "inga"}`,
+    `- Antal tillgängliga dagar: ${report.availableTrainingDayIndices?.length ?? 0}`,
+    `- Antal planerade dagar: ${report.plannedWorkoutDayIndices.length}`,
+    `- Preferred days treated as availability: ${report.preferredDaysWereUsedAsAvailability ? "true" : "false"}`,
+    `- Planner reduced available days to target sessions: ${report.plannedDaysWereClampedToTargetSessions ? "true" : "false"}`,
+    `- High frequency warning shown: ${report.highFrequencyWarningShown ? "true" : "false"}`,
     `- Tillgänglig utrustning: ${report.profile.availableEquipmentIds.join(", ") || "okänd"}`,
     report.effectiveUserProfile
       ? `- Effektiv utrustning: ${report.effectiveUserProfile.effectiveEquipment.join(", ") || "okänd"}`
@@ -135,6 +144,7 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     `- Max AI-pass: ${report.config.maxAiGeneratedWorkouts ?? "n/a"}`,
     `- Faktiska AI-anrop: ${report.actualAiAttemptCount ?? report.aiGeneratedWorkoutCount ?? 0}`,
     `- Riktiga AI-pass: ${report.aiGeneratedWorkoutCount ?? 0}`,
+    `- Safe template valid: ${report.dailySnapshots.filter((snapshot) => snapshot.generationStatus === "safe_template_valid").length}`,
     `- AI-fallback/mock: ${report.aiFallbackWorkoutCount ?? 0}`,
     "",
     "## Sammanfattning",
@@ -155,7 +165,7 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
     "## Per träningsdag",
   ];
 
-  for (const snapshot of meaningfulSnapshots) {
+  for (const snapshot of exportSnapshots) {
     const debug = dayDebugByIndex.get(snapshot.dayIndex);
     const plannerSummary = debug?.realAppPlanner;
     const historySummary = debug?.trainingHistoryContextSummary;
@@ -166,6 +176,9 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       `- Planerad av scenario: ${snapshot.plannedByScenario ? "ja" : "nej"}`,
       `- User outcome: ${snapshot.userOutcome}`,
       `- Generation status: ${snapshot.generationStatus}`,
+      `- Real AI försökt: ${plannerSummary?.attemptedRealAi ? "ja" : "nej"}`,
+      `- Fallback använd: ${plannerSummary?.usedFallback ? "ja" : "nej"}`,
+      `- Genereringsorsak: ${plannerSummary?.realAiFailureReason ?? snapshot.generatedWorkoutSummary?.fallbackFailureReasons?.join(", ") ?? "-"}`,
       `- Planner mode: ${debug?.plannerMode ?? report.config.plannerMode}`,
       `- Planner source: ${snapshot.generatedWorkoutSummary?.plannerSource ?? "-"}`,
       `- Rekommenderat fokus: ${plannerSummary?.suggestedNextWorkoutFocus ?? plannerSummary?.suggestedNextFocus ?? "-"}`,
@@ -300,83 +313,6 @@ export function buildSimulationAnalysisExport(report: SimulationReport) {
       "",
     );
   }
-
-  lines.push(
-    "## Frågor att analysera",
-    "Viktigast att analysera: Försämras passet mellan “före normalisering” och “efter normalisering”, och i så fall exakt varför?",
-    "",
-    "Övrigt:",
-    "1. Är /simulation konsekvent med veckoplanens rekommendation?",
-    "   - Stämmer effektiv profil, mål, erfarenhetsnivå, utrustning och sportmål med det som används i planering och passgenerering?",
-    "   - Finns konflikt mellan preset-profil och faktiska användarinställningar?",
-    "",
-    "2. Gör veckoplaneringen rimliga val?",
-    "   - Väljer den rätt fokus utifrån mål, historik, missade pass, spontana pass och återhämtning?",
-    "   - Justeras planeringen pedagogiskt efter korta, missade eller spontana pass?",
-    "   - Är coachtexten konkret nog, eller mest generisk malltext?",
-    "",
-    "3. Blir rekommenderad passlängd realistisk?",
-    "   - Anpassas längden efter faktisk typisk träningslängd?",
-    "   - Är längden samtidigt ärlig i förhållande till målet, till exempel hypertrofi?",
-    "   - Borde appen ge feedback om träningsgap eller låg träningsdos?",
-    "",
-    "4. Är AI-förslaget före normalisering bra?",
-    "   - Följer råförslaget rekommenderat fokus?",
-    "   - Är övningsvalen rimliga för mål, erfarenhetsnivå, utrustning, sportmål och passlängd?",
-    "   - Finns uppenbara problem redan innan katalogmatchning/normalisering?",
-    "",
-    "5. Försämras passet av katalogmatchning, focus repair eller normalisering?",
-    "   - Vilka bra övningar tas bort?",
-    "   - Vilka sämre fallback-övningar läggs till?",
-    "   - Tappas basövningar, prioriterade muskler, core, armar, vader, carry eller sportrelevanta övningar?",
-    "   - Är focus integrity/strength specificity missvisande höga trots kvalitetsförlust?",
-    "",
-    "6. Får huvudmålet tillräckligt genomslag?",
-    "   - För hypertrofi: finns tillräcklig basvolym, press/drag/ben/hinge och progressionsmöjlighet?",
-    "   - Blir korta pass för generiska eller för tunna för målet?",
-    "   - Behövs särskilda minimum templates för 15–25 eller 25–35 minuter?",
-    "",
-    "7. Får sportmålet lagom genomslag?",
-    "   - Påverkar sportmålet övningsval och prioritering på ett rimligt sätt?",
-    "   - Tar sportmålet över huvudmålet, eller syns det för lite?",
-    "   - För surf_sports: syns rygg/lats, bål, höft, posterior chain, skulderkontroll och grepp/carry tillräckligt?",
-    "",
-    "8. Hanteras prioriterade och deferred muscles korrekt?",
-    "   - Blir prioriterade muskler faktiskt tränade?",
-    "   - Defereras samma muskler upprepade gånger?",
-    "   - Är det missvisande att ange en muskel som priority om den nästan alltid kapas?",
-    "",
-    "9. Kapas vissa träningsdelar systematiskt?",
-    "   - Core?",
-    "   - Armar?",
-    "   - Vader?",
-    "   - Hamstrings/posterior chain?",
-    "   - Carry/grepp?",
-    "   - Triceps eller pressövningar?",
-    "",
-    "10. Upprepas samma övningar eller rörelsemönster för ofta?",
-    "   - Är repetitionen rimlig progression eller bara fallback-bias?",
-    "   - Blir passen för lika efter normalisering?",
-    "   - Behövs variationsregler per rörelsemönster eller variantGroup?",
-    "",
-    "11. Finns förbjudna, olämpliga eller felplacerade övningar?",
-    "   - Exempel: avancerade övningar för fel nivå, upper-body-övningar i lower-body-pass, eller övningar som inte passar återhämtning.",
-    "   - Har tidigare problem som pike push-ups i lower_body eller assisterad pistol squat hos nybörjare försvunnit?",
-    "",
-    "12. Vad är den mest sannolika felkällan?",
-    "   - Profil/inställningar?",
-    "   - Veckoplanering?",
-    "   - Coach decision?",
-    "   - AI-prompt?",
-    "   - Katalogmatchning?",
-    "   - Normalisering/focus repair?",
-    "   - Övningskatalogens metadata?",
-    "   - Simuleringsscenariot/mock synthetic-pass?",
-    "",
-    "13. Vilka 3–5 konkreta kodförbättringar bör prioriteras?",
-    "   - Skriv förbättringarna så att de kan omvandlas till Codex-instruktioner.",
-    "   - Skilj mellan snabb fix, strukturell förbättring och debug/diagnostik.",
-  );
 
   if (
     report.config.scenario === "spontaneous_lower_before_planned_lower" &&

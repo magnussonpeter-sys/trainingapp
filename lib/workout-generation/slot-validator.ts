@@ -4,6 +4,7 @@ import type {
   WorkoutCoachContext,
   WorkoutSlot,
 } from "@/lib/workout-generation/types";
+import { getEffectivePlanningDurationBucket } from "@/lib/workout-generation/coach-context";
 
 function getContractCoverageSummary(params: {
   durationMinutes: number;
@@ -27,11 +28,20 @@ function hasLoadedMainLift(selections: SlotExerciseSelection[]) {
   );
 }
 
+function hasWeightedLowerMainLift(selections: SlotExerciseSelection[]) {
+  return selections.some(
+    (selection) =>
+      ["main_squat", "unilateral_lower", "main_hinge"].includes(selection.role) &&
+      selection.requiredEquipment.some((equipment) => equipment !== "bodyweight"),
+  );
+}
+
 export function validateSlotWorkout(params: {
   slots: WorkoutSlot[];
   selections: SlotExerciseSelection[];
   coachContext: WorkoutCoachContext;
 }) {
+  const planningDurationBucket = getEffectivePlanningDurationBucket(params.coachContext);
   const missingRequiredSlots = params.slots
     .filter(
       (slot) =>
@@ -68,6 +78,32 @@ export function validateSlotWorkout(params: {
     !hasLoadedMainLift(params.selections)
   ) {
     contractViolations.push("missing_loaded_main_lift_for_strength");
+  }
+
+  if (
+    params.coachContext.goal === "strength" &&
+    params.coachContext.selectedFocus === "full_body" &&
+    planningDurationBucket >= 35 &&
+    !selectedRoles.includes("main_hinge")
+  ) {
+    contractViolations.push("missing_main_hinge_for_full_body_strength");
+  }
+
+  if (
+    params.coachContext.goal === "strength" &&
+    params.coachContext.selectedFocus === "lower_body" &&
+    !selectedRoles.includes("main_hinge")
+  ) {
+    contractViolations.push("missing_main_hinge_for_lower_body_strength");
+  }
+
+  if (
+    params.coachContext.goal === "strength" &&
+    params.coachContext.selectedFocus === "lower_body" &&
+    params.coachContext.selectedEquipment.includes("dumbbells") &&
+    !hasWeightedLowerMainLift(params.selections)
+  ) {
+    contractViolations.push("missing_weighted_lower_main_lift_with_dumbbells");
   }
 
   const safetyGateReasons = [

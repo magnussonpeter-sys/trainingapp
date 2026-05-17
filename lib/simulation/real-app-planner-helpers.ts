@@ -7,6 +7,7 @@ import {
   formatWeekdayLabel,
   type PlannedSessionFocus,
   type Weekday,
+  type WeeklyTrainingDoseMode,
   type WeeklyPlanSettings,
 } from "@/lib/planning/weekly-plan";
 import type { MuscleBudgetGroup } from "@/lib/planning/muscle-budget";
@@ -61,11 +62,14 @@ export function getSimulationPriorityMuscles(
 
 export function buildSimulationWeeklyPlanSettings(params: {
   profile: SimulationUserProfile;
-  plannedWorkoutDayIndices: number[];
+  availableTrainingDayIndices: number[];
   priorityMuscles?: MuscleBudgetGroup[];
+  trainingDoseMode?: WeeklyTrainingDoseMode;
   nowIso: string;
 }): WeeklyPlanSettings {
-  const preferredDays = params.plannedWorkoutDayIndices.map(mapWeekdayIndexToWeeklyPlanDay);
+  const preferredDays = params.availableTrainingDayIndices.map(
+    mapWeekdayIndexToWeeklyPlanDay,
+  );
   const normalizedPreferredDays: Weekday[] =
     preferredDays.length > 0 ? preferredDays : ["monday", "wednesday", "friday"];
   const defaultDurationMinutes = Math.max(20, Math.round(params.profile.preferredSessionDurationMin));
@@ -80,7 +84,11 @@ export function buildSimulationWeeklyPlanSettings(params: {
 
   return {
     userId: params.profile.id,
-    sessionsPerWeek: Math.min(Math.max(params.profile.preferredWorkoutDaysPerWeek, 1), 6),
+    trainingDoseMode: params.trainingDoseMode ?? "manual",
+    sessionsPerWeek: Math.min(
+      Math.max(params.profile.preferredWorkoutDaysPerWeek, 1),
+      7,
+    ),
     preferredDays: normalizedPreferredDays,
     defaultDurationMinutes,
     minDurationMinutes,

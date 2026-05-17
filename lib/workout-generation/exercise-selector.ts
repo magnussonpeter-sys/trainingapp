@@ -158,10 +158,47 @@ function isLoadedStrengthCandidate(exercise: ExerciseCatalogItem) {
       "deadlift",
       "squat",
       "lunge",
+      "step_up",
       "pull_up",
       "lat_pulldown",
       "overhead_press",
     ].includes(exercise.variantGroup)
+  );
+}
+
+function isWeightedCompoundStrengthExercise(exercise: ExerciseCatalogItem) {
+  return (
+    exercise.requiredEquipment.some((equipment) => equipment !== "bodyweight") &&
+    getExerciseRoleCandidates(exercise).some((role) =>
+      ["main_push", "main_pull", "main_squat", "main_hinge", "unilateral_lower"].includes(role),
+    )
+  );
+}
+
+function isProgressionCompatibleStrengthExercise(exercise: ExerciseCatalogItem) {
+  return isLoadedStrengthCandidate(exercise) && exercise.riskLevel !== "high";
+}
+
+function isSupportStyleStrengthFallback(exercise: ExerciseCatalogItem) {
+  return exercise.variantGroup === "ring_support";
+}
+
+function isBodyweightOnlyLowerFallback(exercise: ExerciseCatalogItem) {
+  return (
+    exercise.requiredEquipment.every((equipment) => equipment === "bodyweight") &&
+    ["squat", "lunge"].includes(exercise.movementPattern)
+  );
+}
+
+function isBridgeStyleHingeFallback(exercise: ExerciseCatalogItem) {
+  return exercise.variantGroup === "hip_bridge";
+}
+
+function isAccessoryPressFallback(exercise: ExerciseCatalogItem) {
+  return (
+    exercise.variantGroup === "dip" ||
+    exercise.id === "close_grip_push_up" ||
+    exercise.variantGroup === "push_up"
   );
 }
 
@@ -325,6 +362,14 @@ export function scoreExerciseForSlot(params: {
     if (
       ["main_push", "main_pull", "main_squat", "main_hinge"].includes(matchedRole)
     ) {
+      if (isWeightedCompoundStrengthExercise(params.exercise)) {
+        score += addScore(
+          scoreBreakdown,
+          "strength_weighted_compound_bonus",
+          12,
+          "Belastningsbar compound-övning prioriteras i styrkepass.",
+        );
+      }
       if (isLoadedStrengthCandidate(params.exercise)) {
         score += addScore(
           scoreBreakdown,
@@ -334,7 +379,15 @@ export function scoreExerciseForSlot(params: {
         );
         score += addScore(
           scoreBreakdown,
-          "progression_value_bonus",
+          "strength_role_equivalent_bonus",
+          8,
+          "Övningen täcker slotens huvudroll med en progressionstålig variant.",
+        );
+      }
+      if (isProgressionCompatibleStrengthExercise(params.exercise)) {
+        score += addScore(
+          scoreBreakdown,
+          "strength_progression_compatible_bonus",
           14,
           "Övningen har tydlig progression via vikt och reps.",
         );
@@ -343,9 +396,18 @@ export function scoreExerciseForSlot(params: {
       ) {
         score += addScore(
           scoreBreakdown,
-          "bodyweight_fallback_penalty",
+          "strength_bodyweight_fallback_penalty",
           -(params.slot.allowBodyweightFallback ? 10 : 22),
           "Kroppsviktsvariant rankas ned när strength-pass har bättre belastningsbara alternativ.",
+        );
+      }
+
+      if (isSupportStyleStrengthFallback(params.exercise)) {
+        score += addScore(
+          scoreBreakdown,
+          "strength_support_not_main_lift_penalty",
+          -26,
+          "Support hold får inte ersätta en riktig press- eller dragövning i styrkepass.",
         );
       }
     } else if (
@@ -549,6 +611,48 @@ export function scoreExerciseForSlot(params: {
   }
 
   if (
+    params.coachContext.goal === "strength" &&
+    params.coachContext.selectedEquipment.includes("dumbbells") &&
+    ["main_squat", "unilateral_lower"].includes(matchedRole) &&
+    isBodyweightOnlyLowerFallback(params.exercise)
+  ) {
+    score += addScore(
+      scoreBreakdown,
+      "strength_bodyweight_fallback_penalty",
+      -20,
+      "Kroppsvikts-lower rankas ned när hantelbelastad unilateral eller squat kan användas.",
+    );
+  }
+
+  if (
+    params.coachContext.goal === "strength" &&
+    params.coachContext.selectedFocus === "full_body" &&
+    matchedRole === "main_hinge" &&
+    isBridgeStyleHingeFallback(params.exercise)
+  ) {
+    score += addScore(
+      scoreBreakdown,
+      "strength_bodyweight_fallback_penalty",
+      -24,
+      "Glute bridge är för lätt som hinge-ersättning när full body strength kan bära RDL eller marklyft.",
+    );
+  }
+
+  if (
+    params.coachContext.goal === "strength" &&
+    matchedRole === "main_push" &&
+    params.coachContext.selectedEquipment.includes("dumbbells") &&
+    isAccessoryPressFallback(params.exercise)
+  ) {
+    score += addScore(
+      scoreBreakdown,
+      "strength_support_not_main_lift_penalty",
+      -18,
+      "Smal press- eller dipvariant ska inte slå hantelpress när belastningsbar press finns.",
+    );
+  }
+
+  if (
     params.exercise.requiredEquipment.every((equipment) => equipment === "bodyweight") &&
     params.coachContext.selectedEquipment.some((equipment) => equipment !== "bodyweight") &&
     !params.slot.allowBodyweightFallback &&
@@ -558,7 +662,7 @@ export function scoreExerciseForSlot(params: {
   ) {
     score += addScore(
       scoreBreakdown,
-      "bodyweight_fallback_penalty",
+      "strength_bodyweight_fallback_penalty",
       -18,
       "Sloten föredrar belastningsbar utrustning framför kroppsviktsfallback när sådan finns.",
     );

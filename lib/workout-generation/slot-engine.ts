@@ -13,7 +13,10 @@ import {
 } from "@/lib/workout-flow/validate-generated-workout";
 import type { WorkoutFocus } from "@/types/workout";
 
-import { buildWorkoutGenerationCoachContext } from "@/lib/workout-generation/coach-context";
+import {
+  buildWorkoutGenerationCoachContext,
+  getEffectivePlanningDurationBucket,
+} from "@/lib/workout-generation/coach-context";
 import { attachWorkoutGenerationDebug } from "@/lib/workout-generation/debug";
 import { getDefaultTrainingConstraints } from "@/lib/workout-generation/injury-constraints";
 import { buildWorkoutSlotPlan } from "@/lib/workout-generation/slot-planner";
@@ -92,6 +95,9 @@ type FinalContractEvaluation = {
   goalLossReason: string[];
   sportLossReason: string[];
   fallbackBiasWarning: string | null;
+  lostStrengthMainRoles: WorkoutSlotRole[];
+  restoredStrengthRoles: WorkoutSlotRole[];
+  strengthWeakButValidReasons: string[];
 };
 
 type RestoreAttemptResult = {
@@ -423,6 +429,9 @@ function getProtectedSlotIds(params: {
   selections: SlotExerciseSelection[];
   coachContext: ReturnType<typeof buildWorkoutGenerationCoachContext>["coachContext"];
 }) {
+  const planningDurationBucket = getEffectivePlanningDurationBucket(
+    params.coachContext,
+  );
   const sportProtectedRoles = new Set(getSportProtectedRoles({
     sportFocus: params.coachContext.sportFocus,
   }));
@@ -450,7 +459,7 @@ function getProtectedSlotIds(params: {
 
       if (
         params.coachContext.goal === "hypertrophy" &&
-        params.coachContext.planningDurationBucket >= 35
+        planningDurationBucket >= 35
       ) {
         return [
           "direct_biceps",
@@ -480,14 +489,8 @@ function getProtectedRoleTargets(params: {
       .filter((slot) => protectedSlotIds.has(slot.id))
       .map((slot) => {
         const selection = params.selections.find((item) => item.slotId === slot.id);
-        const isCompactStrengthLowerSupport =
-          params.coachContext.goal === "strength" &&
-          params.coachContext.selectedFocus === "full_body" &&
-          params.coachContext.planningDurationBucket <= 35 &&
-          slot.label === "secondary_lower";
         const shouldLockSelectedRole =
           Boolean(selection) &&
-          !isCompactStrengthLowerSupport &&
           (
             params.coachContext.goal === "strength" ||
             getSportProtectedRoles({
@@ -594,6 +597,11 @@ function evaluateFinalContract(params: {
   coachContext: ReturnType<typeof buildWorkoutGenerationCoachContext>["coachContext"];
   validationDebug: ReturnType<typeof validateGeneratedWorkout>["debug"]["validation"];
 }) {
+  const planningDurationBucket = getEffectivePlanningDurationBucket(
+    params.coachContext,
+  );
+  const workoutSnapshots = getWorkoutExerciseSnapshots(params.workout);
+  const finalRoles = new Set(workoutSnapshots.flatMap((snapshot) => snapshot.roles));
   const contractMode = getSlotPlanMode(params.slotPlan);
   const requiredSlots = params.slotPlan.slots
     .filter((slot) => slot.required)
@@ -614,7 +622,7 @@ function evaluateFinalContract(params: {
   });
   const lostProtectedSlotsByLockedRole = protectedSlots.filter((slotId) => {
     const targetRoles = protectedRoleTargets.get(slotId) ?? [];
-    return !getWorkoutExerciseSnapshots(params.workout).some((snapshot) =>
+    return !workoutSnapshots.some((snapshot) =>
       snapshot.roles.some((role) => targetRoles.includes(role)),
     );
   });
@@ -625,10 +633,35 @@ function evaluateFinalContract(params: {
   const lostProtectedSlots = lostProtectedSlotsByLockedRole.filter(
     (slotId) => !recoveredProtectedSlots.includes(slotId),
   );
+  const selectedStrengthMainRoles = Array.from(
+    new Set(
+      params.selections
+        .map((selection) => selection.role)
+        .filter((role): role is WorkoutSlotRole =>
+          ["main_push", "main_pull", "main_squat", "main_hinge"].includes(role),
+        ),
+    ),
+  );
+  const strengthMainRoleSet = new Set<WorkoutSlotRole>([
+    "main_push",
+    "main_pull",
+    "main_squat",
+    "main_hinge",
+  ]);
+  const lostStrengthMainRoles = selectedStrengthMainRoles.filter(
+    (role) => !finalRoles.has(role),
+  );
+  const restoredStrengthRoles = Array.from(
+    new Set(
+      recoveredProtectedSlots
+        .map((slotId) => params.selections.find((selection) => selection.slotId === slotId)?.role)
+        .filter((role): role is WorkoutSlotRole => typeof role === "string" && strengthMainRoleSet.has(role as WorkoutSlotRole)),
+    ),
+  );
   const isCompactStrengthFullBody =
     params.coachContext.goal === "strength" &&
     params.coachContext.selectedFocus === "full_body" &&
-    params.coachContext.planningDurationBucket <= 35;
+    planningDurationBucket <= 35;
   const qualityThreshold =
     params.coachContext.selectedFocus === "recovery_strength"
       ? 70
@@ -671,17 +704,15 @@ function evaluateFinalContract(params: {
   if (
     params.coachContext.goal === "strength" &&
     params.coachContext.selectedFocus === "full_body" &&
-    params.coachContext.planningDurationBucket >= 30 &&
-    !getWorkoutExerciseSnapshots(params.workout).some((snapshot) =>
-      snapshot.roles.includes("main_hinge"),
-    )
+    planningDurationBucket >= 30 &&
+    !finalRoles.has("main_hinge")
   ) {
     reasons.push("full_body_strength_missing_hinge_after_normalization");
     goalLossReason.push("Full body strength tappade hinge/posterior chain i slutpasset.");
   }
   if (
     params.coachContext.goal === "hypertrophy" &&
-    params.coachContext.planningDurationBucket >= 35 &&
+    planningDurationBucket >= 35 &&
     params.validationDebug.lostUsefulRoles.length > 0
   ) {
     reasons.push("hypertrophy_useful_roles_lost");
@@ -717,6 +748,11 @@ function evaluateFinalContract(params: {
       ? "Fallback-varianten återkom samtidigt som mer specifika roller tappades."
       : null);
 
+  const canDowngradeRecoveredStrengthWarnings =
+    params.coachContext.goal === "strength" &&
+    restoredStrengthRoles.length > 0 &&
+    lostStrengthMainRoles.length === 0;
+
   const hardReasons = reasons.filter((reason) => {
     if (
       params.coachContext.selectedFocus !== "recovery_strength" &&
@@ -726,7 +762,7 @@ function evaluateFinalContract(params: {
         reason.startsWith("quality_below_threshold") ||
         reason.startsWith("focus_integrity_below_threshold")
       ) {
-        return true;
+        return !canDowngradeRecoveredStrengthWarnings;
       }
     }
 
@@ -738,6 +774,11 @@ function evaluateFinalContract(params: {
       reason.includes("role_mismatch_replacement")
     );
   });
+
+  const strengthWeakButValidReasons =
+    params.coachContext.goal === "strength" && hardReasons.length === 0
+      ? reasons.filter((reason) => !reason.includes("missing_required_slot") && !reason.includes("protected_slot_lost"))
+      : [];
 
   return {
     contractGateTriggered: reasons.length > 0,
@@ -767,6 +808,9 @@ function evaluateFinalContract(params: {
     goalLossReason,
     sportLossReason,
     fallbackBiasWarning,
+    lostStrengthMainRoles,
+    restoredStrengthRoles,
+    strengthWeakButValidReasons,
   } satisfies FinalContractEvaluation;
 }
 
@@ -811,15 +855,23 @@ function attemptRestoreProtectedSlots(params: {
 
     const snapshots = getWorkoutExerciseSnapshots(workoutCopy);
     const replaceable = snapshots.find((snapshot) => {
-      const coveredSlots = params.slotPlan.slots.filter((candidateSlot) =>
-        snapshot.roles.some((role) => candidateSlot.allowedRoles.includes(role)),
+      const remainingSnapshots = snapshots.filter(
+        (candidate) =>
+          candidate.blockIndex !== snapshot.blockIndex ||
+          candidate.exerciseIndex !== snapshot.exerciseIndex,
       );
-      const coversRequiredOrProtected = coveredSlots.some(
-        (candidateSlot) =>
-          candidateSlot.required || params.missingSlotIds.includes(candidateSlot.id),
-      );
+      // Restore-first får ersätta en redundant huvudövning om övriga snapshots
+      // fortfarande täcker kvarvarande required slots efter bytet.
+      const wouldBreakAnotherRequiredSlot = params.slotPlan.slots
+        .filter((candidateSlot) => candidateSlot.required)
+        .filter((candidateSlot) => !params.missingSlotIds.includes(candidateSlot.id))
+        .some((candidateSlot) =>
+          !remainingSnapshots.some((candidate) =>
+            candidate.roles.some((role) => candidateSlot.allowedRoles.includes(role)),
+          ),
+        );
 
-      return !coversRequiredOrProtected;
+      return !wouldBreakAnotherRequiredSlot;
     });
 
     if (!replaceable) {
@@ -887,6 +939,9 @@ function buildSlotDebug(params: {
   warningReasons?: string[];
   fallbackMockReason?: string | null;
 }) {
+  const planningDurationBucket = getEffectivePlanningDurationBucket(
+    params.coachContext,
+  );
   const repeatedVariantGroups = params.selection.selections
     .map((selection) => selection.variantGroup)
     .filter((variantGroup, index, values) => values.indexOf(variantGroup) !== index);
@@ -905,7 +960,7 @@ function buildSlotDebug(params: {
     contractBeforeFeasibility: params.feasibility.contractBeforeFeasibility,
     contractAfterFeasibility: params.feasibility.contractAfterFeasibility,
     displayDurationMinutes: params.coachContext.displayDurationMinutes,
-    planningDurationBucket: params.coachContext.planningDurationBucket,
+    planningDurationBucket,
     timeBudgetMinutes: params.coachContext.timeBudgetMinutes,
     durationBucketReason: params.coachContext.durationBucketReason,
     selectedGoalConfig: params.goalConfigId,
@@ -1071,6 +1126,9 @@ function buildSlotDebug(params: {
     finalContractPassed:
       params.contractEvaluation?.finalContractPassed ?? params.slotValidation.finalContractPassed,
     finalSlotCoverage: params.slotValidation.finalSlotCoverage,
+    lostStrengthMainRoles: params.contractEvaluation?.lostStrengthMainRoles ?? [],
+    restoredStrengthRoles: params.contractEvaluation?.restoredStrengthRoles ?? [],
+    strengthWeakButValidReasons: params.contractEvaluation?.strengthWeakButValidReasons ?? [],
     sportRelevantSlots: params.contractEvaluation?.sportRelevantSlots ?? [],
     sportLossReason: params.contractEvaluation?.sportLossReason ?? [],
     goalLossReason: params.contractEvaluation?.goalLossReason ?? [],
@@ -1573,7 +1631,17 @@ export async function generateWorkoutWithSlotBasedV1(
       validationDebug: validated.debug.validation,
     });
 
-    const missingProtectedSlots = initialContractEvaluation.lostProtectedSlots;
+    const missingProtectedSlots = Array.from(
+      new Set(
+        initialContractEvaluation.lostProtectedSlots.concat(
+          params.pass.selection.selections
+            .filter((selection) =>
+              initialContractEvaluation.lostStrengthMainRoles.includes(selection.role),
+            )
+            .map((selection) => selection.slotId),
+        ),
+      ),
+    );
     const restoreResult =
       missingProtectedSlots.length > 0
         ? attemptRestoreProtectedSlots({

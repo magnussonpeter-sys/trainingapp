@@ -7,6 +7,7 @@ import type {
   SimulationPriorityMuscle,
   SimulationScenario,
   SimulationSportFocus,
+  SimulationTrainingDoseMode,
   SimulationWeeklyPlanFlexibility,
 } from "@/lib/simulation/types";
 import type { SimulationWorkoutGenerationMode } from "@/lib/workout-generation/types";
@@ -24,6 +25,7 @@ type StoredSimulationSettings = {
   heightCm?: number;
   weightKg?: number;
   experienceLevel?: SimulationExperienceLevel | "novice";
+  trainingDoseMode?: SimulationTrainingDoseMode;
   sessionsPerWeek?: number;
   preferredSessionDurationMin?: number;
   minDurationMinutes?: number;
@@ -35,6 +37,7 @@ type StoredSimulationSettings = {
   plannerMode?: SimulationPlannerMode;
   generationMode?: SimulationWorkoutGenerationMode;
   maxAiGeneratedWorkouts?: number;
+  availableTrainingDayIndices?: number[];
   plannedWorkoutDayIndices?: number[];
 };
 
@@ -118,6 +121,10 @@ function isWeeklyPlanFlexibility(
   return value === "strict" || value === "balanced" || value === "flexible";
 }
 
+function isTrainingDoseMode(value: unknown): value is SimulationTrainingDoseMode {
+  return value === "recommended" || value === "manual";
+}
+
 function normalizePositiveNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.round(value)
@@ -157,6 +164,9 @@ export function getStoredSimulationSettings(): StoredSimulationSettings | null {
       experienceLevel: isExperienceLevel(parsed.experienceLevel)
         ? parsed.experienceLevel
         : undefined,
+      trainingDoseMode: isTrainingDoseMode(parsed.trainingDoseMode)
+        ? parsed.trainingDoseMode
+        : undefined,
       sessionsPerWeek: normalizePositiveNumber(parsed.sessionsPerWeek) ?? undefined,
       preferredSessionDurationMin:
         normalizePositiveNumber(parsed.preferredSessionDurationMin) ?? undefined,
@@ -180,6 +190,12 @@ export function getStoredSimulationSettings(): StoredSimulationSettings | null {
           : undefined,
       maxAiGeneratedWorkouts:
         normalizePositiveNumber(parsed.maxAiGeneratedWorkouts) ?? undefined,
+      availableTrainingDayIndices: Array.isArray(parsed.availableTrainingDayIndices)
+        ? parsed.availableTrainingDayIndices
+            .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+            .map((value) => ((Math.round(value) % 7) + 7) % 7)
+            .slice(0, 7)
+        : undefined,
       plannedWorkoutDayIndices: Array.isArray(parsed.plannedWorkoutDayIndices)
         ? parsed.plannedWorkoutDayIndices
             .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
